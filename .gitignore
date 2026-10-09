@@ -65,3 +65,20 @@ config/local.yaml
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ---------- SSH keys (safety net) ----------
+# A leaked private key equals a leaked identity. Keys normally live in
+# ~/.ssh and never inside the project, but keep these patterns as a guard
+# in case one is ever copied into the working directory by accident.
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+id_ed25519_*
+id_ecdsa
+id_ecdsa.pub
+*.pem
+*.key
+*.ppk
+*_public_key.txt
+ssh_config*.txt
