@@ -1,0 +1,67 @@
+# ===== 小程序自动化测试框架 · Git 忽略规则 =====
+# 作用：告诉 git 哪些文件不需要纳入版本管理。
+# 说明：本文件只影响 git，不影响程序运行；删除它也不会导致任何功能异常。
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# ---------- Node.js ----------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ---------- 测试产物 ----------
+# 截图与报告属于「每次执行都会变」的产物，不应进版本库
+report/
+.pytest_cache/
+test-results/
+playwright-report/
+
+# ---------- 日志 ----------
+logs/
+*.log
+log/
+
+# ---------- 运行期临时文件 ----------
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# ---------- 配置中的敏感信息 ----------
+# config/config.yaml 常含账号密码、数据库连接串，默认不入库
+# 如需纳入版本管理，删除下面两行即可
+config/config.yaml
+config/local.yaml
+.env
+.env.*
+
+# ---------- 编辑器 / IDE ----------
+.idea/
+.vscode/
+*.iml
+*.sublime-project
+*.sublime-workspace
+
+# ---------- 操作系统 ----------
+.DS_Store
+Thumbs.db
+desktop.ini

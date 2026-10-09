@@ -1,0 +1,53 @@
+# ===== 换行符与文本处理规则 =====
+# 作用：锁定文件在仓库中的存储格式，避免 Windows / Linux / Mac 之间换行符互窜。
+#
+# 背景：Git for Windows 默认会设置 core.autocrlf=true（把 LF 转成 CRLF），
+#       一旦有 Linux CI 或 Mac 同事拉取代码，就会出现"整个文件都被修改"的假 diff。
+#       仓库级的 .gitattributes 优先级高于 system 级 gitconfig，且对所有平台生效，
+#       因此在这里统一锁定，比依赖每个人本机配置可靠。
+#
+# 注意：本仓库现有文件本来就是 LF，锁定为 LF 不会产生任何内容变更。
+
+# 所有文本文件：由 git 自动识别，统一以 LF 存入仓库
+* text=auto eol=lf
+
+# ---------- 明确指定为文本（强制 LF）----------
+*.js      text eol=lf
+*.py      text eol=lf
+*.json    text eol=lf
+*.md      text eol=lf
+*.yaml    text eol=lf
+*.yml     text eol=lf
+*.ini     text eol=lf
+*.cfg     text eol=lf
+*.txt     text eol=lf
+*.html    text eol=lf
+*.css     text eol=lf
+.gitignore       text eol=lf
+.gitattributes   text eol=lf
+
+# ---------- Windows 专用脚本：必须保持 CRLF，否则可能无法执行 ----------
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
+
+# ---------- 二进制文件：禁止任何换行符转换 ----------
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.ico     binary
+*.pdf     binary
+*.zip     binary
+*.gz      binary
+*.whl     binary
+*.exe     binary
+*.dll     binary
+*.so      binary
+
+# ---------- 测试产物：不在 diff 中展示（虽然已被 .gitignore 排除，此处双保险）----------
+report/** linguist-generated=true
+package-lock.json linguist-generated=true
+
+# ---------- 语言统计：把文档目录排除出代码占比统计 ----------
+docs/** linguist-documentation=true
