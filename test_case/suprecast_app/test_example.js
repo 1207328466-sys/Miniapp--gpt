@@ -72,7 +72,12 @@ const KEYWORD = "test"; // 仅 ASCII，原因见文件头
     [qaPage.ensureOnHomeFeed, null],
   ];
 
-  await appTest(funcList, { photosPath });
+  await appTest(funcList, {
+    photosPath,
+    // 用例元数据（决定报告里的中文分组与中文用例名）：
+    // 不传的话，报告和控制台只能拿英文文件名当名字 —— 给人看的地方一律说中文。
+    meta: { feature: "有问必答首页", story: "搜索", title: "打开搜索页并输入关键词（读回校验）" },
+  });
 
   console.log("\n" + "=".repeat(60));
   console.log("test_example.js 执行完成（全部步骤通过）");

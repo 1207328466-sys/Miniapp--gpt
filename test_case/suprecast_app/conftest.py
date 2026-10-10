@@ -22,6 +22,7 @@ JS 那边只负责"跑步骤 + 写 JSONL"，把步骤明细变成
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -75,6 +76,29 @@ def load_table_cases():
         return [(str(c["id"]), str(c.get("name") or c["id"])) for c in data.get("cases", [])]
     except Exception:
         return []
+
+
+# 用例文件里 `meta: { title: "..." }` 那一行的中文用例名
+TITLE_IN_FILE = re.compile(r'title:\s*"([^"\n]+)"')
+
+
+def case_display_name(path):
+    """给 pytest 用例项取一个**中文**名字（控制台、报告里都用它）。
+
+    为什么要在这里读用例文件：pytest 的用例项名字必须在**收集阶段**就定下来，
+    而中文名只有用例文件自己有（`meta: { title: ... }`）。所以收集时扫一遍文件，
+    把 title 抠出来；抠不到就退回文件名。
+
+    【为什么非要这么做】文件名是英文（代码惯例：`test_switch_to_user_center.js`），
+    但报告和控制台是**给人看**的 —— 之前那些地方显示的全是英文文件名，
+    看的人（尤其是零基础的同事）认不出来哪条是哪条。
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return path.name
+    m = TITLE_IN_FILE.search(text)
+    return m.group(1) if m else path.name
 
 
 def emit(text=""):
@@ -288,7 +312,7 @@ class JsTestFile(pytest.File):
                 return
             # 表格还没导出（或读不了）：仍然生成一个用例项，
             # 让 node 侧报出「先填表 / 先导出」这个具体原因，而不是这里悄悄少收集一条
-        yield JsTestItem.from_parent(self, name=self.path.name, node_script=self.path)
+        yield JsTestItem.from_parent(self, name=case_display_name(self.path), node_script=self.path)
 
 
 def pytest_collect_file(file_path, parent):

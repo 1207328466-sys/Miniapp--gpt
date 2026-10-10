@@ -45,7 +45,10 @@ const {
     [dumpElements, null],
   ];
 
-  await appTest(funcList, { photosPath });
+  await appTest(funcList, {
+    photosPath,
+    meta: { feature: "用户中心", story: "导航", title: "切到用户中心并能看到积分商城" },
+  });
   console.log("test_switch_to_user_center.js 执行完成");
 })().catch((e) => {
   // 必须保留：让 node 以非 0 退出码结束，pytest 才能感知失败

@@ -313,7 +313,12 @@ const { login, clickElementByText } = require("../../app_sub_function/suprecast_
     [login, null],
     [clickElementByText, { text: "有问必答" }],
   ];
-  await appTest(funcList, { photosPath });
+  await appTest(funcList, {
+    photosPath,
+    // ★ 必写：报告和控制台里显示的**中文用例名**就来自这里。
+    //   不写的话只能拿英文文件名当名字，看报告的人认不出来哪条是哪条。
+    meta: { feature: "有问必答首页", story: "导航", title: "切到有问必答页" },
+  });
   console.log("用例执行完成");
 })().catch((e) => {
   console.error(e);
@@ -325,7 +330,11 @@ const { login, clickElementByText } = require("../../app_sub_function/suprecast_
 1. `require` 驱动层 + 需要的业务函数
 2. `photosPath` 指向 `report/photo_app`
 3. `funcList` 步骤数组
-4. `appTest(...)` + **结尾必须 `.catch(... process.exit(1))`**
+4. `appTest(...)`（带 `meta` 中文用例名）+ **结尾必须 `.catch(... process.exit(1))`**
+
+> 关于 `meta`：`feature`（大模块）/ `story`（小模块）/ `title`（这条用例叫什么）都用中文，
+> 报告里的分组和用例名就是它。`conftest.py` 还会在收集阶段从这一行抠出中文名给 pytest 用 ——
+> 所以**行里的名字和报告里看到的名字永远一致**，不存在两处对不上。
 
 ### 文件放哪、怎么命名
 

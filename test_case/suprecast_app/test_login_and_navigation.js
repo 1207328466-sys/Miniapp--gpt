@@ -44,7 +44,14 @@ const {
     [dumpElements, null],
   ];
 
-  await appTest(funcList, { photosPath });
+  await appTest(funcList, {
+    photosPath,
+    meta: {
+      feature: "用户中心",
+      story: "导航",
+      title: "切到用户中心（反面教材：只有操作、没有检查）",
+    },
+  });
   console.log("test_login_and_navigation.js 执行完成");
 })().catch((e) => {
   // 必须保留这个错误出口：让 node 以非 0 退出码结束，
