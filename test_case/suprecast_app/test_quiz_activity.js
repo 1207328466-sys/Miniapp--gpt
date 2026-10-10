@@ -41,7 +41,10 @@ const quizPage = pages.quizPage;
 
 const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
 
-// 数据安全阀：改成 true 才会真的提交（会写这台设备登录账号的真实数据）
+// 数据安全阀（两个，都默认 false）。改动前请先读 pages/quiz_activity_page.js 的文件头说明。
+//   ALLOW_INTERACT：是否允许点选项 —— 存在"选中即自动提交"的存疑，故默认关闭
+//   ALLOW_SUBMIT  ：是否允许点提交 —— 确定会写数据
+const ALLOW_INTERACT = false;
 const ALLOW_SUBMIT = false;
 
 (async () => {
@@ -53,10 +56,13 @@ const ALLOW_SUBMIT = false;
     // （文案判据会被后台标签页骗：后台页也读得到内容）
     [assertSelectorCount, { selector: quizPage.SEL.quizPage, expected: 1 }],
 
-    // 断言：界面要素齐全
+    // 断言：界面要素齐全。
+    // 这里刻意用 assertSelectorCount 钉住数量而不是"≥1"：
+    // 实测 [class*="activity-quiz-submit"] 会多命中一个外层包裹元素，
+    // 用"恰好 1 个"能把这种"选择器吃多了"的坑当场抓住（账本根因 11 的同类问题）。
     [assertSelectorExists, { selector: quizPage.SEL.title }],
-    [assertSelectorExists, { selector: quizPage.SEL.option }],
-    [assertSelectorExists, { selector: quizPage.SEL.submit }],
+    [assertSelectorCount, { selector: quizPage.SEL.submit, expected: 1 }],
+    [assertSelectorCount, { selector: quizPage.SEL.option, expected: 2 }],
 
     // 断言：进度提示存在（形如「已答：0/1」，实测在其它页不出现）
     [assertTextVisible, { text: "已答" }],
@@ -64,8 +70,8 @@ const ALLOW_SUBMIT = false;
     // 步骤 3：打印并记录状态（进度/选项/提交按钮），只读
     [quizPage.logState, null],
 
-    // 步骤 4：选第一个选项（已答完则跳过 —— 那时选项已锁定，硬点只会得到假失败）
-    [quizPage.selectFirstOption, null],
+    // 步骤 4：选第一个选项（默认关闭；已答完时也会跳过 —— 那时选项已锁定，硬点只会得到假失败）
+    [quizPage.selectFirstOption, { allowInteract: ALLOW_INTERACT }],
 
     // 步骤 5：提交（默认关闭，见文件头说明）
     [quizPage.submitIfAllowed, { allowSubmit: ALLOW_SUBMIT }],

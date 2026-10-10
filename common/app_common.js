@@ -28,7 +28,42 @@ const ENV_KEYS = {
   deviceSerial: "UITEST_DEVICE_SERIAL",
   pkg: "UITEST_WX_PKG",
   webviewTimeout: "UITEST_WEBVIEW_TIMEOUT",
+  appId: "UITEST_APP_ID",
 };
+
+/**
+ * 本次运行"期望的小程序 appid"。
+ *
+ * 【为什么需要它 —— 这是一个静默测错对象的风险】
+ * 测试环境和生产环境是**两个不同的小程序**，而同一部微信里可能同时缓存着它们。
+ * 原来的 `resolveForegroundPage` 在拿不到 appid 时（例如开局落在 `/preload/` 空壳页）
+ * 会**按出现频次推断**该用哪个 appid —— 于是有可能推断到生产那个，
+ * 之后所有断言都跑在生产小程序上，**而且不会报错**。
+ *
+ * 所以这里做成"进程级默认值"：`appTest` 里解析一次，之后**所有**
+ * `resolveForegroundPage` 调用（包括页面对象内部的）自动带上这道校验，
+ * 不需要一层层传参。设置了就以它为准，不匹配一律报错，不退回推断。
+ *
+ * 取值：`appTest(..., { appId })` > 环境变量 `UITEST_APP_ID` > 不限制（保持旧行为）
+ */
+let activeExpectedAppId = null;
+
+/**
+ * 解析期望的 appid（格式校验 + 落到进程级默认值）。
+ * @param {{appId?: string}} [options]
+ * @returns {string|null}
+ */
+function resolveExpectedAppId(options = {}) {
+  const id = options.appId || process.env[ENV_KEYS.appId] || null;
+  if (!id) return null;
+  if (!/^wx[0-9a-fA-F]+$/.test(String(id))) {
+    throw new Error(
+      `期望的 appid 格式不对：${JSON.stringify(id)}（应形如 wx3de2e1d179b60303）`
+    );
+  }
+  activeExpectedAppId = String(id);
+  return activeExpectedAppId;
+}
 
 /**
  * 决定"用哪台设备"。
@@ -367,11 +402,16 @@ async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { 
  * 因此业务用例不需要再自己写"重新获取页面"的逻辑。
  *
  * @param {import('playwright').Page} page 候选页面（允许已失效）
- * @param {{timeout?: number}} [options] timeout: 单个页面的 RAF 探测超时（毫秒）
+ * @param {{timeout?: number, expectedAppId?: string}} [options]
+ *        timeout: 单个页面的 RAF 探测超时（毫秒）；
+ *        expectedAppId: 期望的小程序 appid（缺省用进程级默认值）。**设置了就是硬校验**：
+ *        候选页里 appid 不匹配的一律排除，一个都没有就报错，不退回"按频次推断"。
  * @returns {Promise<import('playwright').Page>} 当前前台页
  * @throws {Error} context 拿不到、或没有任何页面在产出动画帧时抛出
  */
-async function resolveForegroundPage(page, { timeout = 500 } = {}) {
+async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null } = {}) {
+  // 【安全阀】期望的 appid：优先用显式传入的，其次用进程级默认值（appTest 解析过一次）
+  const expected = expectedAppId || activeExpectedAppId || null;
   // 1) 取浏览器 context：page 可用时优先从它取，已销毁则退回缓存
   let ctx = null;
   try {
@@ -395,29 +435,48 @@ async function resolveForegroundPage(page, { timeout = 500 } = {}) {
   });
   if (!all.length) throw new Error("context 里没有任何可用页面");
 
-  // 3) 确定目标 appid：优先用传入 page 的；取不到（如 /preload/ 页）就从候选里推最主流的
+  // 3) 确定目标 appid。
+  //    a) 有"期望 appid"（安全阀打开）-> **硬校验**：不匹配的候选页一律排除，
+  //       一个都没有就报错，绝不退回"按频次推断" —— 那是可能静默跑到生产小程序上的路径。
+  //    b) 没有期望值 -> 沿用旧行为：优先用传入 page 的 appid，取不到再按出现频次推断。
   let targetAppId = null;
-  try {
-    if (page && !page.isClosed()) targetAppId = appIdOf(page.url());
-  } catch (e) {
-    // 忽略
-  }
-  if (!targetAppId) {
-    const freq = new Map();
-    for (const p of all) {
-      const id = appIdOf(p.url());
-      if (id) freq.set(id, (freq.get(id) || 0) + 1);
+  let candidates;
+  if (expected) {
+    candidates = all.filter((p) => appIdOf(p.url()) === expected);
+    if (!candidates.length) {
+      const seen = [...new Set(all.map((p) => appIdOf(p.url()) || "(无 appid 的页，如 /preload/)"))];
+      throw new Error(
+        `当前微信里没有打开期望的小程序 ${expected}（安全阀拦截）。\n` +
+          `  context 里实际看到的 appid：${seen.join("、")}\n` +
+          `  这道阀是为了**防止静默测错对象**：测试环境与生产环境是两个不同的小程序，\n` +
+          `  宁可不跑，也不要跑到另一个上去。若确认要测的是别的小程序，\n` +
+          `  请改环境变量 UITEST_APP_ID，或传 appTest(..., { appId }) 。`
+      );
     }
-    let best = 0;
-    for (const [id, n] of freq) {
-      if (n > best) {
-        best = n;
-        targetAppId = id;
+    targetAppId = expected;
+  } else {
+    try {
+      if (page && !page.isClosed()) targetAppId = appIdOf(page.url());
+    } catch (e) {
+      // 忽略
+    }
+    if (!targetAppId) {
+      const freq = new Map();
+      for (const p of all) {
+        const id = appIdOf(p.url());
+        if (id) freq.set(id, (freq.get(id) || 0) + 1);
+      }
+      let best = 0;
+      for (const [id, n] of freq) {
+        if (n > best) {
+          best = n;
+          targetAppId = id;
+        }
       }
     }
+    const pool = targetAppId ? all.filter((p) => appIdOf(p.url()) === targetAppId) : all;
+    candidates = pool.length ? pool : all;
   }
-  const pool = targetAppId ? all.filter((p) => appIdOf(p.url()) === targetAppId) : all;
-  const candidates = pool.length ? pool : all;
 
   // 4) 并行探测：只有还在产出动画帧的才是前台页。
   //    这里必须并行——串行探测每个页面最多要等一个 timeout，
@@ -510,6 +569,7 @@ async function pickForegroundPage(page, timeout = 800) {
  */
 async function getWxWebviewPage(device = null, options = {}) {
   const { pkg, webviewTimeout } = resolveWebviewOptions(options);
+  const expectedAppId = options.appId ? resolveExpectedAppId(options) : activeExpectedAppId;
 
   if (!device) {
     // 【官方API：android.devices】连接安卓设备，adb必须已经识别设备
@@ -519,9 +579,27 @@ async function getWxWebviewPage(device = null, options = {}) {
   }
   log.info(`等待微信小程序WebView（pkg=${pkg}，超时 ${webviewTimeout}ms）...`);
 
-  // 给可能阻塞的调用加超时兜底，避免某个后台 webview 拖死整体
-  const withTimeout = (promise, ms, msg) =>
-    Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))]);
+  // 给可能阻塞的调用加超时兜底，避免某个后台 webview 拖死整体。
+  //
+  // 【纪律】错误消息里必须带上**实际使用的延时值**，而不是只带形参名对应的值。
+  // 原因：自建的超时封装如果把参数写串（例如把 label 当成了 ms），会产生
+  // "看起来完全正常"的超时错误 —— 团队工作流里有专门一篇踩坑记录：
+  // setTimeout(fn, label) -> 延时 NaN -> 立即触发，而消息里插值的是正确的 ms，
+  // 信息自洽、完全看不出异常，结果被误判成"通道挂了"，还让人白重启了一次工具。
+  // 这里把实际值打出来，非法值额外标注，让这类错误一眼可见。
+  const withTimeout = (promise, ms, msg) => {
+    const actual = Number(ms);
+    const mark = Number.isFinite(actual) && actual > 0 ? "" : " <- 非法延时值！";
+    return Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`${msg} [实际延时 ${actual}ms${mark}]`)),
+          actual
+        )
+      ),
+    ]);
+  };
 
   let page = null;
 
@@ -543,6 +621,7 @@ async function getWxWebviewPage(device = null, options = {}) {
   // 回退：遍历所有 webview，按 URL 特征挑（与旧版本行为一致，保证不会更糟）
   if (!page) {
     const allWebviews = await device.webViews();
+    let anyMatch = null;
     for (const wv of allWebviews) {
       try {
         const pageTmp = await withTimeout(wv.page(), 5000, "page() 超时");
@@ -550,6 +629,12 @@ async function getWxWebviewPage(device = null, options = {}) {
         console.log(`检查 webview pid=${wv.pid()} url=${url}`);
         // 小程序页面特征：servicewechat.com
         if (url.includes("servicewechat.com")) {
+          // 有期望 appid 时优先挑匹配的那个；一个都不匹配就先留着，
+          // 交给 resolveForegroundPage 去报"安全阀拦截"这个更清楚的原因
+          if (expectedAppId && appIdOf(url) !== expectedAppId) {
+            if (!anyMatch) anyMatch = { page: pageTmp, pid: wv.pid(), url };
+            continue;
+          }
           page = pageTmp; // 直接复用该 page，不要 close、也不要再取一次
           log.info(`WebView捕获成功, pid=${wv.pid()}, url=${url}`);
           break;
@@ -557,6 +642,10 @@ async function getWxWebviewPage(device = null, options = {}) {
       } catch (e) {
         console.error(`跳过 webview: ${e.message}`);
       }
+    }
+    if (!page && anyMatch) {
+      log.info(`没有 appid 匹配的 webview，先用 pid=${anyMatch.pid} 的页面继续（后续会由安全阀判定）`);
+      page = anyMatch.page;
     }
   }
   if (!page) {
@@ -574,7 +663,7 @@ async function getWxWebviewPage(device = null, options = {}) {
 
   // 关键：上面按 URL 匹配到的可能只是"并存页面之一"，未必是屏幕上正在显示的那个。
   // 这里再挑一次前台页，避免把空壳页/后台页当成目标页。
-  const picked = await resolveForegroundPage(page);
+  const picked = await resolveForegroundPage(page, { expectedAppId });
   if (picked !== page) {
     const count = await picked.locator("*").count().catch(() => 0);
     log.info(`已切换到前台页: 元素数=${count}`);
@@ -615,6 +704,14 @@ async function appTest(testSubFunctions, options = {}) {
   // 这三个参数以前"解构出来了却从没用过"：deviceSerial 被硬编码序列号盖掉，
   // pkg / webviewTimeout 则完全没传下去。现在统一走解析函数，真的生效。
   const webviewOptions = resolveWebviewOptions(options);
+  // 期望的小程序 appid（安全阀）。解析一次即成为进程级默认值，
+  // 之后所有 resolveForegroundPage 调用（含页面对象内部的）都会自动带这道校验。
+  const expectedAppId = resolveExpectedAppId(options);
+  if (expectedAppId) {
+    log.info(`已开启 appid 安全阀：只操作 ${expectedAppId} 的页面`);
+  } else {
+    log.info("未指定 appid（UITEST_APP_ID / options.appId）—— 不做 appid 硬校验，可能跑到别的小程序上");
+  }
 
   // 用例上下文：每个用例一份，不跨用例共享可变状态
   const ctx = createCaseContext(context);
@@ -668,6 +765,7 @@ module.exports = {
   appIdOf,
   pickDevice,
   resolveWebviewOptions,
+  resolveExpectedAppId,
   createCaseContext,
   DEFAULT_WX_PKG,
   DEFAULT_WEBVIEW_TIMEOUT,

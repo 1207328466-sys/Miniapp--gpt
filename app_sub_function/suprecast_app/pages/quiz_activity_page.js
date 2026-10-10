@@ -32,6 +32,17 @@
  *   - **提交答案：会真的写数据** -> 只有调用方显式传 `allowSubmit: true` 才执行
  *   - 题目已答完时：选项通常已锁定，此时**跳过选择**（它不会有任何效果），
  *     而不是"点了没反应然后报一个假失败"
+ *
+ * ⚠️ **2026/10/10 追加的重要存疑（未定论，因此按最坏情况处理）**
+ * 实测观察到：一次"只选选项、没提交"的运行之后，题目进度从 `已答 0/1` 变成了 `1/1`。
+ * 有两种可能，我**没能区分**：
+ *   a) 有人在手机上手动点了提交；
+ *   b) **选中选项会直接自动提交**（单题活动可能就是这么设计的）。
+ * 如果是 (b)，那么"选择选项"就不是安全操作，我那次"选择"已经动了数据。
+ * 在查清之前，**选择与提交都按"会写数据"对待**，都要显式开关：
+ *   - `allowInteract`（默认 false）：是否允许点选项
+ *   - `allowSubmit`（默认 false）：是否允许点提交
+ * 查清 (a)/(b) 的办法：等该活动出新一期后，只点选项、不点提交，看进度是否变化。
  */
 
 const base = require("./base_page");
@@ -42,8 +53,14 @@ const SEL = {
   cardSwiper: '[class*="qa-activity-flow-item__swiper"]',
   quizPage: ".activity-quiz-page",
   title: ".activity-quiz-card__title",
-  option: '[class*="quiz-option--row"]',
-  submit: '[class*="activity-quiz-submit"]',
+  // ⚠️ 这三个一律用**精确类名**，不要用子串匹配 [class*="..."]：
+  // 实测 [class*="activity-quiz-submit"] 会命中三个元素，DOM 里排第一的是外层包裹
+  // `activity-quiz-submit-wrap`（347x91），而真正的按钮是 `h5-view activity-quiz-submit`（256x40）。
+  // 按子串匹配就会读到包裹元素的 class —— 这正是"禁用态判定失效"的原因，
+  // 也**和账本根因 11（[class*=header-tab] 命中容器）是同一个坑，我又踩了一次**。
+  // 教训：命中数量是信号；用例里对结构用 assertSelectorCount(期望 1) 能把这类坑当场抓住。
+  option: ".quiz-option--row",
+  submit: ".activity-quiz-submit",
 };
 
 const HOME_TAB_TEXT = "有问必答";
@@ -270,10 +287,22 @@ async function logState(page, kwargs, ctx) {
 /**
  * 选第一个选项，并**断言它真的被选中了**（动作结果断言，不是"点了就算数"）。
  * 题目已答完时选项通常已锁定 -> 跳过选择并说明原因（这不是"跳过验证"）。
+ *
+ * ⚠️ 默认不执行（`allowInteract` 默认 false）：因为存在"选中即自动提交"的存疑，
+ * 在查清之前把点选项也当成写数据操作。见文件头的说明。
+ *
+ * @param {{allowInteract?: boolean}} params
  */
-async function selectFirstOption(page, kwargs, ctx) {
+async function selectFirstOption(page, { allowInteract = false } = {}, ctx = null) {
   const st = await state(page);
 
+  if (!allowInteract) {
+    console.log(
+      "  allowInteract=false -> 不点选项。原因：存在「选中即自动提交」的存疑（见文件头），" +
+        "在查清之前把点选项也当作写数据操作。"
+    );
+    return page;
+  }
   if (st.answered !== null && st.total !== null && st.answered >= st.total) {
     console.log(
       `  该题已答完（${st.progressText}），选项应已锁定 -> 跳过选择` +
