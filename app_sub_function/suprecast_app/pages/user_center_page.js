@@ -19,9 +19,26 @@ const MARKERS = ["积分商城", "登录/注册"];
 
 /** 现在是不是用户中心 */
 async function isOn(page) {
+  // 注意：问的是"**屏幕上显示的是不是**用户中心"，必须看前台页 ——
+  // 用"候选页里有没有用户中心"会把被盖住的旧页当成已到达（真机踩过：0.55 秒假成功）。
   const fg = await base.foreground(page);
   const t = await base.pageText(fg);
   return MARKERS.some((m) => t.includes(m));
+}
+
+/**
+ * 找「用户中心」那一页：**前台优先，找不到就跨页找**。
+ * 不依赖"猜哪个页在前台"（坑 19）——想知道的是"哪一页是用户中心"。
+ */
+async function findUserCenterPage(page) {
+  const fg = await base.foreground(page);
+  const t = await base.pageText(fg);
+  if (MARKERS.some((m) => t.includes(m))) return fg;
+  for (const m of MARKERS) {
+    const hit = await base.findPageContaining(page, { text: m });
+    if (hit) return hit;
+  }
+  return null;
 }
 
 /**
@@ -63,7 +80,7 @@ async function switchTo(page, { timeout = 10000, retries = 1, waitBeforeTap = 15
         if (!ok) throw new Error(`等待用户中心内容超时（${timeout}ms）`);
 
         console.log("已切换到用户中心");
-        return await base.foreground(page);
+        return (await findUserCenterPage(page)) || (await base.foreground(page));
       } catch (e) {
         lastErr = e;
         if (i < retries) {
@@ -79,4 +96,4 @@ async function switchTo(page, { timeout = 10000, retries = 1, waitBeforeTap = 15
   }
 }
 
-module.exports = { BOTTOM_TAB_TEXT, MARKERS, isOn, switchTo };
+module.exports = { BOTTOM_TAB_TEXT, MARKERS, isOn, findUserCenterPage, switchTo };

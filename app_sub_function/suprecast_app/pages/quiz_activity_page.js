@@ -89,8 +89,20 @@ function preconditionError(message) {
 
 /** 现在是不是答题活动页 */
 async function isOn(page) {
+  // 注意：这里是"**屏幕上显示的是不是**答题页"，必须看前台页 ——
+  // 不能用"候选页里有没有答题页"（那会把被盖住的旧页当成已到达，真机踩过）。
   const fg = await base.foreground(page);
   return (await base.countOf(fg, SEL.quizPage)) > 0;
+}
+
+/**
+ * 找「答题活动页」那一页：**前台优先，找不到就跨页找**。
+ * 这样就不依赖"猜哪个页在前台"（坑 19）——我们真正想知道的是"哪一页是答题页"。
+ */
+async function findQuizPage(page) {
+  const fg = await base.foreground(page);
+  if ((await base.countOf(fg, SEL.quizPage)) > 0) return fg;
+  return base.findPageContaining(page, { selector: SEL.quizPage });
 }
 
 /**
@@ -287,7 +299,9 @@ async function ensureOn(page, { timeout = 15000 } = {}) {
  *   4. 题目状态词存在（未答 / 已选 / 答对 / 答错）
  */
 async function assertQuizPageRules(page, kwargs, ctx) {
-  const fg = await base.foreground(page);
+  // 【锚定】这是"页面上应该长什么样"的结构/需求检查，锚在**识别出来的答题页**上比锚在
+  // "猜出来的前台页"上更对：即使前台页判错，只要答题页存在，这一组检查就该在它上面做。
+  const fg = (await findQuizPage(page)) || (await base.foreground(page));
   const st = await state(fg);
   const text = await base.pageText(fg);
   const problems = [];
@@ -487,6 +501,7 @@ module.exports = {
   HOME_TAB_TEXT,
   CARD_TAG_QUIZ,
   isOn,
+  findQuizPage,
   state,
   findCard,
   cardListScrollable,

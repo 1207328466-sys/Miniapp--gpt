@@ -75,6 +75,116 @@ const rafAliveState = new WeakMap();
 const rafAliveSince = new WeakMap();
 
 /**
+ * 取"同一个目标小程序"的候选页面（appid 安全阀 + 丢掉已销毁的页）。
+ *
+ * ⚠️ 这里和 `resolveForegroundPage` 里的候选筛选是**同一套规则的两处实现**：
+ * 关键那条是 appid 安全阀（防止静默跑到生产小程序上）。改筛选规则时两处一起改。
+ */
+function pagesOfExpectedApp(page) {
+  let ctx = null;
+  try {
+    if (page && !page.isClosed()) ctx = page.context();
+  } catch (e) {
+    /* 已销毁的 page 调 context() 会抛错，走缓存 */
+  }
+  if (!ctx) ctx = cachedContext;
+  if (!ctx) throw new Error("拿不到浏览器 context：传入的 page 已失效，且此前没有缓存过 context");
+  cachedContext = ctx;
+
+  const expected = activeExpectedAppId || null;
+  return ctx
+    .pages()
+    .filter((p) => {
+      try {
+        return !p.isClosed();
+      } catch (e) {
+        return false;
+      }
+    })
+    .filter((p) => !expected || appIdOf(p.url()) === expected);
+}
+
+/**
+ * 在候选页里**直接找**"含某个元素 / 某段文字"的那一页（找不到返回 null）。
+ *
+ * 【为什么需要它】很多操作压根不需要知道"哪个页在前台" —— 它只想知道"哪个页里有我要的东西"。
+ * 例：打开搜索页之后要找 `wx-input.search-input`，直接在候选页里找含它的那一页就行，
+ * 不必先猜前台页再判断 —— "猜前台页"正是坑 19 反复出问题的地方。
+ *
+ * @param {import('playwright').Page} page
+ * @param {{selector?: string|null, text?: string|null, texts?: string[]|null}} matcher
+ *        selector：选择器至少命中 1 个元素
+ *        text    ：可见文字里包含这段
+ *        texts   ：可见文字里**同时**包含这几段（例如首页那排筛选 tab 全都出现）
+ * @returns {Promise<import('playwright').Page|null>}
+ *
+ * ⚠️ 边界（别误用）：这只解决"**定位**"，不解决"屏幕上现在显示的是哪一页"。
+ * 要断言"屏幕上看得见某段文字"，仍然得走 `resolveForegroundPage`。
+ */
+async function pagesContaining(page, { selector = null, text = null, texts = null } = {}) {
+  if (!selector && !text && !texts) {
+    throw new Error("pagesContaining 至少要给 selector / text / texts 之一");
+  }
+  const hits = [];
+  for (const p of pagesOfExpectedApp(page)) {
+    try {
+      if (selector && (await p.locator(selector).count().catch(() => 0)) > 0) {
+        hits.push(p);
+        continue;
+      }
+      if (text || texts) {
+        const body = await p
+          .evaluate(() =>
+            String((document.body && document.body.innerText) || "").replace(/\s+/g, " ")
+          )
+          .catch(() => "");
+        if ((text && body.includes(text)) || (texts && texts.length && texts.every((t) => body.includes(t)))) {
+          hits.push(p);
+        }
+      }
+    } catch (e) {
+      /* 页面可能刚被销毁，跳过 */
+    }
+  }
+  return hits;
+}
+
+/**
+ * 在候选页里**直接找**"含某个元素 / 某段文字"的那一页（找不到返回 null）。
+ *
+ * 【为什么需要它】很多操作压根不需要知道"哪个页在前台" —— 它只想知道"哪个页里有我要的东西"。
+ * 例：打开搜索页之后要找 `wx-input.search-input`，直接在候选页里找含它的那一页就行，
+ * 不必先猜前台页再判断 —— "猜前台页"正是坑 19 反复出问题的地方。
+ *
+ * ⚠️⚠️ 边界（真机踩过，别误用）：**"候选页里存在某一页" ≠ "屏幕上显示的就是它"。**
+ * 所以这个函数只能用来**定位**（找到就去操作它），不能用来判断"我是否已经到达某页" ——
+ * 后者会把"存在但被盖住的旧页"当成"已经到了"。
+ * 实证：切用户中心时用它做幂等判断 -> 0.55 秒就"成功"了、其实页面压根没切。
+ *
+ * @param {{exclude?: any[]}} [options] exclude：排除这些页面（例如"点击前就存在的旧页"，
+ *        用它避免把残留的旧搜索页当成刚打开的新页）
+ */
+async function findPageContaining(page, matcher = {}, { exclude = [] } = {}) {
+  const hits = await pagesContaining(page, matcher);
+  return hits.find((p) => !exclude.includes(p)) || null;
+}
+
+/** 反复找"含某元素的页"，直到找到或超时（找不到返回 null） */
+async function waitForPageContaining(
+  page,
+  matcher,
+  { timeout = 15000, interval = 300, exclude = [] } = {}
+) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const hit = await findPageContaining(page, matcher, { exclude });
+    if (hit) return hit;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, interval));
+  }
+}
+
+/**
  * 多候选时挑"哪个才是前台页"（纯函数，便于单独测）。
  *
  * 规则按优先级：
@@ -878,6 +988,10 @@ module.exports = {
   getWxWebviewPage,
   pickForegroundPage,
   resolveForegroundPage,
+  findPageContaining,
+  pagesContaining,
+  waitForPageContaining,
+  pagesOfExpectedApp,
   appIdOf,
   pickDevice,
   resolveWebviewOptions,

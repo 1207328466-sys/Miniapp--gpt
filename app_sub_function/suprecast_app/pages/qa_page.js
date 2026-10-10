@@ -72,10 +72,13 @@ const FEED_TAB_SELECTED = { minAlpha: 0.8, minWeight: 500 };
  * **只读**：只切 tab + 数活动卡，不点卡片、不改任何数据。
  */
 async function assertActivityBlockInAllFeedTabs(page, { tabs = FEED_TABS, waitAfterTab = 2500 } = {}) {
+  // 【锚定】这是需求 713594979 的"页面结构检查"，锚在**识别出来的首页信息流页**上，
+  // 而不是"猜出来的前台页"：就算前台页判错，只要信息流页存在，这组检查就该在它上面做。
+  page = (await findHomeFeedPage(page)) || (await base.foreground(page));
   const results = [];
 
   for (const tab of tabs) {
-    let fg = await base.foreground(page);
+    let fg = page; // 用锚定好的那一页，不再每次重新猜前台页
     if ((await base.countOfText(fg, tab)) === 0) {
       // 【自愈】找不到 tab 有两种原因：界面文案真的改了，或者刚才那一下点击把页面带歪了。
       // 后者在真机回归里出现过（见下面那处说明），所以先确认"是不是还在信息流上"。
@@ -93,7 +96,7 @@ async function assertActivityBlockInAllFeedTabs(page, { tabs = FEED_TABS, waitAf
 
     await base.tapText(fg, tab, `筛选 tab「${tab}」`);
     await base.sleep(waitAfterTab);
-    fg = await base.foreground(page);
+    fg = page;
 
     // 【自愈】真机回归踩到（2026/10/10）：某一次点「推荐」时，adb 实际点到了 tab 的
     // **祖先容器**（日志形如「向上第 2 层找到可点击容器」），页面被带到别处 ——
@@ -159,6 +162,33 @@ async function isOn(page) {
   return (await base.countOf(fg, SEL.searchBar)) > 0;
 }
 
+/** 这一页上是不是同时看得见那 4 个筛选 tab（= 它是首页信息流） */
+async function containsAllFeedTabs(p) {
+  const t = await base.pageText(p);
+  return FEED_TABS.every((x) => t.includes(x));
+}
+
+/**
+ * 找「首页信息流页」（那排筛选 tab 全都出现的那一页）：**前台优先，找不到就跨页找**。
+ *
+ * 为什么要有这个"跨页找"：很多判断不该依赖"猜哪个页在前台"（坑 19 反复出问题的地方）。
+ * 我们想知道的其实是"有没有哪一页就是首页信息流" —— 那直接在候选页里找就行。
+ */
+async function findHomeFeedPage(page) {
+  const fg = await base.foreground(page);
+  if (await containsAllFeedTabs(fg)) return fg;
+  return base.findPageContaining(page, { texts: FEED_TABS });
+}
+
+/**
+ * 找「搜索页」（含 `wx-input.search-input` 的那一页）：同样前台优先、找不到就跨页找。
+ */
+async function findSearchPage(page) {
+  const fg = await base.foreground(page);
+  if ((await base.countOf(fg, SEL.searchInput)) > 0) return fg;
+  return base.findPageContaining(page, { selector: SEL.searchInput });
+}
+
 /**
  * 现在是不是**真的**停在首页信息流上（判据：看得见至少一个筛选 tab）。
  *
@@ -166,13 +196,12 @@ async function isOn(page) {
  * `.search-container`，于是 isOn 在搜索页上也返回 true —— 用例以为自己在首页，
  * 接着去数筛选 tab / 数活动卡，得到「一个筛选 tab 都没找到」这种**看着像功能坏了、
  * 其实是没导航到位**的假失败。筛选 tab 只出现在信息流首块，用它当判据就躲开了这个歧义。
+ *
+ * 2026/10/10 晚追加：判据从"前台页上有没有筛选 tab"改成"**有没有哪一页**是首页信息流"
+ * （findHomeFeedPage）—— 少依赖一次"猜前台页"。
  */
 async function isOnHomeFeed(page) {
-  const fg = await base.foreground(page);
-  for (const tab of FEED_TABS) {
-    if ((await base.countOfText(fg, tab)) > 0) return true;
-  }
-  return false;
+  return Boolean(await findHomeFeedPage(page));
 }
 
 /**
@@ -186,8 +215,10 @@ async function isOnHomeFeed(page) {
  * @returns {Promise<{found: boolean, selected: string, tabs: Array}>}
  */
 async function readFeedTabs(page) {
-  const fg = await base.foreground(page);
-  return fg.evaluate(
+  // 注意：这里**不再换页**（原来是 base.foreground(page)）——
+  // 调用方可能已经把某一页锚定好了（例如"跨页找到的首页信息流页"），这里再换一次就把锚点丢了。
+  // 传进来是哪一页，就读哪一页。
+  return page.evaluate(
     ({ tabs, minAlpha, minWeight }) => {
       const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
       const all = Array.from(document.querySelectorAll("*"));
@@ -249,19 +280,19 @@ async function switchToFeedTab(page, { tab = FEED_DEFAULT_TAB, timeout = 8000, m
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if ((await activeFeedTab(page)) === tab) {
       console.log(`已选中筛选 tab「${tab}」，无需切换（幂等）`);
-      return await base.foreground(page);
+      return page;
     }
 
-    const fg = await base.foreground(page);
-    if ((await base.countOfText(fg, tab)) === 0) {
-      throw await base.notFound(`筛选 tab「${tab}」`, fg);
+    // 同样不换页：锚点在哪一页就在哪一页上点（tapText 直接用这一页的坐标）
+    if ((await base.countOfText(page, tab)) === 0) {
+      throw await base.notFound(`筛选 tab「${tab}」`, page);
     }
-    await base.tapText(fg, tab, `筛选 tab「${tab}」${attempt > 1 ? "（重试）" : ""}`);
+    await base.tapText(page, tab, `筛选 tab「${tab}」${attempt > 1 ? "（重试）" : ""}`);
 
     const ok = await base.waitUntil(async () => (await activeFeedTab(page)) === tab, { timeout });
     if (ok) {
       console.log(`已切到筛选 tab「${tab}」`);
-      return await base.foreground(page);
+      return page;
     }
     console.warn(
       `  第 ${attempt} 次点「${tab}」之后它没有变成选中态。实测：${describeFeedTabs(await readFeedTabs(page))}`
@@ -278,8 +309,7 @@ async function switchToFeedTab(page, { tab = FEED_DEFAULT_TAB, timeout = 8000, m
 
 /** 现在是不是搜索页（判据：出现真实输入框；此时搜索栏已消失） */
 async function isOnSearchPage(page) {
-  const fg = await base.foreground(page);
-  return (await base.countOf(fg, SEL.searchInput)) > 0;
+  return Boolean(await findSearchPage(page));
 }
 
 /**
@@ -337,11 +367,14 @@ async function ensureOnHomeFeed(page, { maxAttempts = 3 } = {}) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     page = await base.ensureOnTabPage(page); // 二级页（搜索页/详情页/答题页）先点返回退出
     page = await ensureOn(page); // 切到「有问必答」tab（幂等）
-    if (await isOnHomeFeed(page)) {
+    // 【不猜前台页】直接找"哪一页是首页信息流"（前台优先，找不到就跨页找），
+    // 找到就把后续操作锚在它上面
+    const feed = await findHomeFeedPage(page);
+    if (feed) {
       // 到了信息流还不算完：小程序会记住上次选中的是哪个筛选 tab
       //（上一次跑「检查活动入口」会把 tab 停在「我的关注」），所以顺手归位到默认 tab ——
       // 这样表格里的「回到首页」才真的是"标准起点"。owner 2026/10/10 反馈的就是这个。
-      return await switchToFeedTab(page);
+      return await switchToFeedTab(feed);
     }
     console.log(
       `  [自愈] 已在「有问必答」tab 但看不到信息流筛选 tab（多半停在搜索页/搜索结果页），点返回退出（第 ${attempt}/${maxAttempts} 次）`
@@ -360,24 +393,35 @@ async function ensureOnHomeFeed(page, { maxAttempts = 3 } = {}) {
  * 已在搜索页时直接返回（幂等）。
  */
 async function openSearch(page, { timeout = 15000 } = {}) {
-  if (await isOnSearchPage(page)) {
-    console.log("已在搜索页，跳过打开动作（幂等）");
-    return base.foreground(page);
+  // 【幂等判断必须看前台页】不能用"候选页里有没有搜索页"来判断"我已经在搜索页" ——
+  // 那会把"存在但被盖住的旧搜索页"当成已到达（真机实证：切用户中心因此 0.55 秒假成功、页面压根没切）。
+  const fg0 = await base.foreground(page);
+  if ((await base.countOf(fg0, SEL.searchInput)) > 0) {
+    console.log("已在搜索页（前台就是它），跳过打开动作（幂等）");
+    return fg0;
   }
+  // 记下"点击前就含输入框的旧页"，点完要排除它们 —— 免得把残留的旧页当成刚打开的新页
+  const stale = await base.pagesContaining(page, { selector: SEL.searchInput });
 
   page = await ensureOn(page, { timeout });
   await base.tapSelector(page, SEL.searchBar, "搜索栏");
 
-  const ok = await base.waitUntil(async () => isOnSearchPage(page), { timeout });
-  if (!ok) {
+  // 【不猜前台页】点完直接问："候选页里有没有哪一页出现了真实输入框？"
+  // 有就是它（并把它返回，后面的步骤就锚在这一页上）；没有才算真的没进去。
+  const found = await base.waitForPageContaining(
+    page,
+    { selector: SEL.searchInput },
+    { timeout, exclude: stale }
+  );
+  if (!found) {
     const now = await base.foreground(page);
     throw new Error(
-      `点击搜索栏后没有进入搜索页（未出现 ${SEL.searchInput}）。` +
+      `点击搜索栏后没有进入搜索页（候选页里都没有出现 ${SEL.searchInput}）。` +
         `当前页面前 120 字: ${JSON.stringify((await base.pageText(now)).slice(0, 120))}`
     );
   }
   console.log("已进入搜索页");
-  return base.foreground(page);
+  return found;
 }
 
 /**
@@ -411,13 +455,16 @@ async function typeKeyword(page, { keyword, clear = true, timeout = 8000 } = {})
   // 延迟 require：本文件与 android.js 互相引用
   const { getDevice, tapElement, waitImeShown } = require("../android");
 
-  const fg = await base.foreground(page);
-  if (!(await isOnSearchPage(fg))) {
+  // 【不猜前台页】直接找含输入框的那一页并锚定到它（找不到才是真的不在搜索页）
+  const anchored = await findSearchPage(page);
+  if (!anchored) {
+    const fg = await base.foreground(page);
     throw new Error(
-      `typeKeyword 需要在搜索页上执行（找不到 ${SEL.searchInput}）。` +
+      `typeKeyword 需要在搜索页上执行（候选页里都没有 ${SEL.searchInput}）。` +
         `当前页面前 120 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 120))}`
     );
   }
+  const fg = anchored;
 
   const device = await getDevice();
   const input = fg.locator(SEL.searchInput).first();
@@ -490,6 +537,8 @@ module.exports = {
   FEED_DEFAULT_TAB,
   isOn,
   isOnHomeFeed,
+  findHomeFeedPage,
+  findSearchPage,
   readFeedTabs,
   activeFeedTab,
   switchToFeedTab,

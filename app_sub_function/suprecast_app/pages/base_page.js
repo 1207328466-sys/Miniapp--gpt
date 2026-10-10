@@ -25,7 +25,12 @@
  * 历史上"两个判据看两个页面、结论自相矛盾"就是这么来的（账本 根因 9）。
  */
 
-const { resolveForegroundPage } = require("../../../common/app_common");
+const {
+  resolveForegroundPage,
+  findPageContaining,
+  pagesContaining,
+  waitForPageContaining,
+} = require("../../../common/app_common");
 const { getDevice, tapElement, goBack } = require("../android");
 
 /**
@@ -242,6 +247,9 @@ async function inputValue(locator) {
 
 module.exports = {
   getDevice,
+  findPageContaining,
+  pagesContaining,
+  waitForPageContaining,
   sleep,
   foreground,
   pageText,
