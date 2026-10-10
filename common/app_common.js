@@ -49,6 +49,53 @@ const ENV_KEYS = {
 let activeExpectedAppId = null;
 
 /**
+ * 【诊断】多候选时把"候选页身份"打出来。
+ *
+ * 为什么要它：2026/10/10 owner 跑表格用例「搜索消失_001」时，context 里 6 个页面有 3 个
+ * 同时在产出动画帧；兜底判据按"元素数最多"挑，挑中了**学习中心·专栏列表**（217 个元素），
+ * 而真正在前台的是搜索页 —— 于是"找搜索输入框"必然失败。
+ * 当时日志里只有一句「退化为按元素数挑选」，**看不出是哪几个页面在抢**，只能靠猜。
+ * 这里把每个候选的身份打出来：元素数 / url / 文字前 60 字。
+ *
+ * 限流：10 秒最多打一次明细。出错时这类判定每一步都会触发，
+ * 不限流会把整段日志冲掉（实测一次运行里刷了 30 多行同样的提示）。
+ */
+let lastAmbiguityDumpAt = 0;
+
+async function describePageIdentity(p) {
+  let url = "(拿不到 url)";
+  try {
+    url = p.url();
+  } catch (e) {
+    /* 页面刚被销毁 */
+  }
+  const count = await p.locator("*").count().catch(() => -1);
+  const text = await p
+    .evaluate(() =>
+      String((document.body && document.body.innerText) || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 60)
+    )
+    .catch(() => "(拿不到文字)");
+  return { url, count, text };
+}
+
+async function logAmbiguity(pages, pickedPage) {
+  const now = Date.now();
+  if (now - lastAmbiguityDumpAt < 10000) return; // 限流：只打第一次
+  lastAmbiguityDumpAt = now;
+
+  const rows = await Promise.all(pages.map(describePageIdentity));
+  log.debug(`前台页多候选：${rows.length} 个页面都还在出帧，把它们的身份打出来：[挑中] = 实际采用的`);
+  rows.forEach((r, i) => {
+    const mark = pages[i] === pickedPage ? "  [挑中]" : "";
+    log.debug(`  ${i + 1}) 元素数=${r.count} url=${r.url}${mark}`);
+    log.debug(`     文字前 60 字: ${JSON.stringify(r.text)}`);
+  });
+}
+
+/**
  * 解析期望的 appid（格式校验 + 落到进程级默认值）。
  * @param {{appId?: string}} [options]
  * @returns {string|null}
@@ -531,6 +578,8 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
       }
       alive.sort((a, b) => b.count - a.count);
       picked = alive[0];
+      // 把候选页身份打出来（限流，一次运行里只打第一次）—— 这种事靠猜没有意义
+      if (still.length > 1) await logAmbiguity(still, picked.page);
     }
   }
 
