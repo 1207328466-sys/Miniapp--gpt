@@ -275,6 +275,70 @@ async function ensureOn(page, { timeout = 15000 } = {}) {
   return openQuizCard(page, { timeout });
 }
 
+/**
+ * 校验答题页是否符合需求（需求 713594985「小程序-答题赢积分活动」）。
+ *
+ * **只读**：不选选项、不提交。断言项全部取自需求原文：
+ *   1. 吸顶常驻「已选N/总数 · 答对最多可赢积分」（实现里文案是「已答： N /1」，语义是已选）
+ *   2. 选项 2~6 个、且每个选项文本非空（需求：选项 2~6 个且互不相同）
+ *   3. **提交按钮状态与"是否选完"一致**（需求：登录用户须答完全部题目才能提交）
+ *      —— 断言"一致性"而不是"初始必须禁用"：小程序会记住上一次的选择（客户端状态），
+ *      按固定期望断言会得到一个由环境决定的假失败。
+ *   4. 题目状态词存在（未答 / 已选 / 答对 / 答错）
+ */
+async function assertQuizPageRules(page, kwargs, ctx) {
+  const fg = await base.foreground(page);
+  const st = await state(fg);
+  const text = await base.pageText(fg);
+  const problems = [];
+
+  if (!text.includes("答对最多可赢积分")) {
+    problems.push("吸顶栏缺少文案「答对最多可赢积分」");
+  }
+  if (!/已[选答]\s*[:：]?\s*\d+\s*\/\s*\d+/.test(text)) {
+    problems.push("吸顶栏缺少进度「已选/已答 N/总数」");
+  }
+  if (st.options.length < 2 || st.options.length > 6) {
+    problems.push(`选项数应在 2~6，实际 ${st.options.length}`);
+  }
+  st.options.forEach((o, i) => {
+    if (!o.text) problems.push(`选项[${i}] 文本为空`);
+  });
+  if (!/(未答|已选|已答|答对|答错)/.test(text)) {
+    problems.push("找不到题目状态词（未答/已选/答对/答错）");
+  }
+
+  const allSelected = st.answered !== null && st.total !== null && st.answered >= st.total;
+  const expectedDisabled = !allSelected;
+  if (st.submitDisabled !== expectedDisabled) {
+    problems.push(
+      `提交按钮状态与选择数不一致：已选 ${st.answered}/${st.total}，` +
+        `按钮禁用=${st.submitDisabled}（需求要求"答完全部题目才能提交"，即应为 ${expectedDisabled}）`
+    );
+  }
+
+  if (problems.length) {
+    throw new Error(
+      "答题页不符合需求（713594985）：\n  - " +
+        problems.join("\n  - ") +
+        "\n  实测: " +
+        JSON.stringify({
+          progressText: st.progressText,
+          optionCount: st.options.length,
+          submitText: st.submitText,
+          submitDisabled: st.submitDisabled,
+          pageText: text.slice(0, 160),
+        })
+    );
+  }
+  console.log(
+    `断言通过: 答题页符合需求口径（吸顶文案齐全 / 选项数=${st.options.length} / ` +
+      `按钮禁用=${st.submitDisabled} 与已选 ${st.answered}/${st.total} 一致 / 状态词齐全）`
+  );
+  if (ctx) ctx.set("quizRulesChecked", true);
+  return fg;
+}
+
 /** 打印答题页状态（只读），并把进度存进用例上下文 */
 async function logState(page, kwargs, ctx) {
   const st = await state(page);
@@ -408,6 +472,7 @@ module.exports = {
   cardListScrollable,
   openQuizCard,
   ensureOn,
+  assertQuizPageRules,
   logState,
   selectFirstOption,
   submitIfAllowed,

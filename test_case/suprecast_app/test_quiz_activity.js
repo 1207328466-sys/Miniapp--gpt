@@ -71,6 +71,10 @@ const ALLOW_SUBMIT = false;
     // 步骤 3：打印并记录状态（进度/选项/提交按钮），只读
     [quizPage.logState, null],
 
+    // 步骤 3.5：按需求口径做**只读断言**（需求 713594985）
+    // 吸顶文案齐全 / 选项 2~6 / 提交按钮状态与"是否选完"一致 / 题目状态词齐全
+    [quizPage.assertQuizPageRules, null],
+
     // 步骤 4：选第一个选项（默认关闭；已答完时也会跳过 —— 那时选项已锁定，硬点只会得到假失败）
     [quizPage.selectFirstOption, { allowInteract: ALLOW_INTERACT }],
 
