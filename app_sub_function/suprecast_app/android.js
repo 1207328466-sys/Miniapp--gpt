@@ -683,6 +683,7 @@ async function dumpElements(page, { tag } = {}) {
 
 module.exports = {
   WX_WEBVIEW_PKG,
+  getDevice,
   getForegroundPage,
   login,
   clickElementById,

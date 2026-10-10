@@ -63,9 +63,10 @@ function getCaller() {
  * @param {Array<[Function, Object|null]>} testSubFunctions 子步骤列表
  * @param {string|null} photoPath 截图保存路径，为空则不截图
  * @param {{fileName: string, funcName: string}} caller 调用者信息（用于截图目录命名）
+ * @param {import('playwright').AndroidDevice|null} device 设备对象，用于截图失败时回退到 adb screencap
  * @returns {Promise<import('playwright').Page>} page
  */
-async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { fileName: "app", funcName: "unknown" }) {
+async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { fileName: "app", funcName: "unknown" }, device = null) {
   let savedError = null;
   const totalStart = Date.now();
   const stepTimes = [];
@@ -94,10 +95,23 @@ async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { 
         );
         try {
           fs.mkdirSync(path.dirname(curPhotoPath), { recursive: true });
-          // webview 截图可能卡在等待字体加载，限制超时避免长时间阻塞
-          await page.screenshot({ path: curPhotoPath, timeout: 10000 });
+          // 优先用 Playwright 截图；但实测小程序页面在过渡（路由切换/字体加载）时
+          // 会卡在 "waiting for fonts to load" 之后，即使 10 秒超时也会失败。
+          // 因此失败后回退到 adb 原生截屏 —— 它截真实屏幕、不受页面脚本影响。
+          let shotOk = false;
+          try {
+            await page.screenshot({ path: curPhotoPath, timeout: 10000 });
+            shotOk = true;
+          } catch (e1) {
+            log.error(`page.screenshot 失败(${e1.message.split("\n")[0]})，改用 adb screencap`);
+          }
+          if (!shotOk && device) {
+            const buf = await device.shell("screencap -p");
+            fs.writeFileSync(curPhotoPath, buf);
+            log.info(`已用 adb screencap 保存截图: ${path.basename(curPhotoPath)}`);
+          }
         } catch (shotErr) {
-          log.error(`截图失败: ${shotErr.message}`);
+          log.error(`截图失败: ${shotErr.message.split("\n")[0]}`);
         }
       }
       stepTimes.push([func.name, stepDuration]);
@@ -279,7 +293,7 @@ async function appTest(testSubFunctions, options = {}) {
     // 等待微信小程序 WebView 并获取 Page
     let page = await getWxWebviewPage(device);
     const caller = getCaller();
-    page = await runAppSteps(page, testSubFunctions, photosPath, caller);
+    page = await runAppSteps(page, testSubFunctions, photosPath, caller, device);
     return { device, page };
   } catch (e) {
     log.error(`异常：${e.message}`);

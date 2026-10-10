@@ -56,7 +56,7 @@ function log(msg) {
 function record(name, status, detail) {
   RESULTS.push({ name, status, detail });
   const icon = status === "可用" ? "[OK]  " : status === "不可用" ? "[FAIL]" : "[?]   ";
-  log(`${icon} ${name} — ${status}：${detail}`);
+  log(`${icon} ${name} -- ${status}：${detail}`);
 }
 
 /** 安全执行：捕获异常并把错误信息返回，不让单个失败中断整轮 */
@@ -166,7 +166,7 @@ async function test_dumpElements(page) {
   return page;
 }
 
-/** 测试 3：assertElementExists —— 正向（用真实 id）和反向（用假 id） */
+/** 测试 3：assertElementExists ---- 正向（用真实 id）和反向（用假 id） */
 async function test_assertElementExists(page) {
   log("\n" + "-".repeat(60));
   log("测试: assertElementExists");
@@ -187,7 +187,7 @@ async function test_assertElementExists(page) {
   // 反向：用一定不存在的 id，应该失败。如果它"通过"了，说明断言是假的
   const r2 = await attempt(() => assertElementExists(page, { elementId: "definitely_not_exist_xyz_123", timeout: 2000 }));
   if (r2.ok) {
-    record("assertElementExists(不存在元素)", "严重问题", "不存在的元素竟然断言通过 → 这个断言函数是失效的！");
+    record("assertElementExists(不存在元素)", "严重问题", "不存在的元素竟然断言通过 -> 这个断言函数是失效的！");
   } else {
     record("assertElementExists(不存在元素)", "可用", `正确抛错: ${r2.error.slice(0, 80)}`);
   }
@@ -241,7 +241,7 @@ async function test_swipeUp(page) {
       moved ? "可用" : "不可用",
       moved
         ? `页面确实滚动了：元素 top 从 ${r.value.before.top.toFixed(1)} 变到 ${r.value.after.top.toFixed(1)}`
-        : `调用没报错，但元素位置没变（${r.value.before.top.toFixed(1)} → ${r.value.after.top.toFixed(1)}）→ 合成鼠标事件不被小程序识别`
+        : `调用没报错，但元素位置没变（${r.value.before.top.toFixed(1)} -> ${r.value.after.top.toFixed(1)}）-> 合成鼠标事件不被小程序识别`
     );
   }
   return page;
@@ -304,7 +304,7 @@ async function test_goBack(page) {
   } else if (r.value.urlChanged || r.value.contentChanged) {
     record("goBack", "可用", `URL 变化=${r.value.urlChanged}, 内容变化=${r.value.contentChanged}`);
   } else {
-    record("goBack", "不可用", "调用没报错，但 URL 和页面内容都没变化 → 小程序用自己的路由栈，不响应浏览器后退");
+    record("goBack", "不可用", "调用没报错，但 URL 和页面内容都没变化 -> 小程序用自己的路由栈，不响应浏览器后退");
   }
   return page;
 }
