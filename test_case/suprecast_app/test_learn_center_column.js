@@ -69,6 +69,7 @@ const {
   getDevice,
   tapElement,
   dumpElements,
+  goBack,
   assertTextVisible,
   assertTextNotVisible,
   assertSelectorExists,
@@ -88,7 +89,8 @@ const SEL_COLUMN_TAB_TEXT = "专栏"; // 顶部 tab 文本
 const SEL_COLUMN_CARD = ".column-card"; // 专栏卡片（可点击区域）
 const SEL_COLUMN_NAME = ".column-card-name"; // 卡片里的专栏名
 const SEL_DETAIL_TITLE = ".col-title"; // 详情页专栏标题，列表页没有此 class
-const SEL_BACK_BUTTON = '[class*="nav-return"]'; // 详情页顶部返回按钮
+// 返回按钮的选择器已内聚到 android.js 的 goBack() 里（它有一组候选 + 兜底），
+// 用例侧不再自己维护，避免两处各写一份、改一处漏一处。
 
 const EXPECTED_CARD_COUNT = 7; // 实测值；不一致只警告不失败（内容会更新）
 const MARKER_LEARN_CENTER = "热门专栏"; // 学习中心-专栏页独有标题
@@ -206,16 +208,10 @@ async function stepEnsureColumnList(page) {
     );
 
     if (onDetail) {
-      const backCount = await page.locator(SEL_BACK_BUTTON).count();
-      console.log(`    找到 ${backCount} 个返回按钮（选择器 ${SEL_BACK_BUTTON}）`);
-      if (backCount > 0) {
-        await tapLocator(page, page.locator(SEL_BACK_BUTTON), "顶部返回按钮");
-      } else {
-        console.log("    未找到返回按钮，改用安卓系统返回键 input keyevent 4");
-        const device = await getDevice();
-        await device.shell("input keyevent 4");
-      }
-      await sleep(3500);
+      // 用框架的 goBack：它内部真实点击返回按钮（而不是浏览器历史后退），
+      // 并且会校验"页面确实变了"才算成功。
+      page = await goBack(page);
+      await sleep(1500);
       continue;
     }
 

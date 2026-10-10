@@ -17,8 +17,84 @@ const fs = require("fs");
 const path = require("path");
 const { _android: android } = require("playwright");
 
-const DEFAULT_DEVICE_SERIAL = "93e9db1c";
+// 设备序列号没有默认值 —— 它必须来自"显式指定 / 环境变量 / 唯一连接的设备"，
+// 见 pickDevice 的说明（写死一个序列号在换机器时必挂，而且会静默连错设备）。
 const DEFAULT_WX_PKG = "com.tencent.mm:appbrand0";
+const DEFAULT_WEBVIEW_TIMEOUT = 40000;
+
+/** 允许用环境变量覆盖的配置项（给"本机设备不一样"留出口，不必改代码） */
+const ENV_KEYS = {
+  deviceSerial: "UITEST_DEVICE_SERIAL",
+  pkg: "UITEST_WX_PKG",
+  webviewTimeout: "UITEST_WEBVIEW_TIMEOUT",
+};
+
+/**
+ * 决定"用哪台设备"。
+ *
+ * 优先级：显式传入的 deviceSerial > 环境变量 UITEST_DEVICE_SERIAL > 自动探测。
+ *
+ * 【为什么不能直接取 devices[0]】
+ * 原实现无条件 `devices.find(===硬编码序列号) || devices[0]`，于是：
+ *   - 序列号写死，换一台手机就"找不到"，只能靠 devices[0] 兜底蒙对；
+ *   - 一旦插了第二台设备（模拟器、同事的手机），会**静默连错设备** ——
+ *     不报任何错，但整个用例在测另一个对象。这是最难查的一类问题。
+ * 所以这里改成：只有"恰好一台设备"才允许自动选择；多于一台必须显式指定。
+ *
+ * @param {import('playwright').AndroidDevice[]} devices adb 已识别的设备列表
+ * @param {string} [deviceSerial] 显式指定的序列号
+ * @returns {import('playwright').AndroidDevice}
+ */
+function pickDevice(devices, deviceSerial) {
+  if (!devices || devices.length === 0) {
+    throw new Error(
+      "adb 没有识别到任何设备。检查：手机已开启 USB 调试、数据线支持传输、" +
+        "`adb devices` 显示 device（而不是 unauthorized/offline）"
+    );
+  }
+
+  const wanted = deviceSerial || process.env[ENV_KEYS.deviceSerial] || null;
+  const serials = devices.map((d) => d.serial());
+
+  if (wanted) {
+    const hit = devices.find((d) => d.serial() === wanted);
+    if (!hit) {
+      throw new Error(
+        `指定的设备 ${wanted} 不在已连接列表里。已连接：${serials.join(", ")}`
+      );
+    }
+    return hit;
+  }
+
+  if (devices.length === 1) {
+    log.info(`未指定设备，自动选用唯一连接的设备：${serials[0]}`);
+    return devices[0];
+  }
+
+  throw new Error(
+    `检测到 ${devices.length} 台设备（${serials.join(", ")}），无法自动决定用哪一台。` +
+      `请显式指定其中一台：appTest(funcList, { deviceSerial: "..." })，` +
+      `或设置环境变量 ${ENV_KEYS.deviceSerial}=...`
+  );
+}
+
+/**
+ * 解析 webview 相关配置：显式参数 > 环境变量 > 默认值。
+ * @param {{pkg?: string, webviewTimeout?: number}} [options]
+ * @returns {{pkg: string, webviewTimeout: number}}
+ */
+function resolveWebviewOptions(options = {}) {
+  const rawTimeout =
+    options.webviewTimeout || process.env[ENV_KEYS.webviewTimeout] || DEFAULT_WEBVIEW_TIMEOUT;
+  const timeout = Number(rawTimeout);
+  if (!Number.isFinite(timeout) || timeout <= 0) {
+    throw new Error(`webviewTimeout 必须是正数，当前值：${rawTimeout}`);
+  }
+  return {
+    pkg: options.pkg || process.env[ENV_KEYS.pkg] || DEFAULT_WX_PKG,
+    webviewTimeout: timeout,
+  };
+}
 
 const log = {
   info: (msg) => console.log(`[INFO] ${msg}`),
@@ -356,40 +432,65 @@ async function pickForegroundPage(page, timeout = 800) {
  * 【重要】返回值保证是"当前显示在屏幕上的前台页"，而不是随便一个 webview 对应的页。
  * 小程序同一 context 下并存多个 page，选错会导致元素定位全部超时。
  *
- * @param {import('playwright').AndroidDevice} device
+ * @param {import('playwright').AndroidDevice|null} device 设备对象；为空时自行连接
+ * @param {{pkg?: string, webviewTimeout?: number}} [options]
+ *        pkg: 小程序 webview 进程包名；webviewTimeout: 等待 webview 出现的超时（毫秒）
  * @returns {Promise<import('playwright').Page>} 小程序前台 webview 的 page
  */
-async function getWxWebviewPage(device = null) {
-  if (!device)
-  {
+async function getWxWebviewPage(device = null, options = {}) {
+  const { pkg, webviewTimeout } = resolveWebviewOptions(options);
+
+  if (!device) {
     // 【官方API：android.devices】连接安卓设备，adb必须已经识别设备
     const devices = await android.devices();
-    device = devices.find((d) => d.serial() === DEFAULT_DEVICE_SERIAL) || devices[0];
+    device = pickDevice(devices); // 显式指定 > 环境变量 > 唯一的设备 > 报错
     log.info(`AndroidDevice连接成功，设备serial: ${device.serial()}`);
   }
-  log.info("等待微信小程序WebView...");
+  log.info(`等待微信小程序WebView（pkg=${pkg}，超时 ${webviewTimeout}ms）...`);
+
   // 给可能阻塞的调用加超时兜底，避免某个后台 webview 拖死整体
   const withTimeout = (promise, ms, msg) =>
     Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(msg)), ms))]);
 
-  const allWebviews = await device.webViews();
   let page = null;
-  for (const wv of allWebviews) {
-    try {
-      const pageTmp = await withTimeout(wv.page(), 5000, "page() 超时");
-      const url = pageTmp.url(); // url() 同步返回，无需 await
-      console.log(`检查 webview pid=${wv.pid()} url=${url}`);
-      // 小程序页面特征：servicewechat.com
-      if (url.includes("servicewechat.com")) {
-        page = pageTmp; // 直接复用该 page，不要 close、也不要再取一次
-        log.info(`WebView捕获成功, pid=${wv.pid()}, url=${url}`);
-        break;
+
+  // 首选：按 pkg 直接找小程序 webview。
+  // 注意用 withTimeout 自己兜超时，而不是把 timeout 塞给 webView()——
+  // 这样无论底层 API 的签名怎么变，webviewTimeout 都一定生效。
+  try {
+    const wv = await withTimeout(
+      device.webView({ pkg }),
+      webviewTimeout,
+      `等待小程序 webview 超时（pkg=${pkg}，${webviewTimeout}ms）`
+    );
+    page = await withTimeout(wv.page(), 5000, "page() 超时");
+    log.info(`按 pkg 找到小程序 webview，pid=${wv.pid()}, url=${page.url()}`);
+  } catch (e) {
+    log.info(`按 pkg 找 webview 未成功（${e.message.split("\n")[0]}），回退为遍历全部 webview`);
+  }
+
+  // 回退：遍历所有 webview，按 URL 特征挑（与旧版本行为一致，保证不会更糟）
+  if (!page) {
+    const allWebviews = await device.webViews();
+    for (const wv of allWebviews) {
+      try {
+        const pageTmp = await withTimeout(wv.page(), 5000, "page() 超时");
+        const url = pageTmp.url(); // url() 同步返回，无需 await
+        console.log(`检查 webview pid=${wv.pid()} url=${url}`);
+        // 小程序页面特征：servicewechat.com
+        if (url.includes("servicewechat.com")) {
+          page = pageTmp; // 直接复用该 page，不要 close、也不要再取一次
+          log.info(`WebView捕获成功, pid=${wv.pid()}, url=${url}`);
+          break;
+        }
+      } catch (e) {
+        console.error(`跳过 webview: ${e.message}`);
       }
-    } catch (e) {
-      console.error(`跳过 webview: ${e.message}`);
     }
   }
-  if (!page) throw new Error("找不到前台小程序webview");
+  if (!page) {
+    throw new Error("找不到前台小程序webview（检查：微信已打开目标小程序，且小程序处于前台）");
+  }
 
   // 等待DOM加载
   await page.waitForLoadState("domcontentloaded");
@@ -426,30 +527,28 @@ async function getWxWebviewPage(device = null) {
  *
  * @param {Array<[Function, Object|null]>} testSubFunctions 测试子步骤列表
  * @param {Object} [options] 可选配置
- * @param {string} [options.deviceSerial] 设备序列号（adb devices），默认 93e9db1c
- * @param {string} [options.pkg] 微信小程序 webview 进程包名
+ * @param {string} [options.deviceSerial] 设备序列号；不传时依次尝试环境变量
+ *        UITEST_DEVICE_SERIAL、唯一连接的设备；多台设备时**报错**而不是随便挑一台
+ * @param {string} [options.pkg] 微信小程序 webview 进程包名，默认 com.tencent.mm:appbrand0
  * @param {string|null} [options.photosPath] 截图存放路径
- * @param {number} [options.webviewTimeout] 等待 webview 出现的超时时间（毫秒）
+ * @param {number} [options.webviewTimeout] 等待 webview 出现的超时（毫秒），默认 40000
  * @param {boolean} [options.closeOnFinish] 结束后是否关闭设备连接，默认 true
  * @returns {Promise<{device: import('playwright').AndroidDevice, page: import('playwright').Page}>}
  */
 async function appTest(testSubFunctions, options = {}) {
-  const {
-    deviceSerial = DEFAULT_DEVICE_SERIAL,
-    pkg = DEFAULT_WX_PKG,
-    photosPath = null,
-    webviewTimeout = 40000,
-    closeOnFinish = true,
-  } = options;
+  const { deviceSerial, photosPath = null, closeOnFinish = true } = options;
+  // 这三个参数以前"解构出来了却从没用过"：deviceSerial 被硬编码序列号盖掉，
+  // pkg / webviewTimeout 则完全没传下去。现在统一走解析函数，真的生效。
+  const webviewOptions = resolveWebviewOptions(options);
 
   let device = null;
   try {
     // 【官方API：android.devices】连接安卓设备，adb必须已经识别设备
     const devices = await android.devices();
-    device = devices.find((d) => d.serial() === DEFAULT_DEVICE_SERIAL) || devices[0];
+    device = pickDevice(devices, deviceSerial);
     log.info(`AndroidDevice连接成功，设备serial: ${device.serial()}`);
     // 等待微信小程序 WebView 并获取 Page
-    let page = await getWxWebviewPage(device);
+    let page = await getWxWebviewPage(device, webviewOptions);
     const caller = getCaller();
     page = await runAppSteps(page, testSubFunctions, photosPath, caller, device);
     return { device, page };
@@ -471,4 +570,8 @@ module.exports = {
   pickForegroundPage,
   resolveForegroundPage,
   appIdOf,
+  pickDevice,
+  resolveWebviewOptions,
+  DEFAULT_WX_PKG,
+  DEFAULT_WEBVIEW_TIMEOUT,
 };

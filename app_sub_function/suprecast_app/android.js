@@ -31,8 +31,13 @@ const SEARCH_INPUT = "wx-input.search-input";
 let androidDevice = null;
 async function getDevice() {
   if (!androidDevice) {
+    const { pickDevice } = require("../../common/app_common");
     const devices = await android.devices();
-    androidDevice = devices[0];
+    // 与 appTest 共用同一套"选哪台设备"的规则：显式指定 > 环境变量 >
+    // 唯一连接的设备 > 多台时报错。
+    // 以前这里直接取 devices[0]，和 appTest 各挑各的 —— 插第二台设备时
+    // 两边可能连到不同设备上，而且不报错。
+    androidDevice = pickDevice(devices);
     console.log(`AndroidDevice连接成功，设备serial: ${androidDevice.serial()}`);
   }
   return androidDevice;
@@ -731,17 +736,99 @@ async function swipeUp(page, { duration = 500, startRatio = 0.75, endRatio = 0.2
   }
 }
 
+// 返回按钮的候选选择器。第一个是专栏详情页实测可用的：
+//   <wx-text class="h5-i iconfont icon-base-nav-return icon-base-nav-return- my-iconfont">
+const BACK_BUTTON_SELECTORS = [
+  '[class*="nav-return"]',
+  '[class*="icon-return"]',
+  '[class*="icon-back"]',
+  '[class*="nav-back"]',
+];
+
 /**
- * 返回上一页（基于 webview 历史记录）
+ * 返回上一页。
+ *
+ * 【为什么不能用 page.goBack()】
+ * 那是浏览器的历史后退，而小程序有自己的路由栈。实测 page.goBack() 之后
+ * **URL 和页面内容都不变**（等于什么都没做，还不报错）。
+ * 所以必须真实点击左上角的返回按钮。
+ *
+ * 点击前后还要比对页面内容/元素数，**确认真的换页了才算成功** ——
+ * "点了没反应"绝不能被当成通过，这正是框架反复强调要避免的假通过。
+ *
  * @param {import('playwright').Page} page 小程序 webview 页面
- * @returns {Promise<import('playwright').Page>} page
+ * @param {{timeout?: number, selectors?: string[]}} params
+ *        timeout: 等待页面变化的超时（毫秒）；
+ *        selectors: 覆盖返回按钮的候选选择器（页面结构不同、或需要定向诊断时用）
+ * @returns {Promise<import('playwright').Page>} 返回后的前台页
  */
-async function goBack(page) {
+async function goBack(page, { timeout = 10000, selectors = BACK_BUTTON_SELECTORS } = {}) {
+  // 注意用 require 而不是顶部 import：app_common 与本文件存在循环依赖
+  const { resolveForegroundPage } = require("../../common/app_common");
   try {
-    await page.goBack();
-    await page.waitForTimeout(500);
-    console.log("已返回上一页");
-    return page;
+    const device = await getDevice();
+    const before = await resolveForegroundPage(page);
+
+    let beforeText = "";
+    try {
+      beforeText = await before.evaluate(() => (document.body.innerText || "").slice(0, 400));
+    } catch (e) {
+      // 页面可能在读取时被销毁，只做元素数比对
+    }
+    const beforeCount = await before.locator("*").count().catch(() => -1);
+
+    // 找返回按钮：按候选选择器依次试，命中第一个就用它
+    let locator = null;
+    let usedSelector = null;
+    for (const sel of selectors) {
+      const n = await before.locator(sel).count().catch(() => 0);
+      if (n > 0) {
+        locator = before.locator(sel).first();
+        usedSelector = sel;
+        break;
+      }
+    }
+
+    if (locator) {
+      console.log(`点击返回按钮（选择器 ${usedSelector}）`);
+      await tapElement(device, before, locator);
+    } else {
+      // 兜底：实在找不到返回按钮，用安卓系统返回键。
+      // 小程序对 keyevent 4 的处理和按钮不一定等价，所以仍然要校验结果。
+      console.warn(`未找到返回按钮（试过 ${selectors.join(" / ")}），改用安卓返回键 input keyevent 4`);
+      await device.shell("input keyevent 4");
+    }
+
+    // 校验：内容或元素数发生变化，才算真的返回了
+    const deadline = Date.now() + timeout;
+    let after = before;
+    let afterText = beforeText;
+    let afterCount = beforeCount;
+    let changed = false;
+    while (Date.now() < deadline) {
+      await sleep(500);
+      after = await resolveForegroundPage(before);
+      try {
+        afterText = await after.evaluate(() => (document.body.innerText || "").slice(0, 400));
+      } catch (e) {
+        afterText = beforeText;
+      }
+      afterCount = await after.locator("*").count().catch(() => -1);
+      if (afterText !== beforeText || (beforeCount > 0 && afterCount !== beforeCount)) {
+        changed = true;
+        break;
+      }
+    }
+
+    if (!changed) {
+      throw new Error(
+        `已发出返回操作，但页面没有变化（元素数 ${beforeCount} -> ${afterCount}）。` +
+          `可能命中的不是返回按钮，或页面切换比预期慢。`
+      );
+    }
+
+    console.log(`已返回上一页（元素数 ${beforeCount} -> ${afterCount}）`);
+    return after;
   } catch (e) {
     console.error(`返回失败: ${e.message}`);
     throw e;

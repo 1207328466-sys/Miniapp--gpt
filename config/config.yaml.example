@@ -1,0 +1,32 @@
+# ===== 小程序自动化测试框架 · 配置样例 =====
+#
+# 用法：把本文件复制为 config/config.yaml，再按本机情况修改。
+#   PowerShell:  Copy-Item config/config.yaml.example config/config.yaml
+#
+# config/config.yaml 已写进 .gitignore（配置常含账号密码等敏感信息），不会被提交；
+# 本样例文件本身是入库的，用来告诉后来人"这个文件该长什么样"。
+#
+# ⚠️ 重要边界（2026/10/10）
+# 本文件目前只供 **Python 侧** 读取（common/share/base_config.py）。
+# **JS 侧的用例不读这个文件**，它的配置来源是另一套：
+#     显式参数  >  环境变量  >  自动探测
+#   环境变量：UITEST_DEVICE_SERIAL / UITEST_WX_PKG / UITEST_WEBVIEW_TIMEOUT
+# 把 JS 侧也接到本文件属于后续项（需要引入 YAML 解析依赖，或由 Python 侧生成）。
+# 在那之前，`device_serial` 与环境变量 UITEST_DEVICE_SERIAL 指的是同一件事，
+# 只是分属两套读取机制 —— 改动时记得两边一起看。
+
+# ---------- 设备 ----------
+# adb 看到的设备序列号，用 `adb devices` 查（形如 3B1F64EA9BBUTE00）。
+# 留空时框架会自动选用唯一连接的设备；接了多台设备则必须指定，否则直接报错。
+device_serial: ""
+
+# ---------- 微信小程序 webview ----------
+# 小程序 webview 所在进程的包名（一般不需要改）
+wx_pkg: "com.tencent.mm:appbrand0"
+# 等待 webview 出现的超时（毫秒）
+webview_timeout: 40000
+
+# ---------- 测试账号 ----------
+# ⚠️ 当前 android.js 的 login() 里仍硬编码了账号「4148」，
+# 这一项是留给"把账号抽出来"那一步用的，现在填了也不会被读取。
+test_account: ""

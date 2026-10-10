@@ -435,7 +435,7 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 
 ## 八、当前已知问题与优化路线
 
-> **2026/10/10 更新（三轮）**
+> **2026/10/10 更新（四轮）**
 >
 > **第一轮**修掉 7 个根本缺陷，核心交互能力（点击、滑动、页面切换、元素断言）全部可用。
 > **第二轮**修的是「页面的前后台身份」这条主线：导航后旧 page 会**降级为后台页**
@@ -444,6 +444,8 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 > 现在这件事由框架统一处理（`resolveForegroundPage`）。
 > **第三轮**补上断言层 —— 这是"用例通过"到底意味着什么的分水岭：此前只有
 > `assertElementExists` 一个断言，功能坏了用例照样报 passed。
+> **第四轮**清掉 P0：设备序列号 / `pkg` / `webviewTimeout` 三个"定义了却没用"的参数
+> 真正接通，`goBack` 换成真实点击返回按钮，Python 侧的 `import common` 与配置样例补上。
 >
 > 完整根因分析与实测证据见 [框架能力与问题账本.md](docs/框架能力与问题账本.md)。
 
@@ -479,15 +481,23 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 |---|---|---|
 | 13 | 缺结果断言层，功能坏了用例也会报 passed | 新增 `assertTextVisible` / `assertTextNotVisible` / `assertSelectorExists` / `assertSelectorCount`：内部轮询等待、失败自带现场证据、返回最新前台页 |
 
+### 已修复 · 第四轮（P0 全部 5 项）
+
+| 问题 | 修复要点 |
+|---|---|
+| 设备序列号硬编码，`options.deviceSerial` 解构了却从未使用 | 新增 `pickDevice()`：显式参数 > 环境变量 `UITEST_DEVICE_SERIAL` > **唯一**连接的设备；接了多台就**报错**，而不是随便挑一台静默测错对象 |
+| `pkg` / `webviewTimeout` 定义了却从未使用 | 新增 `resolveWebviewOptions()`（参数 > 环境变量 > 默认值）；`getWxWebviewPage` 优先按 `pkg` 找 webview，并用 `withTimeout` 自己兜超时，不再依赖底层 API 的签名 |
+| `goBack` 用浏览器后退，**实测无效** | 改为真实点击返回按钮（一组候选选择器 + `keyevent 4` 兜底），并且要求**页面确实变了**才算成功 |
+| `common/__init__.py` 导入 8 个不存在的模块，`import common` 直接报错 | 只导出确实存在的内容（`BaseSCConfig` / `BaseSCLog`），`import common` 恢复可用 |
+| `config/config.yaml` 不存在，配置管理类无法工作 | 补 `config/config.yaml.example` 模板；`base_config.py` 缺文件时给出可操作的报错，并修掉硬编码反斜杠的跨平台隐患 |
+
+> ⚠️ 配置目前**分属两套机制**：JS 侧读「显式参数 / 环境变量」，Python 侧读
+> `config/config.yaml`，样例文件里写清了这条边界。把 JS 侧也接到 YAML 是后续项
+> （需要引入 YAML 解析依赖，或由 Python 侧生成）。
+
 ### P0 · 仍待修
 
-| 问题 | 位置 | 影响 |
-|---|---|---|
-| 设备序列号硬编码，`options.deviceSerial` 解构了却从未使用 | `common/app_common.js:20` / `:199` / `:266` / `:277` | 换设备就挂，只能靠 `\|\| devices[0]` 兜底 |
-| `pkg` / `webviewTimeout` 参数定义了从未使用 | `common/app_common.js:267` / `:269` | 传参无效果，超时时间硬编码 5000ms |
-| `goBack` 用浏览器后退，**实测无效** | `android.js` `goBack` | 需改为真实点击左上角返回按钮 |
-| `common/__init__.py` 导入不存在的模块，`import common` 直接报错 | `common/__init__.py` | Python 侧能力完全没接通 |
-| `config/config.yaml` 不存在 | `common/share/base_config.py` | 配置管理类无法工作 |
+无。
 
 ### P1 · 结构缺失
 
@@ -512,9 +522,10 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 1. ~~补文档与工程基础~~ ✅ 已完成
 2. ~~修框架根本缺陷~~ ✅ 已完成（第一轮 7 项 + 第二轮 5 项）
 3. ~~补断言层~~ ✅ 已完成（第三轮，4 个断言函数）
-4. **修 P0 缺陷**：设备序列号配置化、`pkg`/`webviewTimeout` 接通、`goBack` 换实现
+4. ~~修 P0 缺陷~~ ✅ 已完成（第四轮，5 项）
 5. **搭页面对象**：把各页面不同的 tab 栏 class、硬编码的选择器与测试数据统一管理
 6. **打通 Python 侧**：实现 `sc_config` / `sc_log`，让配置和日志真正驱动 JS 用例
+   （第四轮只做到"`import common` 不再报错 + 配置样例就位"，业务类仍未实现）
 7. **抽公共前置步骤**：让用例只写业务差异部分
 
 ---

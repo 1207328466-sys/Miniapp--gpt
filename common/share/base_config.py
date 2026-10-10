@@ -32,7 +32,11 @@ class BaseSCConfig:
         # 初始化时不立即加载配置，使用懒加载
         current_path = os.path.dirname(os.path.abspath(__file__))
         self.ROOT_PATH = os.path.dirname(os.path.dirname(current_path))
-        self.config_path = os.path.join(self.ROOT_PATH, r'config\config.yaml')
+        # 原来是 os.path.join(self.ROOT_PATH, r'config\config.yaml')：
+        # 用字面量反斜杠拼路径，在 Windows 上能用，换到 Linux/macOS 会得到一个
+        # 带字面量反斜杠的非法路径。改成逐段 join，让它跨平台成立。
+        self.config_path = os.path.join(self.ROOT_PATH, 'config', 'config.yaml')
+        self.config_example_path = os.path.join(self.ROOT_PATH, 'config', 'config.yaml.example')
         self.TEST_URL = None
 
     def _should_reload(self, file_path, current_mtime):
@@ -48,6 +52,14 @@ class BaseSCConfig:
         """懒加载主配置文件，支持热重载"""
         if (self._config_data is None or
                 self._should_reload(self.config_path, self._config_mtime)):
+            # 文件不存在时给出可操作的提示，而不是让 open() 抛一个只说路径的
+            # FileNotFoundError —— 后来人不知道"该怎么把它建起来"。
+            if not os.path.exists(self.config_path):
+                raise FileNotFoundError(
+                    f"配置文件不存在：{self.config_path}\n"
+                    f"  做法：把 {self.config_example_path} 复制成 config/config.yaml 再修改。\n"
+                    f"  （config/config.yaml 已在 .gitignore 中，不会被提交：配置常含敏感信息）"
+                )
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 self._config_data = yaml.safe_load(f)
             self._config_mtime = os.path.getmtime(self.config_path)

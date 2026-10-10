@@ -2,18 +2,30 @@
 
 common-module 是 Test 项目的公共模块，提供日志管理、配置管理等核心基础功能，旨在提升代码复用性和项目维护性，降低重复开发成本。
 
+> **⚠️ 文件现状（2026/10/10 逐项核对）**
+>
+> 下面目录树里有 **4 个文件其实并不存在** —— `sc_log.py`、`sc_config.py`、
+> `test_common.py` 和本目录的 `.gitignore`。它们从项目建立起就只写在这份说明里。
+>
+> 并且 `common/__init__.py` 原来 import 了 8 个不存在的模块，导致 `import common`
+> 直接 ModuleNotFoundError，连 `from common.share import ...` 都进不去 —— 已修正为
+> 只导出确实存在的内容。
+>
+> 结论：**本模块目前只有"基础类"，没有"业务类"，也没有被任何 JS 用例读取。**
+> 对当前框架而言它是**预留能力**，别以为配置和日志已经接通了。
+
 ## 目录
 
 ```
 common-module/
-├── __init__.py          # 模块导出文件，暴露核心可调用接口
-├── base_log.py          # 日志管理基础类实现
-├── base_config.py       # 配置管理基础类实现
-├── sc_log.py            # 日志业务类（继承BaseSCLog，对外提供日志能力）
-├── sc_config.py         # 配置业务类（继承BaseSCConfig，对外提供配置能力）
-├── test_common.py       # 通用测试方法（init_global、web_test）
-├── README.md            # 模块说明文档
-└── .gitignore           # Git版本控制忽略文件配置
+├── __init__.py          # ✅ 存在：模块导出（2026/10/10 修正为只导出实际存在的内容）
+├── base_log.py          # ✅ 存在：日志管理基础类
+├── base_config.py       # ✅ 存在：配置管理基础类
+├── sc_log.py            # ❌ 不存在：日志业务类（规划，从未实现）
+├── sc_config.py         # ❌ 不存在：配置业务类（规划，从未实现）
+├── test_common.py       # ❌ 不存在：通用测试方法（规划，从未实现）
+├── README.md            # ✅ 存在：模块说明（本文件）
+└── .gitignore           # ❌ 不存在（仓库根目录有 .gitignore，本目录没有）
 ```
 
 ## 核心功能
