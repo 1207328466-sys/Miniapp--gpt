@@ -62,6 +62,54 @@ let activeExpectedAppId = null;
  */
 let lastAmbiguityDumpAt = 0;
 
+/**
+ * 每个页面"上一轮是不是在出帧" / "是什么时候开始出帧的"。
+ *
+ * 为什么需要：多候选时的兜底判据原来是"元素数最多的赢"，真机上因此挑错过页（坑 19）。
+ * 2026/10/10 用 probe_pages.js --timeline 采样证明了一个可靠信号：
+ *   从首页点进搜索页时 —— 搜索页 RAF 由 false 变 true，**被盖住的首页由 true 变 false**。
+ * 也就是说"**刚开始出帧的那个页面 = 刚跳过去的页面**"。
+ * 用 WeakMap：页面被销毁就自动回收，不会长期占内存。
+ */
+const rafAliveState = new WeakMap();
+const rafAliveSince = new WeakMap();
+
+/**
+ * 多候选时挑"哪个才是前台页"（纯函数，便于单独测）。
+ *
+ * 规则按优先级：
+ *   1. 最近 recentMs 内**刚开始出帧**的那个 —— 说明页面刚跳过去（真机实测信号）；
+ *   2. 最近没有新页面开始出帧（说明没在跳转）-> 用调用方手里这一页（它通常就是当前页）；
+ *   3. 都没有 -> 退回"元素数最多"（老兜底，保留但降到最后）。
+ *
+ * @param {Array<{page: any, count: number}>} candidates
+ * @param {{callerPage?: any, sinceOf?: (p:any)=>number, recentMs?: number, now?: number}} [options]
+ * @returns {{page: any, count: number, why: string}}
+ */
+function pickForegroundCandidate(
+  candidates,
+  { callerPage = null, sinceOf = () => 0, recentMs = 3000, now = Date.now() } = {}
+) {
+  const list = candidates.map((c) => ({ ...c, since: sinceOf(c.page) || 0 }));
+  const newest = list.reduce((a, b) => (b.since > a.since ? b : a), list[0]);
+
+  if (newest.since > 0 && now - newest.since <= recentMs) {
+    return {
+      page: newest.page,
+      count: newest.count,
+      why: `「${Math.round((now - newest.since) / 1000)} 秒前刚开始出帧」的那个（第 ${list.indexOf(newest) + 1} 个候选）`,
+    };
+  }
+
+  const same = list.find((c) => c.page === callerPage);
+  if (same) {
+    return { page: same.page, count: same.count, why: "没有新页面开始出帧，沿用调用方手里这一页" };
+  }
+
+  const most = list.reduce((a, b) => (b.count > a.count ? b : a), list[0]);
+  return { page: most.page, count: most.count, why: "没有可用信号，退回「元素数最多」（老兜底）" };
+}
+
 async function describePageIdentity(p) {
   let url = "(拿不到 url)";
   try {
@@ -543,6 +591,20 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
   );
   const alive = probes.filter(Boolean);
 
+  // 记录"每个页面是什么时候开始出帧的"（多候选时用它挑：刚出帧的那个 = 刚跳过去的页面）
+  const nowTs = Date.now();
+  const aliveSet = new Set(alive.map((a) => a.page));
+  for (const { page: p, count } of alive) {
+    if (rafAliveState.get(p) !== true) {
+      rafAliveState.set(p, true);
+      rafAliveSince.set(p, nowTs);
+      log.debug(`前台页信号：一个页面开始出帧（元素数=${count}）`);
+    }
+  }
+  for (const p of candidates) {
+    if (!aliveSet.has(p)) rafAliveState.set(p, false);
+  }
+
   if (!alive.length) {
     // 没有任何页面在产出帧：可能是切换过渡中，也可能判据本身不适用。
     // 此时退回传入的 page（只要它还活着），让调用方仍拿到一个能用的对象。
@@ -573,13 +635,17 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
       const count = await still[0].locator("*").count().catch(() => 0);
       picked = { page: still[0], count };
     } else {
+      // 多候选：按 pickForegroundCandidate 的三条规则挑（详见该函数的注释）
+      const chosen = pickForegroundCandidate(alive, {
+        callerPage: page,
+        sinceOf: (p) => rafAliveSince.get(p) || 0,
+      });
+      picked = { page: chosen.page, count: chosen.count };
       if (still.length > 1) {
-        log.debug(`前台页判定仍有 ${still.length} 个候选（疑似页面过渡中），退化为按元素数挑选`);
+        log.debug(`前台页判定仍有 ${still.length} 个候选（疑似页面过渡中），挑法：${chosen.why}`);
+        // 把候选页身份打出来（限流，一次运行里只打第一次）—— 这种事靠猜没有意义
+        await logAmbiguity(still, picked.page);
       }
-      alive.sort((a, b) => b.count - a.count);
-      picked = alive[0];
-      // 把候选页身份打出来（限流，一次运行里只打第一次）—— 这种事靠猜没有意义
-      if (still.length > 1) await logAmbiguity(still, picked.page);
     }
   }
 
@@ -808,6 +874,7 @@ async function appTest(testSubFunctions, options = {}) {
 module.exports = {
   appTest,
   runAppSteps,
+  pickForegroundCandidate,
   getWxWebviewPage,
   pickForegroundPage,
   resolveForegroundPage,
