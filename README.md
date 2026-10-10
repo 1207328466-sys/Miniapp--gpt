@@ -390,27 +390,47 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 
 ## 八、当前已知问题与优化路线
 
-按优先级排列，这是我们后续一起动手的清单。
+> **2026/10/10 更新**：本节原有的清单已过时。在一次完整的排查中，
+> 我们定位并修复了 **7 个根本缺陷**（详见
+> [框架能力与问题账本.md](docs/框架能力与问题账本.md)）。
+> 修复后核心交互能力（点击、滑动、页面切换、元素断言）全部可用。
+> 下表是**当前仍未解决**的问题。
 
-### P0 · 必须优先修
+### 已修复（7 项，此处仅列标题）
+
+| # | 缺陷 | 修复要点 |
+|---|---|---|
+| 1 | `appTest` 取到 `/preload/` 空壳页 | 新增 `pickForegroundPage`，用 RAF 判据选前台页 + 校验 appid |
+| 2 | `#id` 选择器对小程序 id 失效 | 改用属性选择器 `[id="..."]` |
+| 3 | `getByText` 缺 `.first()` | 首页「我的」与「我的关注」冲突 |
+| 4 | `tapElement` 按零宽文字节点取坐标 | 新增 `findClickableAncestor` 向上找可点击容器 |
+| 5 | 所有点击用合成 `.click()` | 8 处改真实 adb tap（实测 `.click()` 会误报失败） |
+| 6 | `swipeUp` 用合成鼠标事件 | 改 `adb input swipe` + 位移校验 |
+| 7 | `switchToUserCenter` 在旧 page 上验证 | 重新获取前台页 + 幂等 + 重试 |
+
+### P0 · 仍待修
 
 | 问题 | 位置 | 影响 |
 |---|---|---|
-| 设备序列号硬编码，且 `options.deviceSerial` 传参无效 | `common/app_common.js:20` 和 `:206` | 换设备就挂，只能靠 `\|\| devices[0]` 兜底 |
-| `pkg` / `webviewTimeout` 参数定义了从未使用 | `common/app_common.js:193` | 传参无效果，超时时间硬编码 5000ms |
-| `common/__init__.py` 导入不存在的模块，`import common` 直接报错 | `common/__init__.py:9-14` | Python 侧能力完全没接通 |
-| `config/config.yaml` 不存在 | `common/share/base_config.py:35` | 配置管理类无法工作 |
+| 设备序列号硬编码，`options.deviceSerial` 解构了却从未使用 | `common/app_common.js:20` / `:199` / `:266` / `:277` | 换设备就挂，只能靠 `\|\| devices[0]` 兜底 |
+| `pkg` / `webviewTimeout` 参数定义了从未使用 | `common/app_common.js:267` / `:269` | 传参无效果，超时时间硬编码 5000ms |
+| `goBack` 用浏览器后退，**实测无效** | `android.js` `goBack` | 需改为真实点击左上角返回按钮 |
+| `common/__init__.py` 导入不存在的模块，`import common` 直接报错 | `common/__init__.py` | Python 侧能力完全没接通 |
+| `config/config.yaml` 不存在 | `common/share/base_config.py` | 配置管理类无法工作 |
 
 ### P1 · 结构缺失
 
-- **没有断言层**：目前唯一的校验是 `assertElementExists`，失败全靠 Playwright 超时抛错。缺少「期望值 vs 实际值」的可读对比
-- **没有页面对象（Page Object）**：`"我的"`、`"4148"` 这类选择器和测试数据硬编码在函数里，小程序改版要全局搜替换
+- **没有结果断言层**：`assertElementExists` 只能判断"元素存在"，无法断言文本内容、页面跳转等。这是**写用例前最后一块短板**——缺了它，功能坏了用例也会报 passed
+- **没有页面对象（Page Object）**：`"我的"`、`"4148"` 这类选择器和测试数据硬编码在函数里；而且**每个页面的 tab 栏 class 都不同**（`bar-index--*` vs `eco-tab-*`），更需要统一管理
 - **步骤失败会跳出整个循环**：`runAppSteps` 里 `throw savedError` 会让后续步骤不再执行
+- **设备连接有两套**：`appTest` 一套、`getDevice()` 一套，互不知情
 
 ### P2 · 工程化
 
-- ~~无根 `.gitignore`~~ ✅ 已补
+- ~~无根 `.gitignore`~~ ✅ 已补（含 SSH 密钥防护）
 - ~~无 README~~ ✅ 已补
+- ~~无 `.gitattributes`~~ ✅ 已补（锁定 LF，避免跨平台假 diff）
+- ~~诊断脚本堆积在 `test_case/`~~ ✅ 已移入 `test_case/diagnostic/`
 - `pytest.ini` 注释写「重试 2 次」，配置却是 `reruns = 1`，注释与实现不一致
 - 无 marker（`P0`~`P3`）使用示例：`pytest.ini` 已注册 marker，但 JS 用例里没法直接打 marker
 - 无公共前置步骤：每个 JS 文件都要自己连设备、自己回到起点页
@@ -418,11 +438,13 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 
 ### 建议的推进顺序
 
-1. **补文档与工程基础**（本次已完成）
-2. **修 P0 缺陷**：设备序列号配置化、参数接通
-3. **搭断言层 + 页面对象**
-4. **打通 Python 侧**：实现 `sc_config` / `sc_log`，让配置和日志真正驱动 JS 用例
-5. **抽公共前置步骤**：让用例只写业务差异部分
+1. ~~补文档与工程基础~~ ✅ 已完成
+2. ~~修框架根本缺陷~~ ✅ 已完成（7 项）
+3. **补断言层** ← 写用例前建议先做这一步
+4. **修 P0 缺陷**：设备序列号配置化、`pkg`/`webviewTimeout` 接通、`goBack` 换实现
+5. **搭页面对象**：把各页面不同的 tab 栏 class、硬编码的选择器与测试数据统一管理
+6. **打通 Python 侧**：实现 `sc_config` / `sc_log`，让配置和日志真正驱动 JS 用例
+7. **抽公共前置步骤**：让用例只写业务差异部分
 
 ---
 
@@ -431,11 +453,15 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 ```text
 miniapp_test_case/
 ├── README.md                        # 【本文件】项目总览与新人上手
-├── .gitignore                       # Git 忽略规则
+├── .gitignore                       # Git 忽略规则（含 SSH 密钥防护）
+├── .gitattributes                   # 换行符锁定为 LF
 ├── package.json                     # Node 依赖（只有 playwright）
 ├── requirements.txt                 # Python 依赖
 ├── docs/
-│   └── 框架导读.md                   # 深度导读（含设计原理、自测题）
+│   ├── 框架导读.md                   # 深度导读（设计原理、执行链路、自测题）
+│   ├── android-js-逐行详解.md        # android.js 700 行逐段讲解
+│   ├── 框架能力与问题账本.md          # 实测能力清单 + 7 个根因的定位与修复证据
+│   └── 踩坑记录.md                   # 12 条实战踩坑记录
 ├── common/
 │   ├── __init__.py                  # ⚠️ 导入不存在的模块，待修
 │   ├── app_common.js                # ★ 驱动层核心
@@ -448,11 +474,17 @@ miniapp_test_case/
 │       └── android.js               # ★ 所有可复用操作 + 元素选择器常量
 ├── test_case/                       # 用例层
 │   ├── pytest.ini                   # pytest 配置
+│   ├── diagnostic/                  # 诊断工具（不以 test_ 开头，pytest 不收集）
+│   │   ├── capability_check.js      # 15 个函数的能力矩阵探测
+│   │   └── dump_page.js             # 抓页面 DOM 到文件 + 各 page 身份判定
 │   └── suprecast_app/
 │       ├── conftest.py              # ★ 桥接层：让 pytest 能执行 .js
-│       └── test_example.js          # 用例示例
-└── report/
-    └── photo_app/                   # 截图产物
+│       ├── test_example.js          # 用例示例（搜索功能）
+│       ├── test_login_and_navigation.js    # 切用户中心 + 打印页面结构
+│       └── test_switch_to_user_center.js   # 切用户中心（带真实验证）
+└── report/                          # 测试产物（已 gitignore）
+    ├── photo_app/                   # 用例截图
+    └── diagnostic/                  # 诊断脚本产物
 ```
 
 ---
