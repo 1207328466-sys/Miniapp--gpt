@@ -108,9 +108,73 @@ ACTIONS = [
         "p2": "",
         "desc": "按需求 713594979 校验首页活动入口在 最新提问/推荐/精选问答/我的关注 4 个 tab 下都显示",
     },
+    # ---------- 下面这一批是 2026/10/10 追加的「能做的都做上」----------
+    # 判据：只读 / 不改数据、零基础能填、失败信息足够定位。登录、提交、选选项**故意不加**（见 README）。
+    {
+        "name": "打印页面文字",
+        "p1": "",
+        "p2": "",
+        "desc": "把当前屏幕上看得见的文字打进日志（长文截断）。挑「检查文字显示」该填什么时，先用它看一眼",
+    },
+    {
+        "name": "点选择器",
+        "p1": "选择器",
+        "p2": "",
+        "desc": "按选择器点第一处元素（比按文字点更准：文字有重名时用它），例如 .search-container",
+    },
+    {
+        "name": "滑动",
+        "p1": "次数",
+        "p2": "方向",
+        "desc": "滑动屏幕，次数 1~10、方向填 上 或 下。列表要滑到底才看得到的东西用「上」；滑完想滚回顶部用「下」",
+    },
+    {
+        "name": "切换筛选tab",
+        "p1": "tab名",
+        "p2": "",
+        "desc": "切首页信息流那排筛选 tab（切完会验证真的选中了）",
+    },
+    {
+        "name": "切换学习中心顶部tab",
+        "p1": "tab名",
+        "p2": "",
+        "desc": "切学习中心顶部那排 tab（切完会验证真的选中了）",
+    },
+    {
+        "name": "点第一张专栏",
+        "p1": "",
+        "p2": "",
+        "desc": "在学习中心的专栏列表里点第一张卡，进它的详情页",
+    },
+    {
+        "name": "检查输入框的值",
+        "p1": "选择器",
+        "p2": "期望值",
+        "desc": "读出输入框里真实的值再比较。这是表格里唯一能「读出来再比较」的检查，例如 wx-input.search-input / test",
+    },
+    {
+        "name": "检查文字出现次数",
+        "p1": "文字",
+        "p2": "期望次数",
+        "desc": "整页里这段文字被命中几次。注意外层包裹元素也会被算一次，所以数字常比肉眼看到的多",
+    },
+    {
+        "name": "检查元素不存在",
+        "p1": "选择器",
+        "p2": "",
+        "desc": "断言这个选择器一个都命中不到（例如首页上不该出现 .activity-quiz-page）。它等的是「消失」，本来就不在时会立刻通过",
+    },
 ]
 
 ACTION_BY_NAME = {a["name"]: a for a in ACTIONS}
+
+# 有些动作的参数是「只能从这几个里选」——在导出时就挡住错别字（例如「最新问题」）。
+# JS 侧同样会校验一次，但把错误挡在导出这一步，报错信息更早、更好懂。
+ACTION_PARAM_CHOICES = {
+    "切换筛选tab": {"p1": ["最新提问", "推荐", "精选问答", "我的关注"]},
+    "切换学习中心顶部tab": {"p1": ["课程", "专栏", "压铸百科"]},
+    "滑动": {"p2": ["上", "下"]},
+}
 
 # ---------- 模板里预置的 3 条用例：都是**只读**的，跑起来不改任何数据 ----------
 # 前两条真机验证过、稳定；第三条要看当时首页轮播里有没有「答题」卡，看不到会记成跳过。
@@ -167,6 +231,8 @@ HELP_LINES = [
     "   上一条停在二级页上，下一条可能报「找不到底部 tab」—— 开头摆正 + 结尾交还就不受影响。",
     "8. 「动作」列是**下拉框**（点单元格右边的小箭头选），可选项来自「动作清单」工作表；",
     "   「步骤序号」列只接受 1、2、3… 这样的正整数。填错的动作名根本选不出来，省一轮报错。",
+    "9. 不知道「检查文字显示」该填哪段字？先加一行「打印页面文字」跑一次 ——",
+    "   当前屏幕上看得见的文字会打进日志，照着抄就行（挑完把它删掉即可）。",
     "",
     "默认禁止（安全阀，避免手滑把真实数据改了）",
     "   · 「点文字」不能点这些字：提交、兑换、签到、下单、支付、购买、领取、抽奖、报名、删除、退出登录、退款、取消订单",
@@ -247,6 +313,27 @@ def add_dropdowns(ws, last_row=1000):
     dv_seq.add("C2:C%d" % last_row)
 
 
+def fill_actions_sheet(ws):
+    """把「动作清单」工作表写满（表头 + 每条动作一行）；已存在则先清空再重写。
+
+    为什么单独抽出来：加动作之后，**已经存在的表**也要刷新这张工作表
+    （否则下拉框和清单还是旧的 14 条）—— 走 `--dropdown` 那条路时复用它。
+    """
+    from openpyxl.styles import Font
+
+    for row in list(ws.iter_rows()):
+        for cell in row:
+            cell.value = None
+    ws.append(["动作", "参数1", "参数2", "说明"])
+    for a in ACTIONS:
+        ws.append([a["name"], a["p1"], a["p2"], a["desc"]])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for col, width in zip("ABCD", (20, 14, 12, 78)):
+        ws.column_dimensions[col].width = width
+    ws.freeze_panes = "A2"
+
+
 def build_template(path):
     """生成模板（3 个工作表：用例 / 动作清单 / 填写说明）"""
     from openpyxl import Workbook
@@ -267,14 +354,7 @@ def build_template(path):
     add_dropdowns(ws)  # 动作列下拉 + 步骤序号校验（不改数据，只是让手滑填不进去）
 
     wa = wb.create_sheet(SHEET_ACTIONS)
-    wa.append(["动作", "参数1", "参数2", "说明"])
-    for a in ACTIONS:
-        wa.append([a["name"], a["p1"], a["p2"], a["desc"]])
-    for cell in wa[1]:
-        cell.font = Font(bold=True)
-    for col, width in zip("ABCD", (20, 14, 12, 78)):
-        wa.column_dimensions[col].width = width
-    wa.freeze_panes = "A2"
+    fill_actions_sheet(wa)
 
     wh = wb.create_sheet(SHEET_HELP)
     for line in HELP_LINES:
@@ -378,6 +458,19 @@ def validate(rows):
             errors.append("第 %d 行：「等待」的参数1 是毫秒数，应该像 2000 这样，现在填的是 %s" % (lineno, p1))
         if action == "检查元素数量" and p2 and not (p2.isdigit() and int(p2) >= 0):
             errors.append("第 %d 行：「检查元素数量」的参数2 是数量，应该像 1 这样，现在填的是 %s" % (lineno, p2))
+        if action == "滑动" and p1 and not (p1.isdigit() and 1 <= int(p1) <= 10):
+            errors.append("第 %d 行：「滑动」的参数1 是次数，只能填 1~10 之间的整数，现在填的是 %s" % (lineno, p1))
+        if action == "检查文字出现次数" and p2 and not (p2.isdigit() and int(p2) >= 0):
+            errors.append("第 %d 行：「检查文字出现次数」的参数2 是次数，应该像 1 这样，现在填的是 %s" % (lineno, p2))
+
+        # 只能从固定几个值里选的动作：填错字当场挡下（比真机跑到一半再报错友好）
+        for field, value in (("p1", p1), ("p2", p2)):
+            allowed = ACTION_PARAM_CHOICES.get(action, {}).get(field)
+            if allowed and value and value not in allowed:
+                errors.append(
+                    "第 %d 行：动作「%s」的「参数%s」只能填这 %d 个之一：%s（现在填的是 %s）"
+                    % (lineno, action, field[-1], len(allowed), " / ".join(allowed), value)
+                )
 
         case["steps"].append(
             {
@@ -499,17 +592,21 @@ def main(argv=None):
         from openpyxl import load_workbook
 
         wb = load_workbook(xlsx)
-        if SHEET_DATA not in wb.sheetnames or SHEET_ACTIONS not in wb.sheetnames:
-            print("这份表里缺少「%s」或「%s」工作表，加不了下拉框。" % (SHEET_DATA, SHEET_ACTIONS))
+        if SHEET_DATA not in wb.sheetnames:
+            print("这份表里缺少「%s」工作表，加不了下拉框。" % SHEET_DATA)
             print("  建议换成 python tools/export_cases.py --init --force 生成的新模板")
             return 1
+        if SHEET_ACTIONS not in wb.sheetnames:
+            wb.create_sheet(SHEET_ACTIONS)
+        fill_actions_sheet(wb[SHEET_ACTIONS])  # 清单跟着最新动作走
         ws = wb[SHEET_DATA]
         # 先清空旧的校验规则，重复执行不会叠加（叠加会让 Excel 弹两次提示）
         ws.data_validations.dataValidation = []
         add_dropdowns(ws)
         wb.save(xlsx)
-        print("已给用例表补上下拉框：%s" % xlsx)
-        print("  · 动作列（D）现在是下拉框，选项来自「动作清单」工作表")
+        print("已刷新用例表：%s" % xlsx)
+        print("  · 「动作清单」工作表已更新为最新的 %d 个动作" % len(ACTIONS))
+        print("  · 动作列（D）下拉框已重建，选项来自「动作清单」")
         print("  · 步骤序号列（C）只接受 1、2、3… 这样的正整数")
         print("  · 你已经填好的内容一行都没动")
         return 0
@@ -534,7 +631,14 @@ def main(argv=None):
         "generated_by": "tools/export_cases.py",
         "source": "cases/用例表.xlsx",
         "actions": [
-            {"name": a["name"], "p1": a["p1"], "p2": a["p2"], "desc": a["desc"]} for a in ACTIONS
+            {
+                "name": a["name"],
+                "p1": a["p1"],
+                "p2": a["p2"],
+                "desc": a["desc"],
+                "choices": ACTION_PARAM_CHOICES.get(a["name"], {}),
+            }
+            for a in ACTIONS
         ],
         "cases": cases,
     }

@@ -131,22 +131,68 @@ async function findClickableAncestor(locator) {
  * @returns {Promise<{x:number,y:number,target:string,level:number,reason:string}>} 实际点击的坐标与目标
  */
 async function tapElement(device, page, locator) {
-  const found = await findClickableAncestor(locator);
-  let { x, y, w, h } = found.box;
+  /** 量一次目标（含"往上找可点击祖先"那套逻辑），返回 CSS 尺寸与换算成设备像素的中心点 */
+  const measure = async () => {
+    const found = await findClickableAncestor(locator);
+    let { x, y, w, h } = found.box;
+    if (found.selector === "self") {
+      const box = await locator.boundingBox();
+      if (!box) throw new Error("元素取不到坐标，可能不可见");
+      ({ x, y, width: w, height: h } = box);
+    }
+    if (!w || !h) throw new Error("元素取不到有效尺寸，可能不可见");
+    const dpr = await page.evaluate(() => window.devicePixelRatio);
+    return {
+      found,
+      px: Math.round((x + w / 2) * dpr),
+      py: Math.round((y + h / 2) * dpr),
+    };
+  };
 
-  if (!w || !h) throw new Error("元素取不到有效尺寸，可能不可见");
-  if (found.selector === "self") {
-    const box = await locator.boundingBox();
-    if (!box) throw new Error("元素取不到坐标，可能不可见");
-    ({ x, y, width: w, height: h } = box);
+  let m = await measure();
+
+  // 【屏幕外保护】2026/10/10 真机踩到：滑动之后搜索栏被顶到屏幕上方，元素坐标成了
+  // y = -1272（负数）。adb 照样"执行"了这个 tap —— **点了等于没点，而且不报错**，
+  // 一直到后面某一步才以一个看不懂的原因失败（「点击搜索栏后没有进入搜索页」）。
+  // 这是典型的静默失败，必须挡住：
+  //   1) 先试着把它滚进可视区（小程序大部分列表是真实的 DOM 滚动容器，通常有效）
+  //   2) 再量一次，还在屏幕外就明确报错，把元素、坐标、屏幕尺寸都带上
+  const screen = await page
+    .evaluate(() => ({
+      w: Math.round((window.innerWidth || 0) * (window.devicePixelRatio || 1)),
+      h: Math.round((window.innerHeight || 0) * (window.devicePixelRatio || 1)),
+    }))
+    .catch(() => ({ w: 0, h: 0 }));
+  const offScreen = (px, py) =>
+    px < 0 || py < 0 || (screen.w > 0 && px > screen.w) || (screen.h > 0 && py > screen.h);
+
+  if (offScreen(m.px, m.py)) {
+    console.warn(
+      `  [提示] 目标不在屏幕内（adb tap 坐标 ${m.px},${m.py}，屏幕 ${screen.w}x${screen.h}）—— 先尝试滚动到可视区`
+    );
+    await locator.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 300));
+    m = await measure();
   }
 
-  const dpr = await page.evaluate(() => window.devicePixelRatio);
-  const px = Math.round((x + w / 2) * dpr);
-  const py = Math.round((y + h / 2) * dpr);
-  await device.shell(`input tap ${px} ${py}`);
-  console.log(`adb tap(${px}, ${py})  目标=${found.selector}  ${found.reason}`);
-  return { x: px, y: py, target: found.selector, level: found.level, reason: found.reason };
+  if (offScreen(m.px, m.py)) {
+    throw new Error(
+      `点不到：目标在屏幕外（adb tap 坐标 ${m.px},${m.py}，屏幕 ${screen.w}x${screen.h}）。\n` +
+        `  这种情况 adb 依然会"执行"点击，但点了等于没点 —— 所以这里直接报错，\n` +
+        `  而不是留到后面变成一条看不懂的失败。常见原因：页面上滑之后目标被顶出屏幕了。\n` +
+        `  表格里的办法：先加一步「滑动」（方向=下）把页面滚回顶部，再点它。`
+    );
+  }
+
+  await device.shell(`input tap ${m.px} ${m.py}`);
+  console.log(`adb tap(${m.px}, ${m.py})  目标=${m.found.selector}  ${m.found.reason}`);
+  return {
+    x: m.px,
+    y: m.py,
+    target: m.found.selector,
+    level: m.found.level,
+    reason: m.found.reason,
+  };
 }
 
 /**

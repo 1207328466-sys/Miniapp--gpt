@@ -447,22 +447,34 @@ async function typeKeyword(page, { keyword, clear = true, timeout = 8000 } = {})
     }
   }
 
-  // 3) 输入 + 读回校验
-  await device.shell(`input text ${keyword}`);
-
+  // 3) 输入 + 读回校验（校验失败就重试几次）
+  //
+  // 【为什么要重试】2026/10/10 真机踩到：同样敲 `hello`，读回来是 `hlo` ——
+  // adb 逐字符发按键时偶发丢字（键盘还在动/事件被丢），重试就能过。
+  // 注意：重试**不等于降级校验** —— 每次重试仍然读回比对，三次都不对才报错。
   const expected = clear ? keyword : `${await base.inputValue(input)}`;
-  const ok = await base.waitUntil(
-    async () => {
-      const actual = await base.inputValue(input);
-      return clear ? actual === expected : actual.endsWith(keyword);
-    },
-    { timeout, interval: 300 }
-  );
+  let ok = false;
+  let lastActual = "";
+  for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
+    if (attempt > 1) {
+      console.warn(`  第 ${attempt} 次重试输入（上一次读回的是 ${JSON.stringify(lastActual)}）`);
+      await device.shell("input keyevent 123"); // MOVE_END
+      for (let i = 0; i < 20; i++) await device.shell("input keyevent 67"); // DEL 清空
+      await base.sleep(400);
+    }
+    await device.shell(`input text ${keyword}`);
+    ok = await base.waitUntil(
+      async () => {
+        lastActual = await base.inputValue(input);
+        return clear ? lastActual === expected : lastActual.endsWith(keyword);
+      },
+      { timeout: Math.min(timeout, 4000), interval: 300 }
+    );
+  }
   if (!ok) {
     throw new Error(
-      `输入未生效（期望${clear ? "" : "以"} ${JSON.stringify(keyword)} 结尾，实际 ${JSON.stringify(
-        await base.inputValue(input)
-      )}）。\n` +
+      `输入未生效（重试 3 次仍不对。期望${clear ? "" : "以"} ${JSON.stringify(keyword)} 结尾，` +
+        `最后读到 ${JSON.stringify(lastActual)}）。\n` +
         `  这一步必须硬校验：输入框未聚焦时 adb 事件会被静默丢弃，不校验就会产生假通过。`
     );
   }

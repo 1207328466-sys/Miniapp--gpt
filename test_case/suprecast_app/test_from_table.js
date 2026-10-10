@@ -118,6 +118,122 @@ const HANDLERS = {
   检查答题页符合需求: { run: (page, _p1, _p2, ctx) => quizPage.assertQuizPageRules(page, {}, ctx) },
 
   检查活动入口: { run: (page) => qaPage.assertActivityBlockInAllFeedTabs(page) },
+
+  /* ---------- 2026/10/10 追加的动作（「能做的都做上」）---------- */
+
+  打印页面文字: {
+    run: async (page) => {
+      const fg = await base.foreground(page);
+      const text = await base.pageText(fg);
+      console.log(`当前屏幕上的文字（共 ${text.length} 字，下面只打前 600 字）：`);
+      console.log(text.slice(0, 600));
+      console.log("（挑「检查文字显示」要填什么，照着上面抄就行）");
+      return fg;
+    },
+  },
+
+  点选择器: {
+    run: async (page, selector) => {
+      const fg = await base.foreground(page);
+      await base.tapSelector(fg, selector, `选择器 ${selector}`);
+      return fg;
+    },
+  },
+
+  滑动: {
+    run: async (page, times, direction) => {
+      const n = Number(times) || 1;
+      const dir = direction || "上";
+      if (!(n >= 1 && n <= 10)) throw new Error(`「滑动」的次数只能是 1~10，现在是 ${times}`);
+      if (!["上", "下"].includes(dir)) throw new Error(`「滑动」的方向只能填 上 或 下，现在是 ${dir}`);
+      for (let i = 1; i <= n; i++) {
+        console.log(`  第 ${i}/${n} 次向${dir}滑动`);
+        // swipeUp 的起止比例反过来就是向下滑（同一个原子操作，不重复造一个函数）
+        page =
+          dir === "下"
+            ? await android.swipeUp(page, { startRatio: 0.25, endRatio: 0.75 })
+            : await android.swipeUp(page);
+        await base.sleep(800); // 滑完给它一点时间稳定，紧接着就断言容易读到中间态
+      }
+      return page;
+    },
+  },
+
+  切换筛选tab: {
+    run: (page, tab) => qaPage.switchToFeedTab(page, { tab, timeout: 10000 }),
+  },
+
+  切换学习中心顶部tab: {
+    run: async (page, tab) => {
+      // 先自己导航到学习中心（不在就切过去），再切目标 tab —— 这样表格里不用先写一步导航
+      page = await learnCenter.ensureOnColumnList(page);
+      return learnCenter.switchToTopTab(page, { tab });
+    },
+  },
+
+  点第一张专栏: {
+    run: (page, _p1, _p2, ctx) => learnCenter.openFirstColumn(page, {}, ctx),
+  },
+
+  检查输入框的值: {
+    run: async (page, selector, expected) => {
+      const fg = await base.foreground(page);
+      const count = await base.countOf(fg, selector);
+      if (count === 0) throw await base.notFound(`输入框（选择器 ${selector}）`, fg);
+      const actual = String(await base.inputValue(fg.locator(selector).first()));
+      if (actual !== String(expected)) {
+        throw new Error(
+          `输入框里的值不等于期望值：期望 ${JSON.stringify(String(expected))}，实际 ${JSON.stringify(actual)}。\n` +
+            (actual === ""
+              ? "  读到的是空串 —— 注意这个坑：小程序把值放在元素的 value 属性上，读法不对就会「读不到 ≠ 没输进去」（见 documents/踩坑记录.md 坑 12）。\n"
+              : "") +
+            `  选择器：${selector}`
+        );
+      }
+      console.log(`断言通过: 输入框里的值 = ${JSON.stringify(actual)}`);
+      return fg;
+    },
+  },
+
+  检查文字出现次数: {
+    run: async (page, text, expected) => {
+      const want = Number(expected);
+      if (Number.isNaN(want)) throw new Error(`「检查文字出现次数」的次数要填数字，现在是 ${expected}`);
+      const ok = await base.waitUntil(
+        async () => (await base.countOfText(await base.foreground(page), text)) === want,
+        { timeout: 8000 }
+      );
+      const fg = await base.foreground(page);
+      if (!ok) {
+        const actual = await base.countOfText(fg, text);
+        throw new Error(
+          `断言失败: 文字「${text}」在页面上命中 ${actual} 次，期望 ${want} 次（等待 8000ms 超时）。\n` +
+            `  提示：外层包裹元素也会被算一次，所以数字常比肉眼看到的多。`
+        );
+      }
+      console.log(`断言通过: 文字「${text}」命中 ${want} 次`);
+      return fg;
+    },
+  },
+
+  检查元素不存在: {
+    run: async (page, selector) => {
+      const ok = await base.waitUntil(
+        async () => (await base.countOf(await base.foreground(page), selector)) === 0,
+        { timeout: 8000 }
+      );
+      const fg = await base.foreground(page);
+      if (!ok) {
+        const actual = await base.countOf(fg, selector);
+        throw new Error(
+          `断言失败: 页面上仍然有 ${actual} 个 ${selector}（期望 0 个，等待 8000ms 超时）。\n` +
+            `  当前页面前 120 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 120))}`
+        );
+      }
+      console.log(`断言通过: 页面上没有 ${selector}（命中 0 个）`);
+      return fg;
+    },
+  },
 };
 
 /* ---------------- 读表格 + 校验 ---------------- */
