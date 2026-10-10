@@ -1,0 +1,16 @@
+# 本地数据库配置样例（**入库**，不含任何真实凭据）
+#
+# 用法（二选一）：
+#   1) 从团队工作流仓的 .env 自动导入（推荐）：
+#        python tools/import_db_config.py
+#      -> 生成 config/db.local.yaml（已被 .gitignore 忽略）
+#   2) 手工复制本文件为 config/db.local.yaml 再填值
+#
+# 用途：**测试数据准备与恢复**。测试环境没有独立测试账号（用的是 owner 的真实账号），
+# 所以"改数据"的操作必须能可控地置位、也能恢复，否则用例跑一次脏一次。
+
+host: ""        # 例：rm-xxxxxxxx.mysql.zhangbei.rds.aliyuncs.com（见 miniapp-flow/knowledge/环境与账号.md）
+port: 3306
+user: ""
+password: ""
+database: ""    # alpha 测试库

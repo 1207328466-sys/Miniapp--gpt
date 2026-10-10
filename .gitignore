@@ -51,6 +51,9 @@ log/
 # 如需纳入版本管理，删除下面两行即可
 config/config.yaml
 config/local.yaml
+# 本地数据库配置（由 tools/import_db_config.py 生成，含真实凭据）
+config/db.local.yaml
+config/*.local.yaml
 .env
 .env.*
 
