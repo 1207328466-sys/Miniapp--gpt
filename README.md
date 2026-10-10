@@ -14,15 +14,17 @@
 - 不用微信开发者工具
 - 直接连接**真机上的微信**，抓取小程序 WebView 的 `Page` 对象，然后用标准 Playwright 的 DOM 定位能力操作小程序元素
 
-### 三层架构
+### 四层架构
 
 | 层 | 位置 | 职责 | 改动频率 |
 |---|---|---|---|
-| 用例层 | `test_case/suprecast_app/test_*.js` | 描述「测什么」：把操作函数按顺序排好 | 最常改 |
-| 关键字层 | `app_sub_function/suprecast_app/android.js` | 提供「怎么操作」：点击、输入、滑动、找前台页 | 常改 |
+| 用例层 | `test_case/suprecast_app/test_*.js` | 描述「测什么」：把页面对象的操作按顺序排好 | 最常改 |
+| **页面对象层** | `app_sub_function/suprecast_app/pages/` | 描述「某个页面长什么样」：该页的选择器、页面标记、幂等导航 | **小程序改版时改这里** |
+| 关键字层 | `app_sub_function/suprecast_app/android.js` | 提供「怎么操作」：点击、输入、滑动、找前台页、断言 | 常改 |
 | 驱动层 | `common/app_common.js` | 「连接与执行」：连设备、抓 WebView、跑步骤、截图 | 少改 |
 
-设计原则：**用例层只描述业务步骤，不出现任何 `page.locator(...)` 之类的定位细节**。定位细节全部下沉到关键字层。这样小程序改版时，你只需要改关键字层一个地方。
+设计原则：**用例层只描述业务步骤，不出现任何选择器**。选择器下沉到页面对象，
+原子操作下沉到关键字层。这样小程序改版时，你只需要改**页面对象**一个地方。
 
 ---
 
@@ -318,6 +320,51 @@ async function 你的函数名(page, { text, timeout = 10000 } = {}) {
 
 最后在文件底部的 `module.exports = { ... }` 里**加上你的函数名**，否则用例 `require` 不到它。
 
+### 用页面对象组织用例（推荐）
+
+当用例开始变多、同一个页面被多条用例操作时，把"这个页面的知识"收进页面对象。
+示范就是 [test_learn_center_column.js](test_case/suprecast_app/test_learn_center_column.js)
+—— 整个文件里**没有任何选择器字面量**：
+
+```js
+const pages = require("../../app_sub_function/suprecast_app/pages");
+const learnCenter = pages.learnCenter;
+const columnDetail = pages.columnDetail;
+
+const funcList = [
+  // 幂等：已在专栏列表页就直接返回；在详情页就点返回；在别的 tab 就切 tab
+  [learnCenter.ensureOnColumnList, null],
+  [learnCenter.switchToColumnTab, null],
+  [assertTextVisible, { text: learnCenter.MARKER_COLUMN_LIST }],
+  [learnCenter.openFirstColumn, null],
+  [assertSelectorCount, { selector: columnDetail.SEL.title, expected: 1 }],
+];
+```
+
+页面对象怎么写？**每个函数都是"纯函数 + page 作第一个参数"，不用 class / this**：
+
+```js
+// pages/xxx_page.js
+const base = require("./base_page");
+
+const SEL = { someBtn: ".some-btn" };      // 选择器集中在这里
+
+async function isOn(page) {                 // 页面身份判定
+  const fg = await base.foreground(page);
+  return (await base.countOf(fg, SEL.someBtn)) > 0;
+}
+
+module.exports = { SEL, isOn };
+```
+
+**为什么不用 class**：`runAppSteps` 靠 `func.name` 打日志、算耗时、命名截图文件，
+并且是以 `func(page, kwargs)` 的形式**独立调用**步骤函数的。
+用 class 方法会丢 `this`；用闭包包一层会让 `func.name` 变成无意义的名字。
+写成具名导出的纯函数，`[pageObj.someAction, null]` 直接就是合法步骤。
+
+已有的页面对象：`learnCenter`（学习中心，含「专栏」列表）、`columnDetail`（专栏详情页）、
+`userCenter`（用户中心）。缺哪个页面就照上面的形状补一个 —— **别把新选择器写回用例里**。
+
 ### 什么时候该抽成公共函数
 
 如果你的用例里出现这段逻辑第 3 次，就该把它抽到 `android.js` 里。判断标准：**换一个小程序版本，这段逻辑会不会变？** 会变，就抽出去。
@@ -502,7 +549,7 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 ### P1 · 结构缺失
 
 - ~~**没有结果断言层**~~ ✅ 已补（第三轮，4 个断言函数）
-- **没有页面对象（Page Object）**：`"我的"`、`"4148"` 这类选择器和测试数据硬编码在函数里；而且**每个页面的 tab 栏 class 都不同**（`bar-index--*` vs `eco-tab-*`），更需要统一管理
+- ~~**没有页面对象（Page Object）**~~ ✅ 已补（第五轮）：新增 `app_sub_function/suprecast_app/pages/`，选择器与页面级操作按页面归拢；`switchToUserCenter` 已迁入页面对象，用例层不再出现选择器字面量
 - **步骤失败会跳出整个循环**：`runAppSteps` 里 `throw savedError` 会让后续步骤不再执行
 - **设备连接有两套**：`appTest` 一套、`getDevice()` 一套，互不知情
 
@@ -523,7 +570,7 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 2. ~~修框架根本缺陷~~ ✅ 已完成（第一轮 7 项 + 第二轮 5 项）
 3. ~~补断言层~~ ✅ 已完成（第三轮，4 个断言函数）
 4. ~~修 P0 缺陷~~ ✅ 已完成（第四轮，5 项）
-5. **搭页面对象**：把各页面不同的 tab 栏 class、硬编码的选择器与测试数据统一管理
+5. ~~搭页面对象~~ ✅ 已完成（第五轮）。**下一步**：把 `login` 的账号、`focusSearchInput` 的关键词也抽出配置，并按同样形状补 `home_page.js` 等缺失的页面对象
 6. **打通 Python 侧**：实现 `sc_config` / `sc_log`，让配置和日志真正驱动 JS 用例
    （第四轮只做到"`import common` 不再报错 + 配置样例就位"，业务类仍未实现）
 7. **抽公共前置步骤**：让用例只写业务差异部分
@@ -551,9 +598,15 @@ miniapp_test_case/
 │       ├── base_config.py           # 配置基础类（单例 + 懒加载 + 热重载）
 │       ├── base_log.py              # 日志基础类（单例 + 双通道 + 按天轮转）
 │       └── README.md                # 公共模块说明
-├── app_sub_function/                # 关键字层
+├── app_sub_function/                # 关键字层 + 页面对象层
 │   └── suprecast_app/
-│       └── android.js               # ★ 所有可复用操作 + 元素选择器常量
+│       ├── android.js               # 关键字层：★ 可复用的原子操作 + 断言
+│       └── pages/                   # 页面对象层：★ 每个页面的选择器与页面级操作
+│           ├── index.js             #   统一入口（pages.learnCenter / pages.columnDetail ...）
+│           ├── base_page.js         #   公共能力：解析前台页 / 判定 / 真实 tap / 轮询等待
+│           ├── learn_center_page.js #   学习中心（含「专栏」列表）
+│           ├── column_detail_page.js#   专栏详情页
+│           └── user_center_page.js  #   用户中心
 ├── test_case/                       # 用例层
 │   ├── pytest.ini                   # pytest 配置
 │   ├── diagnostic/                  # 诊断工具（不以 test_ 开头，pytest 不收集）

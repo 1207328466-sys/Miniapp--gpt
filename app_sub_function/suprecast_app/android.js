@@ -167,86 +167,25 @@ async function findPageWith(page, selector) {
 /**
  * 切换到用户中心。
  *
- * 【设计要点】
- * 1. 点击后必须等"切换完成"的可观测信号，否则调用方拿到的是过渡中的中间状态。
- *    历史上这个函数点击后立即 return，导致用例报 passed 但页面零变化。
- * 2. 必须幂等：如果已经在用户中心，直接返回，不再点击。
- *    否则在"刚从一个 tab 切回来"的时序下，重复点击会落在过渡态上而失败。
- * 3. 点击后若未切换成功，允许重试一次。小程序 tab 切换在连续操作时偶发失败。
+ * 【实现已迁移到页面对象】
+ * 原实现在这里，含判据文案（「积分商城」/「登录/注册」）、幂等、重试、
+ * "点击后重新取前台页再验证"等一堆页面知识。这些属于**页面对象**该管的事；
+ * 留在关键字层会让 android.js 逐渐变成各页面业务知识的大杂烩。
+ * 现在逻辑在 pages/user_center_page.js，本函数只是兼容外壳，行为不变。
  *
- * 【判据】「积分商城」在登录态和未登录态都存在；「登录/注册」是未登录时的标题。
- * 这两个文本在「压铸百科」等其它页面的可见文本中出现 0 次（实测），可作可靠依据。
- * 用 document.body.innerText 检索：它只返回可见文本，自动排除隐藏元素与
- * <style>/<script> 里的同名字符串（用 page.content() 会误判）。
+ * ⚠️ 新代码请直接用页面对象：
+ *     const pages = require("./pages");
+ *     [pages.userCenter.switchTo, { timeout: 10000 }]
  *
  * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{timeout?: number, retries?: number}} params timeout: 单次等待超时（毫秒）；retries: 失败重试次数
- * @returns {Promise<import('playwright').Page>} page
+ * @param {{timeout?: number, retries?: number}} [options] 透传给页面对象
+ * @returns {Promise<import('playwright').Page>} 切换后的前台页
  */
-async function switchToUserCenter(page, { timeout = 10000, retries = 1 } = {}) {
-  // 注意用 require 而不是顶部 import：app_common 与本文件存在循环依赖
-  // （app_common 的 appTest 需要本文件的操作函数）。延迟到运行时取，
-  // 此时 app_common 已加载完毕，可以安全拿到。
-  const { resolveForegroundPage } = require("../../common/app_common");
-
-  /** 在【当前前台页】上判断是否已在用户中心 */
-  const checkOnForeground = async () => {
-    const fg = await resolveForegroundPage(page);
-    return fg.evaluate(() => {
-      const t = document.body.innerText || "";
-      return t.includes("积分商城") || t.includes("登录/注册");
-    });
-  };
-
-  try {
-    // 幂等：已经在用户中心就直接返回
-    if (await checkOnForeground()) {
-      console.log("已在用户中心，无需切换");
-      return await resolveForegroundPage(page);
-    }
-
-    await page.waitForTimeout(1500);
-    const device = await getDevice();
-
-    let lastErr = null;
-    for (let i = 0; i <= retries; i++) {
-      try {
-        // 必须加 .first()：首页上同时存在「我的」和「我的关注」，
-        // 不加会在 strict mode 下抛 "resolved to 2 elements"。
-        const userCenterButton = page.getByText("我的").first();
-        await userCenterButton.waitFor({ state: "attached", timeout: 10000 });
-
-        // 用真实 adb tap，不用 .click()：实测 .click() 在小程序上会因
-        // 页面持续重绘导致 "stable" 检查永不满足，从而超时或误报失败。
-        await tapElement(device, page, userCenterButton);
-
-        // 【关键】点击后必须重新获取前台页再验证。
-        // 小程序切 tab 会创建新的 page 对象，旧的 page 变成后台页，
-        // 其内容冻结在切换前（实测：旧 page 的 innerText 永远是首页内容）。
-        // 在旧 page 上等「积分商城」会必然超时 —— 这正是本函数曾经失败的原因。
-        const deadline = Date.now() + timeout;
-        while (Date.now() < deadline) {
-          if (await checkOnForeground()) {
-            const fg = await resolveForegroundPage(page);
-            console.log("已切换到用户中心");
-            return fg; // 返回前台页，不能用旧 page
-          }
-          await page.waitForTimeout(400);
-        }
-        throw new Error(`等待用户中心内容超时（${timeout}ms）`);
-      } catch (e) {
-        lastErr = e;
-        if (i < retries) {
-          console.warn(`切换到用户中心第 ${i + 1} 次失败，重试中: ${e.message.split("\n")[0]}`);
-          await page.waitForTimeout(2000);
-        }
-      }
-    }
-    throw lastErr;
-  } catch (e) {
-    console.error(`切换到用户中心失败: ${e.message}`);
-    throw e;
-  }
+async function switchToUserCenter(page, options = {}) {
+  // 延迟 require：本文件与 pages/ 下的模块互相引用，
+  // 运行时取可确保两边都已加载完毕（与 resolveForegroundPage 同样的处理）。
+  const userCenterPage = require("./pages/user_center_page");
+  return userCenterPage.switchTo(page, options);
 }
 
 
