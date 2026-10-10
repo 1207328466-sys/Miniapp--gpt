@@ -48,7 +48,7 @@ async function getDevice() {
  *
  * 策略：从元素本身开始向上找，选第一个"尺寸正常且增长不过分"的祖先。
  * - 面积 > 400（排除零宽度、一像素分隔线这类元素）
- * - 面积不超过起始元素的 8 倍（避免一路爬到整页容器，那会点到页面正中间）
+ * - 面积不超过 max(起始元素的 8 倍, 10000)（避免一路爬到整页容器，那会点到页面正中间）
  * - 最多向上 4 层
  *
  * @param {import('playwright').Locator} locator
@@ -73,6 +73,13 @@ async function findClickableAncestor(locator) {
       return { selector: "self", level: 0, box: startRect, reason: "起点元素尺寸正常" };
     }
 
+    // 容器面积上限：既防止爬到整页容器，又要给"文字节点极小"的情况留足空间。
+    // 实测底部 tab 栏：文字 span 面积只有 190，而真正可点击的 tab-item 容器
+    // 面积是 4239 —— 若按"起点 8 倍 + 2000"算，上限只有 3522，会把正确的
+    // 容器误判成"过大"而退回文字节点，导致点击坐标偏离真正的响应区域。
+    // 经验值：小程序里正常的可点区域面积普遍在 4000~10000 之间，故设 10000 下限。
+    const areaLimit = Math.max(startRect.area * 8, 10000);
+
     let cur = start;
     for (let i = 0; i < 4; i++) {
       const parent = cur.parentElement;
@@ -82,7 +89,7 @@ async function findClickableAncestor(locator) {
       const r = rectOf(cur);
       if (r.area > 400) {
         // 尺寸增长过多说明爬到整页容器了，会点到页面正中间，放弃
-        if (r.area <= startRect.area * 8 + 2000) {
+        if (r.area <= areaLimit) {
           return {
             selector: describe(cur),
             level: i + 1,
@@ -172,11 +179,11 @@ async function switchToUserCenter(page, { timeout = 10000, retries = 1 } = {}) {
   // 注意用 require 而不是顶部 import：app_common 与本文件存在循环依赖
   // （app_common 的 appTest 需要本文件的操作函数）。延迟到运行时取，
   // 此时 app_common 已加载完毕，可以安全拿到。
-  const { pickForegroundPage } = require("../../common/app_common");
+  const { resolveForegroundPage } = require("../../common/app_common");
 
   /** 在【当前前台页】上判断是否已在用户中心 */
   const checkOnForeground = async () => {
-    const fg = await pickForegroundPage(page);
+    const fg = await resolveForegroundPage(page);
     return fg.evaluate(() => {
       const t = document.body.innerText || "";
       return t.includes("积分商城") || t.includes("登录/注册");
@@ -187,7 +194,7 @@ async function switchToUserCenter(page, { timeout = 10000, retries = 1 } = {}) {
     // 幂等：已经在用户中心就直接返回
     if (await checkOnForeground()) {
       console.log("已在用户中心，无需切换");
-      return await pickForegroundPage(page);
+      return await resolveForegroundPage(page);
     }
 
     await page.waitForTimeout(1500);
@@ -212,7 +219,7 @@ async function switchToUserCenter(page, { timeout = 10000, retries = 1 } = {}) {
         const deadline = Date.now() + timeout;
         while (Date.now() < deadline) {
           if (await checkOnForeground()) {
-            const fg = await pickForegroundPage(page);
+            const fg = await resolveForegroundPage(page);
             console.log("已切换到用户中心");
             return fg; // 返回前台页，不能用旧 page
           }
@@ -247,30 +254,16 @@ async function switchToUserCenter(page, { timeout = 10000, retries = 1 } = {}) {
  * @returns {Promise<import('playwright').Page>} 前台页面；都探测不到时返回原 page
  */
 async function getForegroundPage(page, { timeout = 500 } = {}) {
-  for (const p of page.context().pages()) {
-    try {
-      const alive = await p.evaluate(
-        (ms) =>
-          new Promise((resolve) => {
-            let done = false;
-            requestAnimationFrame(() => {
-              done = true;
-              resolve(true);
-            });
-            setTimeout(() => {
-              if (!done) resolve(false);
-            }, ms);
-          }),
-        timeout
-      );
-      if (alive) {
-        return p;
-      }
-    } catch (e) {
-      // 页面不可用（如预加载页），跳过
-    }
+  // 实现已下沉到驱动层：那里统一处理"page 已销毁 / 已降级为后台页"两种情况，
+  // 并缓存 context，避免对已销毁的 page 调 context() 直接抛错。
+  // 这里保留同名函数只是为了兼容历史调用方（如 diagnostic 脚本）。
+  const { resolveForegroundPage } = require("../../common/app_common");
+  try {
+    return await resolveForegroundPage(page, { timeout });
+  } catch (e) {
+    console.warn(`getForegroundPage 解析失败，返回原 page: ${e.message.split("\n")[0]}`);
+    return page;
   }
-  return page;
 }
 
 

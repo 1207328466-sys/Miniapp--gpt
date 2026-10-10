@@ -7,8 +7,21 @@
 '''
 import shutil
 import subprocess
+import sys
 
 import pytest
+
+# Windows 控制台默认是 GBK 代码页。node 用例的输出里一旦出现当前代码页
+# 表示不了的字符，print() 会抛 UnicodeEncodeError，把真正的失败原因
+# 掩盖成一行编码错误。
+# 这里只放宽错误处理、不改编码 —— 改编码会让在 GBK 控制台里运行的人
+# 看到满屏乱码。想在本机看到完整 UTF-8 输出，运行前先 chcp 65001。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except Exception:
+        # 被 pytest 替换成捕获对象时没有 reconfigure，忽略即可
+        pass
 
 
 class JsTestFailure(Exception):

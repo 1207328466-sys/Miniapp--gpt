@@ -27,6 +27,48 @@ const log = {
 };
 
 /**
+ * 浏览器 context 缓存。
+ *
+ * 为什么需要缓存：小程序某些导航会**销毁 page 对象**，此时对已销毁的 page
+ * 调用 page.context() 会直接抛错，就再也拿不到兄弟页面、无法恢复。
+ * context 对象本身在页面切换 / 销毁后依然有效，所以在第一次拿到时就存下来。
+ * @type {import('playwright').BrowserContext|null}
+ */
+let cachedContext = null;
+
+/**
+ * 从 servicewechat URL 里提取小程序 appid；取不到（如 /preload/ 页）返回 null。
+ * 实测微信会同时缓存多个小程序，context 里会混入别的小程序的 page。
+ * @param {string} url
+ * @returns {string|null}
+ */
+function appIdOf(url) {
+  const m = String(url).match(/servicewechat\.com\/(wx[0-9a-fA-F]+)\//);
+  return m ? m[1] : null;
+}
+
+/**
+ * 注入页面执行的探针：能否在超时内等到一帧动画。
+ *
+ * 后台页对应的原生 WebView 已被系统挂起，渲染线程不再产出帧，
+ * 所以 requestAnimationFrame 不触发 —— 能等到帧的才是前台可见页。
+ * 注意不能用 locator.isVisible() 判断：后台页里的元素同样返回 true。
+ * @param {number} ms 等待上限（毫秒）
+ * @returns {Promise<boolean>}
+ */
+const RAF_PROBE = (ms) =>
+  new Promise((resolve) => {
+    let done = false;
+    requestAnimationFrame(() => {
+      done = true;
+      resolve(true);
+    });
+    setTimeout(() => {
+      if (!done) resolve(false);
+    }, ms);
+  });
+
+/**
  * 生成 %m%d_%H%M%S 格式时间戳，用于截图命名
  * @param {Date} date
  * @returns {string}
@@ -64,15 +106,35 @@ function getCaller() {
  * @param {string|null} photoPath 截图保存路径，为空则不截图
  * @param {{fileName: string, funcName: string}} caller 调用者信息（用于截图目录命名）
  * @param {import('playwright').AndroidDevice|null} device 设备对象，用于截图失败时回退到 adb screencap
+ * @param {{resolveForeground?: boolean}} [options] resolveForeground: 是否在每步开始前把
+ *        page 换成当前真正的前台页（默认 true）
  * @returns {Promise<import('playwright').Page>} page
  */
-async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { fileName: "app", funcName: "unknown" }, device = null) {
+async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { fileName: "app", funcName: "unknown" }, device = null, options = {}) {
+  const { resolveForeground = true } = options;
   let savedError = null;
   const totalStart = Date.now();
   const stepTimes = [];
 
   for (const [func, kwargs] of testSubFunctions) {
     log.info(`正在执行${func.name}步骤`);
+
+    // 【关键】每步开始前把 page 换成"当前真正显示在屏幕上的前台页"。
+    // 为什么必须做：小程序切页后，上一步返回的 page 可能
+    //   1) 降级为后台页（仍在 context.pages() 里，但内容冻结在切换前）
+    //   2) 直接被销毁
+    // 用例拿着这种过期引用去做判据，就会出现"界面明明已经对了、判据却说没对"
+    // 的假失败（实测：点击底部 tab 后持续点击 4 次仍未"到达"目标页）。
+    if (resolveForeground) {
+      try {
+        const fg = await resolveForegroundPage(page);
+        if (fg !== page) log.debug(`步骤 ${func.name} 前重新解析前台页`);
+        page = fg;
+      } catch (e) {
+        log.debug(`步骤 ${func.name} 前解析前台页失败，沿用当前 page: ${e.message.split("\n")[0]}`);
+      }
+    }
+
     const stepStart = Date.now();
     let stepDuration = 0;
     try {
@@ -138,62 +200,154 @@ async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { 
 
 
 /**
- * 在同一个 context 的多个 page 中找出真正显示在屏幕上的那个。
+ * 解析出"当前真正显示在屏幕上的小程序前台页"。
+ *
+ * 这是本框架最核心的一个能力，所有"拿到的 page 对不对"的问题都收敛到这里。
  *
  * 背景：appTest 原来只是"遍历 webview，取第一个 url 含 servicewechat.com 的 page"，
- * 但小程序同一个 context 下并存 4 个 page（真实内容页 / 预加载页 / 空壳页等），
+ * 但小程序同一个 context 下并存多个 page（真实内容页 / 预加载页 / 空壳页 / 后台页），
  * URL 全都含 servicewechat.com，于是取到哪个完全看设备返回顺序。
- * 实测取到过只有一个 <body><div> 的空壳页，导致后续所有元素定位全部超时。
+ * 实测取到过只有一个 <body><div> 的预加载空壳页，导致后续所有元素定位全部超时。
  *
  * 判据：后台页对应的原生 WebView 已被系统挂起，渲染线程不再产出帧，
  * 因此 requestAnimationFrame 不触发。能等到帧的才是前台可见页。
  * 注意不能用 locator.isVisible() 判断——后台页内的元素同样返回 true。
  *
- * @param {import('playwright').Page} page 候选页面
- * @param {number} timeout 单个页面的探测超时（毫秒）
- * @returns {Promise<import('playwright').Page>} 最可能是前台页的 page；都探测不到时返回原 page
+ * 【重要】传进来的 page 本身可能就是过期的：
+ *   - 已销毁（isClosed() === true）
+ *   - 已降级为后台页（仍然活着、仍在 context.pages() 里，但内容冻结）
+ * 两种情况都在这里被兜住：context 从缓存取，前台页重新探测。
+ * 因此业务用例不需要再自己写"重新获取页面"的逻辑。
+ *
+ * @param {import('playwright').Page} page 候选页面（允许已失效）
+ * @param {{timeout?: number}} [options] timeout: 单个页面的 RAF 探测超时（毫秒）
+ * @returns {Promise<import('playwright').Page>} 当前前台页
+ * @throws {Error} context 拿不到、或没有任何页面在产出动画帧时抛出
  */
-async function pickForegroundPage(page, timeout = 800) {
-  // 从 URL 提取小程序 appid，只接受同一小程序的页面。
-  // 实测微信会同时缓存多个小程序，context 里会混入别的小程序的 page，
-  // 若不限制 appid，可能选到另一个小程序的页面。
-  const appIdOf = (u) => {
-    const m = String(u).match(/servicewechat\.com\/(wx[0-9a-f]+)\//);
-    return m ? m[1] : null;
-  };
-  const targetAppId = appIdOf(page.url());
+async function resolveForegroundPage(page, { timeout = 500 } = {}) {
+  // 1) 取浏览器 context：page 可用时优先从它取，已销毁则退回缓存
+  let ctx = null;
+  try {
+    if (page && !page.isClosed()) ctx = page.context();
+  } catch (e) {
+    // 已销毁的 page 调 context() 会抛错，忽略，走缓存
+  }
+  if (!ctx) ctx = cachedContext;
+  if (!ctx) {
+    throw new Error("拿不到浏览器 context：传入的 page 已失效，且此前没有缓存过 context");
+  }
+  cachedContext = ctx;
 
-  let fallback = null;
-  for (const p of page.context().pages()) {
+  // 2) 收集还活着的候选页面
+  const all = ctx.pages().filter((p) => {
     try {
-      if (targetAppId && appIdOf(p.url()) !== targetAppId) {
-        continue; // 属于别的小程序，跳过
-      }
-      const alive = await p.evaluate(
-        (ms) =>
-          new Promise((resolve) => {
-            let done = false;
-            requestAnimationFrame(() => {
-              done = true;
-              resolve(true);
-            });
-            setTimeout(() => {
-              if (!done) resolve(false);
-            }, ms);
-          }),
-        timeout
-      );
-      if (alive) {
-        // 优先返回"既是前台、又有实际内容"的页面
-        const count = await p.locator("*").count().catch(() => 0);
-        if (count > 10) return p;
-        if (!fallback) fallback = p;
-      }
+      return !p.isClosed();
     } catch (e) {
-      // 页面不可用（如预加载页），跳过
+      return false;
+    }
+  });
+  if (!all.length) throw new Error("context 里没有任何可用页面");
+
+  // 3) 确定目标 appid：优先用传入 page 的；取不到（如 /preload/ 页）就从候选里推最主流的
+  let targetAppId = null;
+  try {
+    if (page && !page.isClosed()) targetAppId = appIdOf(page.url());
+  } catch (e) {
+    // 忽略
+  }
+  if (!targetAppId) {
+    const freq = new Map();
+    for (const p of all) {
+      const id = appIdOf(p.url());
+      if (id) freq.set(id, (freq.get(id) || 0) + 1);
+    }
+    let best = 0;
+    for (const [id, n] of freq) {
+      if (n > best) {
+        best = n;
+        targetAppId = id;
+      }
     }
   }
-  return fallback || page;
+  const pool = targetAppId ? all.filter((p) => appIdOf(p.url()) === targetAppId) : all;
+  const candidates = pool.length ? pool : all;
+
+  // 4) 并行探测：只有还在产出动画帧的才是前台页。
+  //    这里必须并行——串行探测每个页面最多要等一个 timeout，
+  //    7 个页面就是 3.5 秒的纯等待，放到每一步之前会严重拖慢用例。
+  const probes = await Promise.all(
+    candidates.map(async (p) => {
+      try {
+        const alive = await p.evaluate(RAF_PROBE, timeout);
+        if (!alive) return null;
+        const count = await p.locator("*").count().catch(() => 0);
+        return { page: p, count };
+      } catch (e) {
+        // 页面不可用（预加载页 / 已销毁），跳过
+        return null;
+      }
+    })
+  );
+  const alive = probes.filter(Boolean);
+
+  if (!alive.length) {
+    // 没有任何页面在产出帧：可能是切换过渡中，也可能判据本身不适用。
+    // 此时退回传入的 page（只要它还活着），让调用方仍拿到一个能用的对象。
+    if (page && !page.isClosed()) return page;
+    throw new Error(`context 里 ${candidates.length} 个页面都没有检测到前台页（RAF 全部不活跃）`);
+  }
+
+  // 5) 唯一候选：直接用它
+  let picked = alive[0];
+
+  // 6) 多个候选：几乎只发生在页面切换的过渡窗口里（新旧页面短暂同时出帧）。
+  //    实测从专栏列表页进详情页时出现过：旧列表页 188 个元素、新详情页 118 个，
+  //    此时若按"元素最多"挑，会选中已经过期的那一个。
+  //    所以先等一小拍再探一次，让过渡结束；仍然分不清才退化为按元素数挑。
+  if (alive.length > 1) {
+    await new Promise((r) => setTimeout(r, 250));
+    const second = await Promise.all(
+      alive.map(async ({ page: p }) => {
+        try {
+          return (await p.evaluate(RAF_PROBE, timeout)) ? p : null;
+        } catch (e) {
+          return null;
+        }
+      })
+    );
+    const still = second.filter(Boolean);
+    if (still.length === 1) {
+      const count = await still[0].locator("*").count().catch(() => 0);
+      picked = { page: still[0], count };
+    } else {
+      if (still.length > 1) {
+        log.debug(`前台页判定仍有 ${still.length} 个候选（疑似页面过渡中），退化为按元素数挑选`);
+      }
+      alive.sort((a, b) => b.count - a.count);
+      picked = alive[0];
+    }
+  }
+
+  if (picked.page !== page) {
+    log.debug(`前台页解析: 候选=${candidates.length} 活跃=${alive.length} 元素数=${picked.count}`);
+  }
+  return picked.page;
+}
+
+/**
+ * 兼容旧调用方的薄封装：解析前台页，失败时返回原 page（不抛错）。
+ * 新代码请直接用 resolveForegroundPage。
+ * @param {import('playwright').Page} page 候选页面
+ * @param {number} timeout 单个页面的探测超时（毫秒）
+ * @returns {Promise<import('playwright').Page>}
+ */
+async function pickForegroundPage(page, timeout = 800) {
+  try {
+    return await resolveForegroundPage(page, { timeout });
+  } catch (e) {
+    log.debug(`pickForegroundPage 解析失败，返回原 page: ${e.message.split("\n")[0]}`);
+    return page;
+  }
 }
 
 /**
@@ -242,9 +396,13 @@ async function getWxWebviewPage(device = null) {
   // 关键：等待页面视口宽度>0
   await page.waitForFunction(() => document.documentElement.clientWidth > 10, { timeout: 15000 });
 
+  // 【关键】缓存 context：page 后续可能被小程序导航销毁，
+  // 而 context 对象始终有效，是"页面丢了还能找回来"的唯一依据。
+  cachedContext = page.context();
+
   // 关键：上面按 URL 匹配到的可能只是"并存页面之一"，未必是屏幕上正在显示的那个。
   // 这里再挑一次前台页，避免把空壳页/后台页当成目标页。
-  const picked = await pickForegroundPage(page);
+  const picked = await resolveForegroundPage(page);
   if (picked !== page) {
     const count = await picked.locator("*").count().catch(() => 0);
     log.info(`已切换到前台页: 元素数=${count}`);
@@ -311,4 +469,6 @@ module.exports = {
   runAppSteps,
   getWxWebviewPage,
   pickForegroundPage,
+  resolveForegroundPage,
+  appIdOf,
 };
