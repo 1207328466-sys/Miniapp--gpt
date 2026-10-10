@@ -26,7 +26,14 @@
  */
 
 const { resolveForegroundPage } = require("../../../common/app_common");
-const { getDevice, tapElement } = require("../android");
+const { getDevice, tapElement, goBack } = require("../android");
+
+/**
+ * 实测的底部 tab 文案。
+ * 注意：**按文本判断，不写 class 前缀** —— 各页面 tab 栏的 class 前缀都不一样
+ *（实测见过 bar-index--*、index--*），写前缀等于给自己挖坑。
+ */
+const BOTTOM_TAB_TEXTS = ["有问必答", "学习中心", "设计专区", "我的"];
 
 /** 纯等待。不依赖 page 对象：page 被销毁后 page.waitForTimeout 会抛错 */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -163,6 +170,50 @@ async function classOf(p, selector) {
 }
 
 /**
+ * 当前页面上有没有底部 tab 栏；有则返回该页，没有返回 null。
+ * @param {import('playwright').Page} page
+ * @returns {Promise<import('playwright').Page|null>}
+ */
+async function withBottomTabBar(page) {
+  const fg = await foreground(page);
+  for (const text of BOTTOM_TAB_TEXTS) {
+    if ((await countOfText(fg, text)) > 0) return fg;
+  }
+  return null;
+}
+
+/**
+ * 确保停在"有底部 tab 栏的一级页面"上。
+ *
+ * 【为什么需要它 —— 这条是真机验证时踩出来的】
+ * 小程序里有一批二级页**没有底部 tab 栏**：专栏详情页、搜索页、答题活动页……
+ * 如果用例从这些页面起步，而它的第一步是"点底部 tab 某某"，
+ * 就会直接失败在"找不到底部 tab"。实测：从搜索页起步跑
+ * `test_learn_center_column`，**两次尝试都失败**，报错是
+ * 「当前既不在详情页、也不在学习中心，也找不到底部 tab」——
+ * 而当时手机上明明是可以在搜索页点返回回到首页的。
+ *
+ * 策略：没有 tab 栏就点返回（`goBack` 会校验页面确实变了），最多退 maxAttempts 次。
+ *
+ * @param {import('playwright').Page} page
+ * @param {{maxAttempts?: number}} [options]
+ * @returns {Promise<import('playwright').Page>} 带底部 tab 栏的页面
+ */
+async function ensureOnTabPage(page, { maxAttempts = 3 } = {}) {
+  for (let i = 1; i <= maxAttempts; i++) {
+    const fg = await foreground(page);
+    if (await withBottomTabBar(fg)) return fg;
+    console.log(`  [自愈] 当前页没有底部 tab 栏（应处在二级页），点返回退出（第 ${i}/${maxAttempts} 次）`);
+    page = await goBack(fg, { timeout: 8000 });
+  }
+  const fg = await foreground(page);
+  throw new Error(
+    `尝试 ${maxAttempts} 次返回后仍未出现底部 tab 栏，无法进入一级页面。` +
+      `当前页面前 200 字:\n  ${JSON.stringify((await pageText(fg)).slice(0, 200))}`
+  );
+}
+
+/**
  * 读回输入框的真实内容。
  *
  * 【为什么不能直接读 el.value】
@@ -202,5 +253,8 @@ module.exports = {
   tapText,
   textOf,
   classOf,
+  BOTTOM_TAB_TEXTS,
+  withBottomTabBar,
+  ensureOnTabPage,
   inputValue,
 };

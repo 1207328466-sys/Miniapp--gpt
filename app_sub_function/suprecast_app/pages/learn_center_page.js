@@ -124,10 +124,14 @@ async function firstColumnName(page) {
  * 确保停在「学习中心 - 专栏列表页」。框架不负责导航到起始页，这一步负责自愈。
  *
  * 小程序可能停在几种状态，逐个处理：
- *   A. 已在专栏列表页          -> 直接返回
- *   B. 在专栏详情页            -> 点顶部返回按钮（实测详情页没有底部 tab 栏）
- *   C. 在学习中心但不在专栏 tab -> 切顶部「专栏」tab
- *   D. 在有底部 tab 的其它页面  -> 点底栏「学习中心」
+ *   A. 已在专栏列表页            -> 直接返回
+ *   B. 在学习中心但不在专栏 tab  -> 切顶部「专栏」tab
+ *   C. 在任意**二级页**（专栏详情页 / 搜索页 / 答题活动页……）
+ *      -> 这些页面都**没有底部 tab 栏**，先由 `base.ensureOnTabPage` 点返回退出来
+ *   D. 在有底部 tab 的其它一级页 -> 点底栏「学习中心」
+ *
+ * C 这条是**真机验证时踩出来的**：原先只特判了"专栏详情页"这一种二级页，
+ * 从搜索页起步时两次尝试都失败（报"既不在详情页、也不在学习中心，也找不到底部 tab"）。
  *
  * 【每轮循环都必须重新解析前台页】点底部 tab 后旧 page 会降级为后台页（内容冻结），
  * 只有重新取页面才能看到切换后的真实内容 —— 账本根因 8 / 9 的教训。
@@ -141,36 +145,28 @@ async function ensureOnColumnList(page, { maxAttempts = 4, waitAfterTab = 2500 }
       return page;
     }
 
-    const onDetail = await columnDetail.isOn(page);
-    const onLearnCenter = await isOn(page);
-    const hasBottomTab = (await base.countOfText(page, BOTTOM_TAB_TEXT)) > 0;
-    const t = await base.pageText(page);
-    console.log(
-      `  [尝试 ${attempt}] 在详情页=${onDetail} 在学习中心=${onLearnCenter} ` +
-        `有底部tab栏=${hasBottomTab} 页面前 60 字=${JSON.stringify(t.slice(0, 60))}`
-    );
-
-    if (onDetail) {
-      page = await columnDetail.back(page);
-      continue;
-    }
-
-    if (onLearnCenter) {
-      // 已经在学习中心，只是停在课程/压铸百科 tab 上
+    if (await isOn(page)) {
+      // 已经在学习中心，只是停在课程 / 压铸百科 tab 上
+      console.log(`  [尝试 ${attempt}] 在学习中心，切到「${TOP_TAB.column}」tab`);
       page = await switchToColumnTab(page);
       continue;
     }
 
-    if (hasBottomTab) {
-      await base.tapText(page, BOTTOM_TAB_TEXT, `底部 tab「${BOTTOM_TAB_TEXT}」`);
-      await base.sleep(waitAfterTab);
-      continue;
+    console.log(
+      `  [尝试 ${attempt}] 不在学习中心，页面前 60 字=${JSON.stringify((await base.pageText(page)).slice(0, 60))}`
+    );
+
+    // 关键：先确保站在"有底部 tab 栏的一级页面"上。二级页（专栏详情页 / 搜索页 /
+    // 答题活动页）都没有底部 tab 栏，从这里直接去找底部 tab 必然失败。
+    page = await base.ensureOnTabPage(page);
+
+    if (await isOnColumnList(page)) {
+      console.log("  退出二级页后已经就是专栏列表页");
+      return page;
     }
 
-    throw new Error(
-      `无法到达专栏列表页：当前既不在详情页、也不在学习中心，也找不到底部 tab「${BOTTOM_TAB_TEXT}」。` +
-        `请手动把小程序切到有底部 tab 栏的页面。当前页面前 200 字:\n  ${t.slice(0, 200)}`
-    );
+    await base.tapText(page, BOTTOM_TAB_TEXT, `底部 tab「${BOTTOM_TAB_TEXT}」`);
+    await base.sleep(waitAfterTab);
   }
 
   page = await base.foreground(page);

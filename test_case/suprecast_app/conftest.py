@@ -20,6 +20,7 @@ JS 那边只负责"跑步骤 + 写 JSONL"，把步骤明细变成
 '''
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -46,6 +47,26 @@ except Exception:  # allure 只是报告增强，缺了也要能正常跑
     allure = None
 
 
+_log = logging.getLogger("uitest")
+
+
+def emit(text=""):
+    """同时写到控制台和日志文件。
+
+    【为什么必须两边都写】
+    第一版只在 pytest.ini 里配了 log_file，结果日志文件**一直是 0 字节** ——
+    因为 Python 侧根本没有产生任何 logging 记录（JS 的输出走的是 print）。
+    教训：配了日志设施不等于有日志，得有东西往里写。
+
+    控制台给人当下看，日志文件给事后追查（report/log/pytest.log）。
+    另注意：pytest.ini 里 log_cli 关掉了，否则同一行会被打印两遍
+    （我们的 print 一次 + logging 再回显一次）。
+    """
+    print(text)
+    for line in str(text).splitlines() or [""]:
+        _log.info("%s", line)
+
+
 class JsTestFailure(AssertionError):
     """JS 脚本执行失败异常。
 
@@ -66,10 +87,10 @@ def _read_step_log(path):
         with open(path, encoding="utf-8") as f:
             return [json.loads(line) for line in f if line.strip()]
     except FileNotFoundError:
-        print("[WARN] 没有生成步骤日志：JS 侧可能没读到 UITEST_STEP_LOG")
+        emit("[WARN] 没有生成步骤日志：JS 侧可能没读到 UITEST_STEP_LOG")
         return []
     except Exception as exc:
-        print(f"[WARN] 步骤日志解析失败：{exc}")
+        emit(f"[WARN] 步骤日志解析失败：{exc}")
         return []
 
 
@@ -80,22 +101,22 @@ def _print_step_summary(entries):
     if not steps:
         return
 
-    print("\n--- 步骤明细 ---")
+    emit("\n--- 步骤明细 ---")
     for s in steps:
         mark = "OK  " if s.get("status") == "passed" else "FAIL"
-        print(f"  [{mark}] {s.get('num')}. {s.get('name')}  {s.get('duration')}s")
+        emit(f"  [{mark}] {s.get('num')}. {s.get('name')}  {s.get('duration')}s")
         if s.get("error"):
-            print(f"          错误: {s['error']}")
+            emit(f"          错误: {s['error']}")
         if s.get("screenshot"):
-            print(f"          截图: {s['screenshot']}")
+            emit(f"          截图: {s['screenshot']}")
 
     if summary:
-        print(
+        emit(
             f"  合计 {summary.get('steps')} 步：通过 {summary.get('passed')}，"
             f"失败 {summary.get('failed')}，总耗时 {summary.get('total')}s"
         )
         if summary.get("context"):
-            print(f"  上下文: {json.dumps(summary['context'], ensure_ascii=False)}")
+            emit(f"  上下文: {json.dumps(summary['context'], ensure_ascii=False)}")
 
 
 def _attach_to_allure(entries, case_name):
@@ -166,9 +187,9 @@ class JsTestItem(pytest.Item):
             )
 
             if result.stdout:
-                print(result.stdout)
+                emit(result.stdout)
             if result.stderr:
-                print(result.stderr)
+                emit(result.stderr)
 
             # 先出报告再判成败：失败时恰恰更需要看到步骤明细
             entries = _read_step_log(step_log_path)

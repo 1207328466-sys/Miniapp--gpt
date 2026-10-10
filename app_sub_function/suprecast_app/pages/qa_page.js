@@ -53,15 +53,12 @@ async function ensureOn(page, { timeout = 10000 } = {}) {
   if (await isOn(page)) return base.foreground(page);
   if (await isOnSearchPage(page)) return base.foreground(page); // 搜索页也算"到了"
 
-  const fg = await base.foreground(page);
-  if ((await base.countOfText(fg, BOTTOM_TAB_TEXT)) === 0) {
-    throw new Error(
-      `无法到达「有问必答」页：当前既没有搜索栏（${SEL.searchBar}），也找不到底部 tab「${BOTTOM_TAB_TEXT}」。` +
-        `请手动把小程序切到有底部 tab 栏的页面。当前页面前 200 字:\n  ${(await base.pageText(fg)).slice(0, 200)}`
-    );
-  }
+  // 先确保站在"有底部 tab 栏的一级页面"上：专栏详情页 / 答题活动页等二级页都没有
+  // 底部 tab 栏，从这里直接去找底部 tab 必然失败（这条是真机验证时踩出来的）。
+  page = await base.ensureOnTabPage(page);
+  if (await isOn(page)) return await base.foreground(page);
 
-  await base.tapText(fg, BOTTOM_TAB_TEXT, `底部 tab「${BOTTOM_TAB_TEXT}」`);
+  await base.tapText(page, BOTTOM_TAB_TEXT, `底部 tab「${BOTTOM_TAB_TEXT}」`);
 
   // 点击后**重新解析前台页**再看结果：切 tab 会新建 page，旧 page 内容会冻结
   //（账本根因 4 / 8），在旧 page 上等只会白等。
