@@ -16,6 +16,9 @@ const WX_WEBVIEW_PKG = "com.tencent.mm:appbrand0";
 const { getWxWebviewPage } = require("../../common/app_common");
 const { _android: android } = require("playwright");
 
+/** 纯等待。不依赖 page 对象：page 被销毁后 page.waitForTimeout 会抛错 */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 // 有问必答页的搜索栏（是个 wx-view，不是输入框）；点击后进入搜索页
 const SEARCH_BAR = ".search-container";
 // 搜索页的真实输入框
@@ -484,6 +487,174 @@ async function assertElementExists(page, { elementId, timeout = 5000 } = {}) {
   }
 }
 
+// ============================================================
+// 断言层（wait + assert 合体）
+//
+// 为什么需要它：框架原来只有 assertElementExists 一个断言，缺了它，功能坏了
+// 用例也会报 passed —— 这是最危险的一类假通过。
+//
+// 三条设计约定：
+//   1. 断言前先解析"当前前台页"。断言和操作一样，必须作用在屏幕上真正显示的
+//      那个 page 上，否则会拿冻结的后台页去做判断。
+//   2. 等待与断言合体（内部轮询）。小程序渲染时序抖动很大，"点完立刻断言"
+//      几乎必然失败；让用例自己 sleep 猜时间则既慢又不稳。
+//   3. 失败信息必须自带现场证据（当前元素数 + 可见文本前 200 字），
+//      否则只报"没找到元素"根本没法定位。
+//
+// 返回值都是**真正断言过的那一页**，因此 runAppSteps 会把最新 page 传给后续步骤。
+// ============================================================
+
+/**
+ * 读取"当前前台页"的可见文本，供断言使用。
+ *
+ * 用 `document.body.innerText` 而不是 `page.content()`：innerText 只返回**可见文本**，
+ * 自动排除隐藏元素以及 <style>/<script> 里的同名字符串（用 content() 会误判）。
+ *
+ * @param {import('playwright').Page} page 小程序 webview 页面（允许已失效）
+ * @returns {Promise<{page: import('playwright').Page, text: string}>} 前台页与其可见文本
+ */
+async function readForegroundText(page) {
+  // 注意用 require 而不是顶部 import：app_common 与本文件存在循环依赖
+  const { resolveForegroundPage } = require("../../common/app_common");
+  const fg = await resolveForegroundPage(page);
+  const text = await fg.evaluate(() => (document.body.innerText || "").replace(/\s+/g, " ").trim());
+  return { page: fg, text };
+}
+
+/** 断言失败时统一拼装"现场证据"：现在在哪一页、页面上有什么 */
+async function describeCurrentPage(page, text) {
+  let el = "读取失败";
+  try {
+    el = await page.locator("*").count();
+  } catch (e) {
+    // 页面可能在读取过程中被销毁，忽略
+  }
+  return `当前前台页: 元素数=${el}\n  可见文本前 200 字: ${JSON.stringify(String(text).slice(0, 200))}`;
+}
+
+/**
+ * 断言页面上出现某段可见文本（轮询等待，等到即通过）。
+ * @param {import('playwright').Page} page 小程序 webview 页面
+ * @param {{text: string, timeout?: number, interval?: number}} params
+ *        text: 期望出现在可见文本里的片段；timeout: 等待上限（毫秒）；interval: 轮询间隔
+ * @returns {Promise<import('playwright').Page>} 断言时所在的前台页
+ */
+async function assertTextVisible(page, { text, timeout = 8000, interval = 300 } = {}) {
+  if (!text) throw new Error("assertTextVisible 缺少参数 text");
+  const deadline = Date.now() + timeout;
+  let fg = page;
+  let t = "";
+  while (true) {
+    ({ page: fg, text: t } = await readForegroundText(page));
+    if (t.includes(text)) {
+      console.log(`断言通过: 页面出现文本「${text}」`);
+      return fg;
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(interval);
+  }
+  throw new Error(
+    `断言失败: 页面未出现文本「${text}」（等待 ${timeout}ms 超时）\n  ` +
+      (await describeCurrentPage(fg, t))
+  );
+}
+
+/**
+ * 断言页面上**不再**出现某段可见文本（轮询等待，等到消失即通过）。
+ * 典型用法：确认已经从列表页跳进了详情页。
+ * @param {import('playwright').Page} page 小程序 webview 页面
+ * @param {{text: string, timeout?: number, interval?: number}} params
+ * @returns {Promise<import('playwright').Page>} 断言时所在的前台页
+ */
+async function assertTextNotVisible(page, { text, timeout = 5000, interval = 300 } = {}) {
+  if (!text) throw new Error("assertTextNotVisible 缺少参数 text");
+  const deadline = Date.now() + timeout;
+  let fg = page;
+  let t = "";
+  while (true) {
+    ({ page: fg, text: t } = await readForegroundText(page));
+    if (!t.includes(text)) {
+      console.log(`断言通过: 页面已不包含文本「${text}」`);
+      return fg;
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(interval);
+  }
+  throw new Error(
+    `断言失败: 页面仍然包含文本「${text}」（等待 ${timeout}ms 超时）\n  ` +
+      (await describeCurrentPage(fg, t))
+  );
+}
+
+/**
+ * 断言选择器至少命中 1 个元素。
+ *
+ * 用 `count()` 而不是 `waitFor({state:"visible"})`：小程序大量元素是零宽度的
+ * 文字节点，visible 判断会直接超时（这是框架里反复踩到的坑）。
+ * @param {import('playwright').Page} page 小程序 webview 页面
+ * @param {{selector: string, timeout?: number, interval?: number}} params
+ * @returns {Promise<import('playwright').Page>} 断言时所在的前台页
+ */
+async function assertSelectorExists(page, { selector, timeout = 8000, interval = 300 } = {}) {
+  if (!selector) throw new Error("assertSelectorExists 缺少参数 selector");
+  const deadline = Date.now() + timeout;
+  let fg = page;
+  let t = "";
+  let count = 0;
+  while (true) {
+    ({ page: fg, text: t } = await readForegroundText(page));
+    try {
+      count = await fg.locator(selector).count();
+    } catch (e) {
+      count = 0;
+    }
+    if (count > 0) {
+      console.log(`断言通过: ${selector} 命中 ${count} 个`);
+      return fg;
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(interval);
+  }
+  throw new Error(
+    `断言失败: 页面上找不到 ${selector}（等待 ${timeout}ms 超时）\n  ` +
+      (await describeCurrentPage(fg, t))
+  );
+}
+
+/**
+ * 断言选择器命中的元素数量恰好等于 expected。
+ * 适合断言"只有一条标题"这类确定性结构。
+ * @param {import('playwright').Page} page 小程序 webview 页面
+ * @param {{selector: string, expected: number, timeout?: number, interval?: number}} params
+ * @returns {Promise<import('playwright').Page>} 断言时所在的前台页
+ */
+async function assertSelectorCount(page, { selector, expected, timeout = 8000, interval = 300 } = {}) {
+  if (!selector) throw new Error("assertSelectorCount 缺少参数 selector");
+  if (typeof expected !== "number") throw new Error("assertSelectorCount 缺少必填参数 expected（数字）");
+  const deadline = Date.now() + timeout;
+  let fg = page;
+  let t = "";
+  let count = -1;
+  while (true) {
+    ({ page: fg, text: t } = await readForegroundText(page));
+    try {
+      count = await fg.locator(selector).count();
+    } catch (e) {
+      count = -1;
+    }
+    if (count === expected) {
+      console.log(`断言通过: ${selector} 命中 ${count} 个（期望 ${expected}）`);
+      return fg;
+    }
+    if (Date.now() >= deadline) break;
+    await sleep(interval);
+  }
+  throw new Error(
+    `断言失败: ${selector} 命中 ${count} 个，期望 ${expected}（等待 ${timeout}ms 超时）\n  ` +
+      (await describeCurrentPage(fg, t))
+  );
+}
+
 /**
  * 向上滑动（从屏幕下方向上方滑动），使用真实 adb 触摸事件。
  *
@@ -683,6 +854,10 @@ module.exports = {
   clickElementByText,
   inputText,
   assertElementExists,
+  assertTextVisible,
+  assertTextNotVisible,
+  assertSelectorExists,
+  assertSelectorCount,
   swipeUp,
   goBack,
   switchToWxWebview,

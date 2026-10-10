@@ -322,6 +322,38 @@ async function 你的函数名(page, { text, timeout = 10000 } = {}) {
 
 如果你的用例里出现这段逻辑第 3 次，就该把它抽到 `android.js` 里。判断标准：**换一个小程序版本，这段逻辑会不会变？** 会变，就抽出去。
 
+### 怎么写断言（第三轮已补断言层）
+
+框架提供 4 个断言函数，都是**"等待 + 断言"合体**（内部轮询）。小程序渲染时序抖动很大，
+"点完立刻断言"几乎必然失败；让用例自己 `sleep` 猜时间则既慢又不稳 —— 所以等待内建在断言里。
+
+| 函数 | 断言什么 | 典型用法 |
+|---|---|---|
+| `assertTextVisible` | 页面**可见文本**里出现某段文字 | `[assertTextVisible, { text: "热门专栏" }]` |
+| `assertTextNotVisible` | 页面可见文本里**不再**出现某段文字 | 确认已经从列表页跳进了详情页 |
+| `assertSelectorExists` | 选择器至少命中 1 个元素 | `[assertSelectorExists, { selector: ".column-card" }]` |
+| `assertSelectorCount` | 选择器命中数量恰好等于 N | `[assertSelectorCount, { selector: ".col-title", expected: 1 }]` |
+
+它们直接写进 `funcList` 即可，和普通步骤没有区别：
+
+```js
+const funcList = [
+  [stepClickColumnTab, null],
+  [assertTextVisible, { text: MARKER_LEARN_CENTER }],   // 等到「热门专栏」出现
+  [assertSelectorExists, { selector: SEL_COLUMN_CARD }],
+];
+```
+
+三个值得知道的设计细节：
+
+1. **它们返回"真正断言过的那一页"**，所以 `runAppSteps` 会把最新 page 传给后续步骤。
+2. **失败信息自带现场证据**（当前前台页元素数 + 可见文本前 200 字），不用再翻截图对时间。
+3. 判断"文字是否可见"用的是 `document.body.innerText` —— 只返回可见文本，自动排除隐藏
+   元素与 `<style>`/`<script>` 里的同名字符串（用 `page.content()` 会误判）。
+
+> ⚠️ 断言函数本身也要验证"该失败时真的失败"。本轮做过一次反向验证：故意传不存在的
+> 文本/选择器、故意把期望数量写错，4 个断言全部正确失败且报错有信息量 —— 没有假通过。
+
 ---
 
 ## 六、截图与产物
@@ -403,13 +435,15 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 
 ## 八、当前已知问题与优化路线
 
-> **2026/10/10 更新（两轮）**
+> **2026/10/10 更新（三轮）**
 >
 > **第一轮**修掉 7 个根本缺陷，核心交互能力（点击、滑动、页面切换、元素断言）全部可用。
 > **第二轮**修的是「页面的前后台身份」这条主线：导航后旧 page 会**降级为后台页**
 > （活着、仍在 `context.pages()` 里，但内容冻结）。用例只检查"还活着吗"就会一直拿着
 > 冻结页做判据，表现为「界面明明已经切到目标页、判据却说没切过去」，然后反复点击到超时。
 > 现在这件事由框架统一处理（`resolveForegroundPage`）。
+> **第三轮**补上断言层 —— 这是"用例通过"到底意味着什么的分水岭：此前只有
+> `assertElementExists` 一个断言，功能坏了用例照样报 passed。
 >
 > 完整根因分析与实测证据见 [框架能力与问题账本.md](docs/框架能力与问题账本.md)。
 
@@ -439,6 +473,12 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 > `document.visibilityState` 全是 `visible`、`document.hasFocus()` 全是 `true`。
 > 别在这两条路上浪费时间 —— RAF 才是有效判据，而且已经用 adb 截图校准过。
 
+### 已修复 · 第三轮（1 项）
+
+| # | 缺陷 | 修复要点 |
+|---|---|---|
+| 13 | 缺结果断言层，功能坏了用例也会报 passed | 新增 `assertTextVisible` / `assertTextNotVisible` / `assertSelectorExists` / `assertSelectorCount`：内部轮询等待、失败自带现场证据、返回最新前台页 |
+
 ### P0 · 仍待修
 
 | 问题 | 位置 | 影响 |
@@ -451,7 +491,7 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 
 ### P1 · 结构缺失
 
-- **没有结果断言层**：`assertElementExists` 只能判断"元素存在"，无法断言文本内容、页面跳转等。这是**写用例前最后一块短板**——缺了它，功能坏了用例也会报 passed
+- ~~**没有结果断言层**~~ ✅ 已补（第三轮，4 个断言函数）
 - **没有页面对象（Page Object）**：`"我的"`、`"4148"` 这类选择器和测试数据硬编码在函数里；而且**每个页面的 tab 栏 class 都不同**（`bar-index--*` vs `eco-tab-*`），更需要统一管理
 - **步骤失败会跳出整个循环**：`runAppSteps` 里 `throw savedError` 会让后续步骤不再执行
 - **设备连接有两套**：`appTest` 一套、`getDevice()` 一套，互不知情
@@ -471,7 +511,7 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 
 1. ~~补文档与工程基础~~ ✅ 已完成
 2. ~~修框架根本缺陷~~ ✅ 已完成（第一轮 7 项 + 第二轮 5 项）
-3. **补断言层** ← 写用例前建议先做这一步
+3. ~~补断言层~~ ✅ 已完成（第三轮，4 个断言函数）
 4. **修 P0 缺陷**：设备序列号配置化、`pkg`/`webviewTimeout` 接通、`goBack` 换实现
 5. **搭页面对象**：把各页面不同的 tab 栏 class、硬编码的选择器与测试数据统一管理
 6. **打通 Python 侧**：实现 `sc_config` / `sc_log`，让配置和日志真正驱动 JS 用例

@@ -69,6 +69,10 @@ const {
   getDevice,
   tapElement,
   dumpElements,
+  assertTextVisible,
+  assertTextNotVisible,
+  assertSelectorExists,
+  assertSelectorCount,
 } = require("../../app_sub_function/suprecast_app/android");
 
 // ---------- 选择器与期望值（集中定义，小程序改版时改这里）----------
@@ -419,38 +423,22 @@ async function stepVerifyDetail(page) {
 
     // 步骤 2：点击「专栏」
     [stepClickColumnTab, null],
-    [
-      async function verifyColumnTab(page) {
-        console.log("\n[验证] 确认「专栏」内容已显示");
-        page = await foreground(page);
-        const n = await page.locator(SEL_COLUMN_CARD).count();
-        if (n === 0) {
-          // 只报"卡片数为 0"不足以定位问题。实测过一次：单击顶部 tab 落在
-          // 容器边缘，小程序回到了上一个底部 tab，于是这里报"没有卡片"，
-          // 而真正的原因在"当前到底停在哪一页"。所以把现场证据一并带上。
-          let el = "读取失败";
-          try {
-            el = await page.locator("*").count();
-          } catch (e) {
-            // 页面可能在读取过程中被销毁
-          }
-          throw new Error(
-            `点击「${SEL_COLUMN_TAB_TEXT}」后没有找到任何 ${SEL_COLUMN_CARD} 卡片。\n` +
-              `  当前前台页: 元素数=${el} 有底部tab栏=${await pageHasBottomTabBar(page)}\n` +
-              `  当前页面前 120 字: ${JSON.stringify((await pageText(page)).slice(0, 120))}`
-          );
-        }
-        console.log(`  [OK] 找到 ${n} 张专栏卡片`);
-        return page;
-      },
-      null,
-    ],
+
+    // 验证「专栏」内容已显示 —— 改用断言层声明式表达期望。
+    // 原先的写法是自己 count 一遍再手拼错误信息，这正是断言层要取代的东西。
+    [assertTextVisible, { text: MARKER_LEARN_CENTER }],
+    [assertSelectorExists, { selector: SEL_COLUMN_CARD }],
 
     // 步骤 3：点击第一张卡片
     [stepClickFirstColumn, null],
 
-    // 步骤 4：验证已进入详情页
+    // 步骤 4：验证已进入详情页（这一步自带更详细的诊断输出）
     [stepVerifyDetail, null],
+
+    // 再用断言层独立表达一次"确实进了详情页"：
+    // 详情页有且只有一个 .col-title，而列表页独有的「热门专栏」应当消失
+    [assertSelectorCount, { selector: SEL_DETAIL_TITLE, expected: 1 }],
+    [assertTextNotVisible, { text: MARKER_LEARN_CENTER }],
 
     // 附加：打印详情页结构，便于后续写更多断言
     [dumpElements, { tag: ["wx-view", "wx-text"] }],
