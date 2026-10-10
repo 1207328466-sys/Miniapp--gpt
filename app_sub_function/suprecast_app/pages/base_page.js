@@ -241,6 +241,7 @@ async function inputValue(locator) {
 }
 
 module.exports = {
+  getDevice,
   sleep,
   foreground,
   pageText,

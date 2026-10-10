@@ -631,6 +631,24 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 > 实际是 `reruns=1`/`reruns_delay=10`），并加了一句提醒：UI 用例的重试会重复点击，
 > 可能把偶发失败变成状态污染。
 
+### 已修复 · 第八轮（与另一份工作副本合并 + 真机验证发现的缺口）
+
+原仓库里还有一份**并行实现**（另一个 AI 在同一个基线上做的）。按 owner 决定，**以本分支为基**：
+把对方独有的价值挑进来，其余保持我们这条路线。
+
+| # | 内容 | 说明 |
+|---|---|---|
+| 21 | **二级页起步导致自导航失败**（真机验证发现） | 专栏详情页 / 搜索页 / 话题页 / 答题页都没有底部 tab 栏，`ensureOnColumnList` 原先只特判了详情页一种。新增 `base.ensureOnTabPage()` 通用自愈 |
+| 22 | 配了 `log_file` 却没有日志（真机发现） | Python 侧没产生 logging 记录 -> 加 `emit()`（print + logging），并关掉 `log_cli` 避免重复打印 |
+| 23 | **答题活动用例**（移植对方独有内容） | 新增 `pages/quiz_activity_page.js` + `test_quiz_activity.js`，用我们的原语重写；页面结构知识收进页面对象 |
+| 24 | **"用例不适用"与"用例失败"混为一谈** | 引入退出码约定：`3` = 前置条件不满足 -> pytest 记 **SKIPPED**（活动没上线不再报假失败）；skip 必须可见且可计数 |
+| 25 | `withTimeout` 出错时看不出实际延时（隐患自查） | 错误消息带上实际使用的超时值（自建测量工具先验自身） |
+
+> 对方的 `run_case.py`（绕开 PowerShell 破坏中文）也已借鉴过来。
+> 但对方用**截图哈希**判前台页，我们**没照搬**：实测 RAF 在稳定态下可靠
+>（16 轮采样 + 截图比对，见账本第十八节），截图哈希是为"不信 RAF"准备的重型机械，
+> 收进来只会平添复杂度。
+
 ### P0 · 仍待修
 
 无。
@@ -699,16 +717,21 @@ miniapp_test_case/
 │           ├── learn_center_page.js #   学习中心（含「专栏」列表）
 │           ├── column_detail_page.js#   专栏详情页
 │           ├── user_center_page.js  #   用户中心
-│           └── qa_page.js           #   有问必答页 + 搜索页
+│           ├── qa_page.js           #   有问必答页 + 搜索页
+│           └── quiz_activity_page.js#   首页活动卡区 + 答题活动页
 ├── test_case/                       # 用例层
 │   ├── pytest.ini                   # pytest 配置
 │   ├── diagnostic/                  # 诊断工具（不以 test_ 开头，pytest 不收集）
 │   │   ├── capability_check.js      # 15 个函数的能力矩阵探测
-│   │   └── dump_page.js             # 抓页面 DOM 到文件 + 各 page 身份判定
+│   │   ├── dump_page.js             # 抓页面 DOM 到文件 + 各 page 身份判定
+│   │   ├── probe_raf.js             # 校准前台页判据（RAF 信号 vs 截图真值）
+│   │   └── run_case.py              # 跑单个用例并把输出按正确编码落盘
 │   └── suprecast_app/
 │       ├── conftest.py              # ★ 桥接层：让 pytest 能执行 .js
-│       ├── test_example.js          # 用例示例（搜索功能）
+│       ├── test_example.js          # 有问必答 -> 搜索（自导航 + 输入读回校验）
 │       ├── test_login_and_navigation.js    # 切用户中心 + 打印页面结构
+│       ├── test_learn_center_column.js     # 学习中心 -> 专栏 -> 第一张（含 ctx 断言）
+│       ├── test_quiz_activity.js    # 首页活动卡 -> 答题页（**默认不提交**，见文件头）
 │       └── test_switch_to_user_center.js   # 切用户中心（带真实验证）
 └── report/                          # 测试产物（已 gitignore）
     ├── photo_app/                   # 用例截图

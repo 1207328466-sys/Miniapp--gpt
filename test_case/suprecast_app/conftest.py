@@ -47,6 +47,9 @@ except Exception:  # allure 只是报告增强，缺了也要能正常跑
     allure = None
 
 
+# node 侧退出码约定（与用例里的 process.exit 对应）
+SKIP_EXIT_CODE = 3  # 前置条件不满足：用例不适用，记 SKIPPED 而不是 FAILED
+
 _log = logging.getLogger("uitest")
 
 
@@ -196,6 +199,18 @@ class JsTestItem(pytest.Item):
             _print_step_summary(entries)
             _attach_to_allure(entries, self.node_script.name)
 
+            # 退出码约定：0 = 通过；3 = 前置条件不满足（用例不适用）；其它非 0 = 失败。
+            #
+            # 为什么要有 3：像"答题活动未上线""活动卡已换成别的"这类情况，
+            # 报 FAILED 会让报告里长期躺着一条假失败 —— 久而久之没人再看它
+            #（正是"报告说谎"的另一种形式）。记为 SKIPPED 才反映真实语义。
+            #
+            # ⚠️ 注意：skip 必须**可见且可计数**。pytest 会把 SKIPPED 单独统计并打印原因，
+            # Allure 也标 skipped —— 若某次运行里 skip 数量异常增多，那是信号，不是"全绿"。
+            if result.returncode == SKIP_EXIT_CODE:
+                reason = self._precondition_reason(result.stdout) or f"前置条件不满足：{self.node_script.name}"
+                pytest.skip(reason)
+
             if result.returncode != 0:
                 raise JsTestFailure(
                     f"node 执行失败(exit={result.returncode}): {self.node_script.name}"
@@ -205,6 +220,14 @@ class JsTestItem(pytest.Item):
                 os.remove(step_log_path)
             except OSError:
                 pass
+
+    @staticmethod
+    def _precondition_reason(stdout):
+        """从 node 输出里取 [PRECONDITION] 那一行作为 skip 原因（取不到就返回 None）"""
+        for line in (stdout or "").splitlines():
+            if line.startswith("[PRECONDITION]"):
+                return line.replace("[PRECONDITION]", "").strip()
+        return None
 
     def repr_failure(self, excinfo, outerr=None):
         if isinstance(excinfo.value, JsTestFailure):

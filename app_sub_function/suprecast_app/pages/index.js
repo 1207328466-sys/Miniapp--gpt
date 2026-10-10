@@ -20,4 +20,5 @@ module.exports = {
   columnDetail: require("./column_detail_page"),
   userCenter: require("./user_center_page"),
   qaPage: require("./qa_page"),
+  quizPage: require("./quiz_activity_page"),
 };
