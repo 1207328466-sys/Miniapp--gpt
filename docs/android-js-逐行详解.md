@@ -3,40 +3,46 @@
 > 文件：`app_sub_function/suprecast_app/android.js`
 > **当前 700 行**，位于**关键字层**——用例层调用它，它调用驱动层（`common/app_common.js`）。
 >
-> **📌 版本提示（2026/10/10 更新行号）**
-> 本文最初基于 445 行版本编写。此后框架修复了 7 个缺陷，文件增长到 700 行，
-> **行号已全部偏移**。下文各节标题中的行号已经更新为当前版本。
+> **📌 版本提示（2026/10/10 第三轮改动后再次更新行号）**
+> 本文最初基于 445 行版本编写；第一轮修复 7 个缺陷后增长到 700 行，行号同步过一次。
+> **第三轮**（"页面前后台身份"主线）改动后文件为 **694 行**，行号**再次偏移**，下表已同步。
 >
-> 修复涉及的函数，其实现与原始版本已有实质差异，文中已在对应小节标注
-> **「已重构」**并说明改动原因。完整修复记录见
-> [框架能力与问题账本.md](框架能力与问题账本.md)。
+> 第三轮涉及本文件的三个函数：`findClickableAncestor`（面积判据补上下限）、
+> `getForegroundPage`（改为驱动层薄封装）、`switchToUserCenter`（改用 `resolveForegroundPage`）。
+> "取当前前台页"这项能力已**整体下沉到 `common/app_common.js` 的 `resolveForegroundPage`**，
+> 因此本文只讲它在 `android.js` 里留下的那层壳。根因分析与实测证据见
+> [框架能力与问题账本.md](框架能力与问题账本.md) 根因 8~11。
 >
 > **当前函数行号对照表**（可直接跳转阅读）：
 >
-> | 行号 | 函数 | 相对原版 |
-> |---|---|---|
-> | 29 | `getDevice` | 未变 |
-> | **57** | **`findClickableAncestor`** | **新增**（配合 `tapElement`） |
-> | 119 | `tapElement` | **已重构** |
-> | 145 | `findPageWith` | 未变 |
-> | 171 | `switchToUserCenter` | **已重构**（幂等 + 重试 + 前台页验证） |
-> | 249 | `getForegroundPage` | 未变 |
-> | 282 | `login` | **已重构**（改真实 tap） |
-> | 322 | `waitImeShown` | 未变 |
-> | 341 | `focusSearchInput` | **已重构**（改真实 tap） |
-> | 384 | `clickElementById` | **已重构**（属性选择器 + 真实 tap） |
-> | 419 | `clickElementByText` | **已重构**（改真实 tap） |
-> | 440 | `inputText` | **已重构**（真实 tap + 读回校验） |
-> | 483 | `assertElementExists` | **已重构**（属性选择器） |
-> | 508 | `swipeUp` | **已重构**（adb input swipe + 位移校验） |
-> | 575 | `goBack` | 未变（仍不可用，待修） |
-> | 593 | `switchToWxWebview` | 未变 |
-> | 626 | `clickWxText` | **已重构**（改真实 tap） |
-> | 648 | `dumpElements` | 未变 |
-> | 684-700 | `module.exports` | 已增补 `tapElement` |
+> | 行号 | 函数 | 相对上一版 | 相对原版 |
+> |---|---|---|---|
+> | 29 | `getDevice` | 未变 | 未变 |
+> | **57** | **`findClickableAncestor`** | 未变 | **新增**（配合 `tapElement`） |
+> | 126 | `tapElement` | +7 | **已重构** |
+> | 152 | `findPageWith` | +7 | 未变 |
+> | 178 | `switchToUserCenter` | +7 | **已重构**（第三轮：改用 `resolveForegroundPage`） |
+> | 256 | `getForegroundPage` | +7 | **已重构**（第三轮：改为薄封装） |
+> | 275 | `login` | **-7** | **已重构**（改真实 tap） |
+> | 315 | `waitImeShown` | -7 | 未变 |
+> | 334 | `focusSearchInput` | -7 | **已重构**（改真实 tap） |
+> | 377 | `clickElementById` | -7 | **已重构**（属性选择器 + 真实 tap） |
+> | 412 | `clickElementByText` | -7 | **已重构**（改真实 tap） |
+> | 433 | `inputText` | -7 | **已重构**（真实 tap + 读回校验） |
+> | 476 | `assertElementExists` | -7 | **已重构**（属性选择器） |
+> | 501 | `swipeUp` | -7 | **已重构**（adb input swipe + 位移校验） |
+> | 568 | `goBack` | -7 | 未变（仍不可用，待修） |
+> | 586 | `switchToWxWebview` | -7 | 未变 |
+> | 619 | `clickWxText` | -7 | **已重构**（改真实 tap） |
+> | 641 | `dumpElements` | -7 | 未变 |
+> | 677-694 | `module.exports` | 已增补 `tapElement` | 同左 |
+>
+> ⚠️ **正文里逐行引用的行号（形如 `137: page = ...`）停留在上一版，没有逐条重新同步。**
+> 定位代码请以**函数名**为准（编辑器"转到符号"或直接搜函数名），不要按正文里的数字跳转。
+> （这也说明一件事：**用行号做锚点是脆的** —— 每次改代码都要全文重排一遍数字。）
 >
 > ⚠️ 文中若出现"原版"写法的代码块，那是**为了对比说明修复前后的差异**，
-> 不代表当前代码。以对照表指向的行号为准。
+> 不代表当前代码。
 
 ---
 

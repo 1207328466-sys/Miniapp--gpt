@@ -182,24 +182,34 @@ device.shell("input tap x y")        // 4. 通过 adb 让系统真实点一下
 
 **切换页面后，你手里的 `page` 会变成后台页，再操作它会一直等到超时。**
 
-框架给了两种找前台页的思路：
+负责这件事的是 `common/app_common.js` 里的 `resolveForegroundPage(page)`：
 
 | 函数 | 思路 | 适用场景 |
 |---|---|---|
-| `getForegroundPage(page)` | 谁是前台？**看谁还在产生动画帧** | 首选，通用 |
-| `findPageWith(page, selector)` | 谁含有目标选择器，谁就是目标页 | 已知目标页有独特元素时 |
+| `resolveForegroundPage(page)` | 谁是前台？**看谁还在产生动画帧** | 首选，通用；一次兜住"已销毁"和"已降级为后台页"两种失效 |
+| `findPageWith(page, selector)` | 谁含有目标选择器，谁就是目标页 | 已知目标页有独特元素时（在 `android.js`） |
 
-`getForegroundPage` 的原理很巧妙：
+`resolveForegroundPage` 的判据很巧妙：
 
 - 后台页对应的原生 WebView 已被系统**挂起**，渲染线程不再产出画面，所以 `requestAnimationFrame` 不会触发
 - 于是往每个 page 里注入一段探针，等一帧（默认 500ms），**能等到帧的那个就是前台页**
+- 多个 page 同时在出帧时（页面切换的过渡窗口），**再探一轮**来消歧——见账本 根因 10
+
+⚠️ 另外两个直觉上更"正统"的判据实测**不可用**：`document.visibilityState` 与
+`document.hasFocus()`，它们在**所有** page 上都返回 `visible` / `true`，区分不出前后台。
 
 ⚠️ 代码注释特别警告：**不能用 `locator.isVisible()` 判断**。因为后台页里的元素，`isVisible()` 同样返回 `true`，区分不出来。
 
-**由此推出两条写业务函数的铁律**：
+**由此推出两条规则**：
 
-1. 切换页面后要重新取：`page = await getForegroundPage(page)`
-2. **必须 `return page`**，否则调用链上后面的步骤还拿着旧的 page
+1. **切换页面后必须重新取前台页** —— 好消息是**框架已经帮你做了**：
+   `runAppSteps` 在每个步骤开始前都会用 `resolveForegroundPage(page)` 重新解析一次，
+   用例里不用再自己写"重新获取页面"那套代码。
+
+   但如果你在**同一个函数内部**要做多次判断（例如"先看是不是列表页，再看是不是详情页"），
+   就必须**先把前台页解析出来存进一个变量，所有判断都作用在这一个对象上**。
+   否则会出现"两个判据看两个页面、结论自相矛盾"——详见账本 根因 9。
+2. **业务函数必须 `return page`**，否则调用链上后面的步骤会拿到 undefined。
 
 ### 要点 3：输入文字前必须等软键盘真的弹出来
 
@@ -377,8 +387,11 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 ### 操作某个元素一直超时
 
 **原因**：页面切换了，你手里的 `page` 已是后台页。
+注意它**可能仍然活着、仍然在 `context.pages()` 里**，只是不再是屏幕上显示的那一个，
+内容是冻结的 —— 所以"检查 `isClosed()`"这种判断挡不住它。
 
-**解决**：操作前 `page = await getForegroundPage(page)`。
+**解决**：框架已自动处理（`runAppSteps` 每步前重新解析前台页）。
+自己写脚本时用 `await resolveForegroundPage(page)`。
 
 ### 换了台电脑/手机就跑不起来
 
@@ -390,13 +403,17 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 
 ## 八、当前已知问题与优化路线
 
-> **2026/10/10 更新**：本节原有的清单已过时。在一次完整的排查中，
-> 我们定位并修复了 **7 个根本缺陷**（详见
-> [框架能力与问题账本.md](docs/框架能力与问题账本.md)）。
-> 修复后核心交互能力（点击、滑动、页面切换、元素断言）全部可用。
-> 下表是**当前仍未解决**的问题。
+> **2026/10/10 更新（两轮）**
+>
+> **第一轮**修掉 7 个根本缺陷，核心交互能力（点击、滑动、页面切换、元素断言）全部可用。
+> **第二轮**修的是「页面的前后台身份」这条主线：导航后旧 page 会**降级为后台页**
+> （活着、仍在 `context.pages()` 里，但内容冻结）。用例只检查"还活着吗"就会一直拿着
+> 冻结页做判据，表现为「界面明明已经切到目标页、判据却说没切过去」，然后反复点击到超时。
+> 现在这件事由框架统一处理（`resolveForegroundPage`）。
+>
+> 完整根因分析与实测证据见 [框架能力与问题账本.md](docs/框架能力与问题账本.md)。
 
-### 已修复（7 项，此处仅列标题）
+### 已修复 · 第一轮（7 项，此处仅列标题）
 
 | # | 缺陷 | 修复要点 |
 |---|---|---|
@@ -407,6 +424,20 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 | 5 | 所有点击用合成 `.click()` | 8 处改真实 adb tap（实测 `.click()` 会误报失败） |
 | 6 | `swipeUp` 用合成鼠标事件 | 改 `adb input swipe` + 位移校验 |
 | 7 | `switchToUserCenter` 在旧 page 上验证 | 重新获取前台页 + 幂等 + 重试 |
+
+### 已修复 · 第二轮（5 项）
+
+| # | 缺陷 | 修复要点 |
+|---|---|---|
+| 8 | 导航后 page 降级为后台页，框架无自动恢复机制 | 新增 `resolveForegroundPage`：context 缓存 + appid 过滤 + 并行 RAF 探测；`runAppSteps` 每步前自动重新解析 |
+| 9 | 过渡窗口里新旧页面同时出帧，按"元素最多"挑会选错 | 多候选时二次探测消歧（实测旧列表页 188 元素与新详情页 118 元素同时出帧） |
+| 10 | 用例选择器用子串匹配 `[class*="header-tab"]`，命中容器且排首位 | 改精确类名 `.header-tab`；点击坐标由 `(326,245)` 纠正为 `(273,245)` |
+| 11 | `tapElement` 面积判据过严，小文字节点找不到真正的容器 | 上限改为 `max(起点×8, 10000)`（span 面积 190 时，容器 4239 曾被误判为"过大"） |
+| 12 | node 输出中文时 pytest 打印抛 `UnicodeEncodeError` | `conftest.py` 放宽 stdout 错误处理，避免掩盖真实失败原因 |
+
+> 顺带确认了两个**不可用**的前台页判据（实测在**所有** page 上返回值相同，无法区分前后台）：
+> `document.visibilityState` 全是 `visible`、`document.hasFocus()` 全是 `true`。
+> 别在这两条路上浪费时间 —— RAF 才是有效判据，而且已经用 adb 截图校准过。
 
 ### P0 · 仍待修
 
@@ -439,7 +470,7 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 ### 建议的推进顺序
 
 1. ~~补文档与工程基础~~ ✅ 已完成
-2. ~~修框架根本缺陷~~ ✅ 已完成（7 项）
+2. ~~修框架根本缺陷~~ ✅ 已完成（第一轮 7 项 + 第二轮 5 项）
 3. **补断言层** ← 写用例前建议先做这一步
 4. **修 P0 缺陷**：设备序列号配置化、`pkg`/`webviewTimeout` 接通、`goBack` 换实现
 5. **搭页面对象**：把各页面不同的 tab 栏 class、硬编码的选择器与测试数据统一管理
