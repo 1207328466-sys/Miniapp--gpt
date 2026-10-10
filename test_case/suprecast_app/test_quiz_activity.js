@@ -41,10 +41,11 @@ const quizPage = pages.quizPage;
 
 const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
 
-// 数据安全阀（两个，都默认 false）。改动前请先读 pages/quiz_activity_page.js 的文件头说明。
-//   ALLOW_INTERACT：是否允许点选项 —— 存在"选中即自动提交"的存疑，故默认关闭
-//   ALLOW_SUBMIT  ：是否允许点提交 —— 确定会写数据
-const ALLOW_INTERACT = false;
+// 数据安全阀。改动前请先读 pages/quiz_activity_page.js 的文件头说明。
+//   ALLOW_INTERACT：是否允许点选项 —— **已用数据库查清：只改前端本地状态，不写服务端**，
+//                   故放开（账本第二十一节有实验证据）
+//   ALLOW_SUBMIT  ：是否允许点提交 —— **确定会写数据**（会消耗一次性答题机会），默认禁止
+const ALLOW_INTERACT = true;
 const ALLOW_SUBMIT = false;
 
 (async () => {
