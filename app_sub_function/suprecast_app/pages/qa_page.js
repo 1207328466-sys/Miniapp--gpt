@@ -29,9 +29,73 @@ const base = require("./base_page");
 const SEL = {
   searchBar: ".search-container", // 有问必答页的搜索栏（点它跳搜索页）
   searchInput: "wx-input.search-input", // 搜索页的真实输入框
+  // 首页内容流首块的「活动卡」（答题/图文/跳转链接三种类型共用）。
+  // ⚠️ `quiz_activity_page.js` 用同一选择器点进答题活动 —— 两处引用同一个 class，
+  // 小程序改版时这两个地方要一起改。
+  activityCard: '[class*="qa-activity-flow-item--card"]',
+  activitySwiper: '[class*="qa-activity-flow-item__swiper"]',
 };
 
 const BOTTOM_TAB_TEXT = "有问必答";
+
+/**
+ * 首页内容流的筛选 tab（用界面上的实际文案）。
+ * 口径来源：需求 713594979「小程序-有问必答首页增加活动入口」——
+ * 「在最新/推荐/精选/我的关注下都显示」。
+ */
+const FEED_TABS = ["最新提问", "推荐", "精选问答", "我的关注"];
+
+/**
+ * 断言「活动入口（活动卡）在内容流的每个筛选 tab 下都显示」。
+ * 需求原文：「在最新/推荐/精选/我的关注下都显示」。
+ * **只读**：只切 tab + 数活动卡，不点卡片、不改任何数据。
+ */
+async function assertActivityBlockInAllFeedTabs(page, { tabs = FEED_TABS, waitAfterTab = 2500 } = {}) {
+  const results = [];
+
+  for (const tab of tabs) {
+    let fg = await base.foreground(page);
+    if ((await base.countOfText(fg, tab)) === 0) {
+      results.push({ tab, cards: null, note: "找不到该筛选 tab" });
+      console.log(`  [${tab}] 找不到该筛选 tab —— 跳过（界面文案可能变了）`);
+      continue;
+    }
+
+    await base.tapText(fg, tab, `筛选 tab「${tab}」`);
+    await base.sleep(waitAfterTab);
+    fg = await base.foreground(page);
+
+    const cards = await base.countOf(fg, SEL.activityCard);
+    const hasSwiper = (await base.countOf(fg, SEL.activitySwiper)) > 0;
+    results.push({ tab, cards, note: `swiper=${hasSwiper}` });
+    console.log(`  [${tab}] 活动卡数=${cards} ${hasSwiper ? "(有轮播容器)" : "(无轮播容器)"}`);
+  }
+
+  const checked = results.filter((r) => r.cards !== null);
+  const bad = checked.filter((r) => r.cards === 0);
+
+  if (!checked.length) {
+    throw new Error(
+      `一个筛选 tab 都没找到（试过：${tabs.join("、")}）。当前页面前 160 字: ` +
+        JSON.stringify((await base.pageText(await base.foreground(page))).slice(0, 160))
+    );
+  }
+  if (bad.length) {
+    throw new Error(
+      `需求 713594979 要求「活动入口在最新/推荐/精选/我的关注下都显示」，但以下 tab 没有活动卡：\n` +
+        bad.map((r) => `  - ${r.tab}`).join("\n") +
+        `\n  各 tab 实测: ${JSON.stringify(results)}\n` +
+        `  （若所有 tab 都没有，可能当前确实没有进行中的活动 —— 那时整块隐藏才是对的，` +
+        `先确认后台有没有"进行中且显示开关打开"的活动）`
+    );
+  }
+  console.log(
+    `断言通过: 活动入口在 ${checked.length} 个筛选 tab 下都显示（` +
+      checked.map((r) => `${r.tab}:${r.cards}`).join("，") +
+      `）`
+  );
+  return base.foreground(page);
+}
 
 /** 现在是不是「有问必答」页（判据：搜索栏存在） */
 async function isOn(page) {
@@ -190,4 +254,14 @@ async function typeKeyword(page, { keyword, clear = true, timeout = 8000 } = {})
   return base.foreground(page);
 }
 
-module.exports = { SEL, BOTTOM_TAB_TEXT, isOn, isOnSearchPage, ensureOn, openSearch, typeKeyword };
+module.exports = {
+  SEL,
+  BOTTOM_TAB_TEXT,
+  FEED_TABS,
+  isOn,
+  isOnSearchPage,
+  ensureOn,
+  openSearch,
+  typeKeyword,
+  assertActivityBlockInAllFeedTabs,
+};
