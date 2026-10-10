@@ -56,14 +56,39 @@ async function assertActivityBlockInAllFeedTabs(page, { tabs = FEED_TABS, waitAf
   for (const tab of tabs) {
     let fg = await base.foreground(page);
     if ((await base.countOfText(fg, tab)) === 0) {
-      results.push({ tab, cards: null, note: "找不到该筛选 tab" });
-      console.log(`  [${tab}] 找不到该筛选 tab —— 跳过（界面文案可能变了）`);
-      continue;
+      // 【自愈】找不到 tab 有两种原因：界面文案真的改了，或者刚才那一下点击把页面带歪了。
+      // 后者在真机回归里出现过（见下面那处说明），所以先确认"是不是还在信息流上"。
+      if (!(await isOnHomeFeed(fg))) {
+        console.log(`  [自愈] 看不到「${tab}」且不像停在信息流上，重新导航后再找一次`);
+        page = await ensureOnHomeFeed(page);
+        fg = await base.foreground(page);
+      }
+      if ((await base.countOfText(fg, tab)) === 0) {
+        results.push({ tab, cards: null, note: "找不到该筛选 tab" });
+        console.log(`  [${tab}] 找不到该筛选 tab —— 跳过（界面文案可能变了）`);
+        continue;
+      }
     }
 
     await base.tapText(fg, tab, `筛选 tab「${tab}」`);
     await base.sleep(waitAfterTab);
     fg = await base.foreground(page);
+
+    // 【自愈】真机回归踩到（2026/10/10）：某一次点「推荐」时，adb 实际点到了 tab 的
+    // **祖先容器**（日志形如「向上第 2 层找到可点击容器」），页面被带到别处 ——
+    // 于是后面几个 tab 全部"找不到该筛选 tab"，报出一条看着像"首页改版了"的失败。
+    // 同一次运行里紧接着的另一条用例（同样的检查）是 4 个 tab 全过的，所以那是点击偶发失误，
+    // 不是小程序的问题。判据用"还看不看得见筛选 tab"，不成立就重新导航、重点一次。
+    if (!(await isOnHomeFeed(fg))) {
+      console.log(`  [自愈] 点完「${tab}」之后不像停在信息流上（看不见筛选 tab），重新导航并重点一次`);
+      page = await ensureOnHomeFeed(page);
+      fg = await base.foreground(page);
+      if ((await base.countOfText(fg, tab)) > 0) {
+        await base.tapText(fg, tab, `筛选 tab「${tab}」（重试）`);
+        await base.sleep(waitAfterTab);
+        fg = await base.foreground(page);
+      }
+    }
 
     const cards = await base.countOf(fg, SEL.activityCard);
     const hasSwiper = (await base.countOf(fg, SEL.activitySwiper)) > 0;
@@ -103,6 +128,22 @@ async function isOn(page) {
   return (await base.countOf(fg, SEL.searchBar)) > 0;
 }
 
+/**
+ * 现在是不是**真的**停在首页信息流上（判据：看得见至少一个筛选 tab）。
+ *
+ * 【为什么不能只看「搜索栏存在」】2026/10/10 真机回归踩到：搜索页/搜索结果页同样带
+ * `.search-container`，于是 isOn 在搜索页上也返回 true —— 用例以为自己在首页，
+ * 接着去数筛选 tab / 数活动卡，得到「一个筛选 tab 都没找到」这种**看着像功能坏了、
+ * 其实是没导航到位**的假失败。筛选 tab 只出现在信息流首块，用它当判据就躲开了这个歧义。
+ */
+async function isOnHomeFeed(page) {
+  const fg = await base.foreground(page);
+  for (const tab of FEED_TABS) {
+    if ((await base.countOfText(fg, tab)) > 0) return true;
+  }
+  return false;
+}
+
 /** 现在是不是搜索页（判据：出现真实输入框；此时搜索栏已消失） */
 async function isOnSearchPage(page) {
   const fg = await base.foreground(page);
@@ -115,7 +156,13 @@ async function isOnSearchPage(page) {
  */
 async function ensureOn(page, { timeout = 10000 } = {}) {
   if (await isOn(page)) return base.foreground(page);
-  if (await isOnSearchPage(page)) return base.foreground(page); // 搜索页也算"到了"
+
+  // 【这里刻意**不再**把搜索页当成「已到有问必答」】2026/10/10 真机回归时踩到：
+  // 手机上停在搜索页（或搜索结果页 —— 它也带着搜索输入框）时，这一行原来会直接返回，
+  // 于是用例后面「数活动卡 / 数筛选 tab」就在搜索页上执行，
+  // 报出「一个筛选 tab 都没找到」「活动卡数=0」这类**看着像功能坏了、其实导航没到位**的失败。
+  // 现在的做法：搜索页也是一种二级页（它没有底部 tab 栏），交给 ensureOnTabPage 点返回退出来。
+  // 注意这对「打开搜索」流程没有影响 —— openSearch 会先自己判断"已在搜索页就复用"。
 
   // 先确保站在"有底部 tab 栏的一级页面"上：专栏详情页 / 答题活动页等二级页都没有
   // 底部 tab 栏，从这里直接去找底部 tab 必然失败（这条是真机验证时踩出来的）。
@@ -136,6 +183,39 @@ async function ensureOn(page, { timeout = 10000 } = {}) {
   }
   console.log("已到达「有问必答」页");
   return base.foreground(page);
+}
+
+/**
+ * 确保停在**首页信息流**上（不是"有问必答 tab 上的某个搜索视图"）。
+ *
+ * 【为什么还需要它 —— 真机回归踩到的假失败】
+ * 搜索页/搜索结果页同样带 `.search-container`，所以 `isOn` 在那种页面上也返回 true，
+ * `ensureOn` 于是直接返回；用例接着去数筛选 tab / 活动卡，就报出
+ * 「一个筛选 tab 都没找到」—— 看着像"首页改版了、活动卡没了"，其实只是没导航到位。
+ * 这里的判据换成**信息流首块的筛选 tab**，并且在没到位时点返回退出搜索视图再来一轮。
+ *
+ * @param {import('playwright').Page} page
+ * @param {{maxAttempts?: number}} [options]
+ * @returns {Promise<import('playwright').Page>} 首页信息流的页面
+ */
+async function ensureOnHomeFeed(page, { maxAttempts = 3 } = {}) {
+  // 延迟 require：本文件与 android.js 互相引用
+  const { goBack } = require("../android");
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    page = await base.ensureOnTabPage(page); // 二级页（搜索页/详情页/答题页）先点返回退出
+    page = await ensureOn(page); // 切到「有问必答」tab（幂等）
+    if (await isOnHomeFeed(page)) return await base.foreground(page);
+    console.log(
+      `  [自愈] 已在「有问必答」tab 但看不到信息流筛选 tab（多半停在搜索页/搜索结果页），点返回退出（第 ${attempt}/${maxAttempts} 次）`
+    );
+    page = await goBack(await base.foreground(page));
+  }
+
+  throw new Error(
+    `尝试 ${maxAttempts} 次退出搜索视图后，仍然看不到首页的筛选 tab` +
+      `（${FEED_TABS.join(" / ")}）。`
+  );
 }
 
 /**
@@ -259,8 +339,10 @@ module.exports = {
   BOTTOM_TAB_TEXT,
   FEED_TABS,
   isOn,
+  isOnHomeFeed,
   isOnSearchPage,
   ensureOn,
+  ensureOnHomeFeed,
   openSearch,
   typeKeyword,
   assertActivityBlockInAllFeedTabs,

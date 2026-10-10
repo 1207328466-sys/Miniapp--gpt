@@ -27,10 +27,15 @@ const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
 
 (async () => {
   const funcList = [
-    // 步骤 1：自导航到首页（有问必答），幂等
-    [qaPage.ensureOn, null],
+    // 步骤 1：自导航到首页**信息流**（幂等 + 自愈：搜索页/二级页会先退出来）
+    // 注意用 ensureOnHomeFeed 而不是 ensureOn：后者的判据是"搜索栏存在"，
+    // 而搜索页/搜索结果页也带搜索栏，会把"其实停在搜索页"误判成"已经在首页" ——
+    // 结果本用例在搜索页上数筛选 tab，报出「一个筛选 tab 都没找到」（2026/10/10 真机踩到）。
+    [qaPage.ensureOnHomeFeed, null],
 
-    // 断言：确实在首页 —— 判据是搜索栏，它只出现在这一页
+    // 断言：首页信息流的搜索栏在（1 个）。
+    // 说明：它**不是**首页独有的（搜索页/结果页也有），所以它不能用来判"我在首页"；
+    // 判"在首页"由 ensureOnHomeFeed 用筛选 tab 做，这里只是一条结构性断言。
     [assertSelectorCount, { selector: qaPage.SEL.searchBar, expected: 1 }],
 
     // 步骤 2：逐个筛选 tab 切过去，断言活动入口都在（需求 713594979）

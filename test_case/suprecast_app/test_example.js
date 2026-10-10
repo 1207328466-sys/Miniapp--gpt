@@ -65,6 +65,11 @@ const KEYWORD = "test"; // 仅 ASCII，原因见文件头
 
     // 附加：打印搜索页结构，为后续写"提交搜索 + 结果页断言"留素材
     [dumpElements, { tag: ["wx-view", "wx-input", "wx-text"] }],
+
+    // 收尾：把手机交还给下一条用例。
+    // 本用例停在搜索页（它是个二级页，而且搜索结果页也带搜索栏，很容易被后续用例误判成首页），
+    // 真机回归时下一条用例就是从搜索视图起步、报出「一个筛选 tab 都没找到」的。
+    [qaPage.ensureOnHomeFeed, null],
   ];
 
   await appTest(funcList, { photosPath });

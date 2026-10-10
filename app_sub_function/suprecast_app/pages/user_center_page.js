@@ -39,6 +39,12 @@ async function switchTo(page, { timeout = 10000, retries = 1, waitBeforeTap = 15
       return await base.foreground(page);
     }
 
+    // 【先退到一级页面】真机回归时踩到：上一条用例停在「专栏详情页」这类二级页上时，
+    // 那个页面**没有底部 tab 栏**，直接找「我的」必然失败（报「找不到底部 tab「我的」」）。
+    // 一次全量跑里 test_login_and_navigation / test_switch_to_user_center 两条都栽在这上面 ——
+    // 它们单独跑是过的，只有"上一条用例留了个二级页"时才挂，属于典型的顺序依赖。
+    page = await base.ensureOnTabPage(page);
+
     let lastErr = null;
     for (let i = 0; i <= retries; i++) {
       try {

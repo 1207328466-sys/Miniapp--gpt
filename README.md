@@ -4,6 +4,10 @@
 
 > 新人请从第二节「5 分钟上手」开始读，读完就能跑起第一条用例。
 
+> **完全没写过代码**的话，先看更浅的那一份：[使用手册-零基础.md](docs/使用手册-零基础.md)
+> —— 它讲的是「怎么跑、怎么看结果、怎么靠填一张 Excel 表写出新用例」，
+> 不含任何代码。要改框架本身再看本文件。
+
 ---
 
 ## 一、这套框架是什么
@@ -285,6 +289,16 @@ const myStep = async (page) => { ... }          // ⚠️ name 可能是 "myStep
 ---
 
 ## 五、怎么新增一条用例
+
+有两条路，先选近的那条：
+
+| 路线 | 适合谁 | 怎么做 |
+|---|---|---|
+| **填表**（不用写代码） | 只描述「先点这个、再检查那个」的用例 | 打开 `cases/用例表.xlsx`，按「动作清单」一行一步地填，然后 `python run.py`。规则与 14 个动作见 [使用手册-零基础.md](docs/使用手册-零基础.md) |
+| 写 .js 用例 | 流程复杂、要判断条件、要读页面数据 | 往下看本节 |
+
+表格里的「动作」不够用时，正确的做法是**先把新动作加到动作清单与页面对象**，
+再回到表格里用 —— 加一个动作，后面所有用例都能用（见本节「怎么加一个新的操作函数」）。
 
 ### 极简骨架（照抄即可）
 
@@ -695,6 +709,9 @@ miniapp_test_case/
 ├── package.json                     # Node 依赖（只有 playwright）
 ├── requirements.txt                 # Python 依赖
 ├── run.py                           # ★ 一键运行入口（切到 test_case + pytest + Allure 报告）
+├── cases/                           # ★ 「填表就能写用例」：源表 + 导出的用例数据
+│   ├── 用例表.xlsx                   #   人填的源文件（3 张表：用例 / 动作清单 / 填写说明）
+│   └── 用例表.json                   #   机器读的产物（由 tools/export_cases.py 生成）
 ├── knowledge/                       # 长期事实知识（见 knowledge/README.md 的清单）
 │   ├── README.md                    #   索引 + 知识来源 + 数据缺口
 │   ├── 小程序功能地图.md              #   功能域 → 页面 → 关联需求（写用例前读）
@@ -704,8 +721,10 @@ miniapp_test_case/
 ├── scripts/
 │   └── check-docs.py                # 文档防腐检查：反引号路径是否真实存在
 ├── tools/
-│   └── build_requirements_kb.py     # 从超云生态平台导出生成 knowledge/ 清单
+│   ├── build_requirements_kb.py     # 从超云生态平台导出生成 knowledge/ 清单
+│   └── export_cases.py              # ★ 把 cases/用例表.xlsx 导出成用例读的 json
 ├── docs/
+│   ├── 使用手册-零基础.md            # ★ 没写过代码的人看这份：怎么跑、怎么看结果、怎么填表写用例
 │   ├── 框架导读.md                   # 深度导读（设计原理、执行链路、自测题）
 │   ├── android-js-逐行详解.md        # android.js 700 行逐段讲解
 │   ├── 框架能力与问题账本.md          # 实测能力清单 + 7 个根因的定位与修复证据
@@ -738,10 +757,12 @@ miniapp_test_case/
 │   │   ├── probe_raf.js             # 校准前台页判据（RAF 信号 vs 截图真值）
 │   │   └── run_case.py              # 跑单个用例并把输出按正确编码落盘
 │   └── suprecast_app/
-│       ├── conftest.py              # ★ 桥接层：让 pytest 能执行 .js
+│       ├── conftest.py              # ★ 桥接层：让 pytest 能执行 .js；表格用例按编号拆成多条
+│       ├── test_from_table.js       # ★ 「填表就能写用例」的执行端（动作 -> 页面对象）
 │       ├── test_example.js          # 有问必答 -> 搜索（自导航 + 输入读回校验）
-│       ├── test_login_and_navigation.js    # 切用户中心 + 打印页面结构
+│       ├── test_home_activity_entry.js     # 活动入口在 4 个筛选 tab 下都显示（需求 713594979）
 │       ├── test_learn_center_column.js     # 学习中心 -> 专栏 -> 第一张（含 ctx 断言）
+│       ├── test_login_and_navigation.js    # 切用户中心 + 打印页面结构（**故意留下的反例**）
 │       ├── test_quiz_activity.js    # 首页活动卡 -> 答题页（**默认不提交**，见文件头）
 │       └── test_switch_to_user_center.js   # 切用户中心（带真实验证）
 └── report/                          # 测试产物（已 gitignore）

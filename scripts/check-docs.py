@@ -33,14 +33,17 @@ SOURCES = ["README.md"] + [
 # 反引号里的 token：只查"像仓内路径"的
 CODE = re.compile(r"`([^`\n]+)`")
 PLACEHOLDER = re.compile(r"[<>*]|\bYYYY\b|\bxx\b|\.\.\.|…")
-KNOWN_EXT = (".md", ".js", ".py", ".json", ".yaml", ".yml", ".ini", ".txt", ".html", ".sql", ".ts")
+# .xlsx/.csv 也是"读者会去打开的文件"：文档里写 `cases/用例表.xlsx` 时一样要能查到
+KNOWN_EXT = (".md", ".js", ".py", ".json", ".yaml", ".yml", ".ini", ".txt", ".html",
+             ".sql", ".ts", ".xlsx", ".csv")
 
 # 跳过的目录（依赖 / 产物，不是"文档该引用的东西"）
 SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".pytest_cache", "report", "local", ".venv"}
 
 # 仓内顶层目录名（用于识别"目录引用"）
+# cases/ 是「填表就能写用例」的源表目录，文档里会引用它
 TOP_DIRS = {"docs", "knowledge", "scripts", "tools", "common", "test_case",
-            "app_sub_function", "config", "report", "local", "driver"}
+            "app_sub_function", "config", "report", "local", "driver", "cases"}
 
 # 允许缺失的路径（对应团队工作流规范里的 ALLOW_MISSING）：
 # 这些路径**包了反引号但故意不存在**，原因写在这里，免得每次检查都报一遍。

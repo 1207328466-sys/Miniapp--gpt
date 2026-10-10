@@ -59,3 +59,13 @@ Redis
 pytest-xdist
 Appium-Python-Client
 opencv-python
+
+# ---------- 本框架跑起来必需的（缺一个就报"看不懂的错"）----------
+# ⚠️ 下面两个包在本机「碰巧」已经装在系统 Python 里，所以这份清单第一版漏了它们。
+#    换成干净的虚拟环境（.venv）后立刻暴露：
+#      · 缺 allure-pytest → pytest 不认识 --alluredir，报一句 "unrecognized arguments"，
+#        run.py 还会拿上一次的旧结果生成报告，让人误以为"跑通了"（2026/10/10 实际踩到）
+#      · 缺 openpyxl      → tools/export_cases.py 读不了 Excel 用例表
+#    所以它们必须显式列在这里，而不是指望"机器上本来就有"。
+allure-pytest
+openpyxl

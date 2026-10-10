@@ -10,6 +10,7 @@
     python run.py                 # 跑全部用例 + 生成 Allure HTML 报告
     python run.py -k 专栏          # 其余参数原样透传给 pytest
     python run.py suprecast_app/test_example.js
+    python run.py -k 活动入口_001   # 「填表就能写用例」：只跑 cases/用例表.xlsx 里的这一条
 """
 
 import os
@@ -25,6 +26,11 @@ TEST_CASE = ROOT / "test_case"
 REPORT = ROOT / "report"
 ALLURE_RESULTS = REPORT / "allure-results"
 ALLURE_HTML = REPORT / "allure-report"
+
+# 「填表就能写用例」：开跑前先把 Excel 用例表导出成 json
+CASES_XLSX = ROOT / "cases" / "用例表.xlsx"
+EXPORT_SCRIPT = ROOT / "tools" / "export_cases.py"
+TABLE_CASE_FILE = "test_from_table.js"
 
 # 跑起来必需的 Python 依赖（缺一个就会以"看不懂的报错"失败）
 REQUIRED_MODULES = ["pytest", "pytest_asyncio", "pytest_html", "allure_pytest"]
@@ -68,12 +74,69 @@ def preflight():
     return False
 
 
+def export_case_table(argv):
+    """把 cases/用例表.xlsx 导出成 cases/用例表.json（「填表就能写用例」的第一步）。
+
+    为什么由脚本做、而不是让用户记得手动跑：表格改了却忘了导出，跑的就是
+    **上一次的表格** —— 一份看着全绿、其实没测到你改的东西的报告。
+    那是本项目反复踩到的「报告说谎」，所以把它收进代码。
+
+    返回 True = 继续跑；False = 应当停止本次运行。
+    """
+    if not (EXPORT_SCRIPT.exists() and CASES_XLSX.exists()):
+        return True  # 没在用表格的人（或表格还没建）不受影响
+
+    result = subprocess.run(
+        [sys.executable, str(EXPORT_SCRIPT)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        # 子进程的输出编码：Windows 上 Python 往管道写字默认用 GBK，
+        # 这里统一成 UTF-8，否则中文提示走到这里会变成乱码
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+    )
+    for stream in (result.stdout, result.stderr):
+        if stream and stream.strip():
+            print(stream.strip())
+
+    if result.returncode == 0:
+        return True
+    if result.returncode == 2:
+        # 没有表格，脚本刚生成了模板：这次先不跑表格用例（node 侧会记成 SKIPPED）
+        print("  （首次使用：这次先跳过表格用例，把表填好再跑一次）")
+        return True
+
+    # 表格内容有错：再往下跑就会拿上一次导出的旧表格出结果 -> 假绿。
+    # 只有「本次运行明确点名了别的用例文件」时才放行，其余一律停下来。
+    #
+    # 判断只看"像文件路径"的参数（.js/.py 或带目录分隔符）。为什么不能只看
+    # "不以 - 开头的参数"：`python run.py -k 搜索页_001` 里的 搜索页_001 也不是以 -
+    # 开头，但它恰恰**是**表格里的一条用例编号（实际踩到：表格坏了却照旧跑出一条
+    # 漂亮的「通过」）。所以 -k 这种无法事先判断命中范围的，一律按"可能命中表格"处理。
+    files = [a for a in argv if not a.startswith("-")]
+    path_like = [f for f in files if f.endswith((".js", ".py")) or "/" in f or "\\" in f]
+    if path_like and not any(TABLE_CASE_FILE in f for f in path_like):
+        print("\n[!] 用例表有错，但本次运行只点名了别的用例文件，因此继续（不受表格影响）")
+        return True
+
+    print("\n[!] 用例表有错，已停止本次运行 —— 继续跑会拿上一次导出的旧表格出结果，那种「通过」是假的。")
+    print("    改好 cases/用例表.xlsx 再跑；若只想跑别的用例，点名到文件即可，例如：")
+    print("      python run.py suprecast_app/test_example.js")
+    print("    （用 -k 时无法事先判断会不会命中表格里的用例，所以这里保守地停下来）")
+    return False
+
+
 def main(argv):
     if not TEST_CASE.is_dir():
         print(f"找不到用例目录：{TEST_CASE}")
         return 2
 
     if not preflight():
+        return 2
+
+    # 表格用例：开跑前先导出一次（表格有错会在这里停下来，见函数内说明）
+    if not export_case_table(argv):
         return 2
 
     # 日志与 Allure 结果目录先建好：pytest 的 log_file 不会自动创建多级目录

@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -50,7 +51,30 @@ except Exception:  # allure 只是报告增强，缺了也要能正常跑
 # node 侧退出码约定（与用例里的 process.exit 对应）
 SKIP_EXIT_CODE = 3  # 前置条件不满足：用例不适用，记 SKIPPED 而不是 FAILED
 
+# ---------- 「填表就能写用例」：表格里的每条用例各占一个 pytest 用例项 ----------
+# 表格（cases/用例表.xlsx）里同一个「用例编号」的若干行合起来是一条用例。
+# 若整个文件只算一个 pytest 用例项，报告里就是一大堆步骤捆成一条，
+# 某条挂了要翻半天才知道是哪条 —— 所以这里按用例编号拆开，
+# 并用环境变量把「这次跑哪一条」告诉 node 侧（见 test_case/suprecast_app/test_from_table.js）。
+TABLE_CASE_FILE = "test_from_table.js"
+CASE_ID_ENV = "UITEST_CASE_ID"
+TABLE_JSON = Path(__file__).resolve().parents[2] / "cases" / "用例表.json"
+
 _log = logging.getLogger("uitest")
+
+
+def load_table_cases():
+    """读表格导出的 json，取出 [(用例编号, 用例名称), ...]。
+
+    读不到就返回 []（交给 node 侧报「表格还没导出」这个更准确的原因）——
+    conftest 只是桥接层，不该替用例决定成败，也不该把「表格文件读不了」当作用例失败。
+    """
+    try:
+        with open(TABLE_JSON, encoding="utf-8") as f:
+            data = json.load(f)
+        return [(str(c["id"]), str(c.get("name") or c["id"])) for c in data.get("cases", [])]
+    except Exception:
+        return []
 
 
 def emit(text=""):
@@ -166,9 +190,12 @@ def _attach_to_allure(entries, case_name):
 class JsTestItem(pytest.Item):
     """将 .js 脚本包装成 pytest 测试项，直接调用 node 执行"""
 
-    def __init__(self, node_script, **kwargs):
+    def __init__(self, node_script, case_id=None, **kwargs):
         super().__init__(**kwargs)
         self.node_script = node_script
+        # 只有「表格用例」才有：告诉 node 侧这次只跑表格里的哪一条
+        #（同一个文件被拆成多个 pytest 用例项时，靠它区分）
+        self.case_id = case_id
 
     def runtest(self):
         node = shutil.which("node") or "node"
@@ -177,6 +204,8 @@ class JsTestItem(pytest.Item):
         fd, step_log_path = tempfile.mkstemp(prefix="uitest_steps_", suffix=".jsonl")
         os.close(fd)
         env = {**os.environ, "UITEST_STEP_LOG": step_log_path}
+        if self.case_id:
+            env[CASE_ID_ENV] = self.case_id
 
         try:
             result = subprocess.run(
@@ -197,7 +226,9 @@ class JsTestItem(pytest.Item):
             # 先出报告再判成败：失败时恰恰更需要看到步骤明细
             entries = _read_step_log(step_log_path)
             _print_step_summary(entries)
-            _attach_to_allure(entries, self.node_script.name)
+            # 用 self.name 而不是文件名：表格用例被拆成了多条，用文件名的话
+            # Allure 里几条用例的标题会一模一样，看不出是哪条
+            _attach_to_allure(entries, self.name)
 
             # 退出码约定：0 = 通过；3 = 前置条件不满足（用例不适用）；其它非 0 = 失败。
             #
@@ -242,6 +273,21 @@ class JsTestFile(pytest.File):
     """收集 test_*.js 文件"""
 
     def collect(self):
+        # 「表格用例」特殊对待：表格里每条用例各算一个 pytest 用例项，
+        # 这样报告里每条用例单独一行成功/失败，而不是捆成全文件一条。
+        if self.path.name == TABLE_CASE_FILE:
+            cases = load_table_cases()
+            if cases:
+                for case_id, case_name in cases:
+                    yield JsTestItem.from_parent(
+                        self,
+                        name=f"{case_id} {case_name}",
+                        node_script=self.path,
+                        case_id=case_id,
+                    )
+                return
+            # 表格还没导出（或读不了）：仍然生成一个用例项，
+            # 让 node 侧报出「先填表 / 先导出」这个具体原因，而不是这里悄悄少收集一条
         yield JsTestItem.from_parent(self, name=self.path.name, node_script=self.path)
 
 

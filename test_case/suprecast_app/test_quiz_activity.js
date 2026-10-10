@@ -48,6 +48,31 @@ const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
 const ALLOW_INTERACT = true;
 const ALLOW_SUBMIT = false;
 
+/**
+ * 前置条件：本用例针对**单题判断题**活动（A 正确 / B 错误，选项恰好 2 个）。
+ *
+ * 【为什么要这一步】2026/10/10 线上出现了开发造的 15 题测试活动（「Z-题干图验证」），
+ * 那种活动下"选项恰好 2 个"当然不成立 —— 但那是**本用例不适用**，不是小程序出错。
+ * 报成 FAILED 会在报告里长期躺着一条假失败（本项目最忌讳的"报告说谎"），
+ * 所以这里明确按前置条件不满足上报（退出码 3 -> pytest 记 SKIPPED 并给出原因）。
+ * 多题活动的正确覆盖方式：补上"只看当前这道题"的能力，见 pages/quiz_activity_page.js。
+ */
+async function requireSingleQuestionActivity(page) {
+  const st = await quizPage.state(page);
+  if (st.total !== null && st.total > 1) {
+    const e = new Error(
+      `当前答题活动有 ${st.total} 道题（整页 ${st.options.length} 个选项行）。` +
+        `本用例只覆盖"单题判断题"活动，不适用于多选题库活动 —— 记跳过，不是失败。`
+    );
+    e.preconditionNotMet = true;
+    throw e;
+  }
+  console.log(
+    `前置条件满足: 单题活动（进度 ${JSON.stringify(st.progressText)}，选项 ${st.options.length} 个）`
+  );
+  return page;
+}
+
 (async () => {
   const funcList = [
     // 步骤 1：自导航到答题活动页（幂等）
@@ -56,6 +81,9 @@ const ALLOW_SUBMIT = false;
     // 断言：确实在答题页 —— 判据用结构选择器，比"页面含某段文案"可靠
     // （文案判据会被后台标签页骗：后台页也读得到内容）
     [assertSelectorCount, { selector: quizPage.SEL.quizPage, expected: 1 }],
+
+    // 前置条件：只覆盖单题判断题活动（多题活动记 SKIPPED 而不是 FAILED，见函数注释）
+    [requireSingleQuestionActivity, null],
 
     // 断言：界面要素齐全。
     // 这里刻意用 assertSelectorCount 钉住数量而不是"≥1"：
