@@ -124,9 +124,72 @@ async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { 
 
 
 /**
+ * 在同一个 context 的多个 page 中找出真正显示在屏幕上的那个。
+ *
+ * 背景：appTest 原来只是"遍历 webview，取第一个 url 含 servicewechat.com 的 page"，
+ * 但小程序同一个 context 下并存 4 个 page（真实内容页 / 预加载页 / 空壳页等），
+ * URL 全都含 servicewechat.com，于是取到哪个完全看设备返回顺序。
+ * 实测取到过只有一个 <body><div> 的空壳页，导致后续所有元素定位全部超时。
+ *
+ * 判据：后台页对应的原生 WebView 已被系统挂起，渲染线程不再产出帧，
+ * 因此 requestAnimationFrame 不触发。能等到帧的才是前台可见页。
+ * 注意不能用 locator.isVisible() 判断——后台页内的元素同样返回 true。
+ *
+ * @param {import('playwright').Page} page 候选页面
+ * @param {number} timeout 单个页面的探测超时（毫秒）
+ * @returns {Promise<import('playwright').Page>} 最可能是前台页的 page；都探测不到时返回原 page
+ */
+async function pickForegroundPage(page, timeout = 800) {
+  // 从 URL 提取小程序 appid，只接受同一小程序的页面。
+  // 实测微信会同时缓存多个小程序，context 里会混入别的小程序的 page，
+  // 若不限制 appid，可能选到另一个小程序的页面。
+  const appIdOf = (u) => {
+    const m = String(u).match(/servicewechat\.com\/(wx[0-9a-f]+)\//);
+    return m ? m[1] : null;
+  };
+  const targetAppId = appIdOf(page.url());
+
+  let fallback = null;
+  for (const p of page.context().pages()) {
+    try {
+      if (targetAppId && appIdOf(p.url()) !== targetAppId) {
+        continue; // 属于别的小程序，跳过
+      }
+      const alive = await p.evaluate(
+        (ms) =>
+          new Promise((resolve) => {
+            let done = false;
+            requestAnimationFrame(() => {
+              done = true;
+              resolve(true);
+            });
+            setTimeout(() => {
+              if (!done) resolve(false);
+            }, ms);
+          }),
+        timeout
+      );
+      if (alive) {
+        // 优先返回"既是前台、又有实际内容"的页面
+        const count = await p.locator("*").count().catch(() => 0);
+        if (count > 10) return p;
+        if (!fallback) fallback = p;
+      }
+    } catch (e) {
+      // 页面不可用（如预加载页），跳过
+    }
+  }
+  return fallback || page;
+}
+
+/**
  * 等待微信小程序 WebView 并获取其 Page，同时等待 DOM 加载与视口就绪。
+ *
+ * 【重要】返回值保证是"当前显示在屏幕上的前台页"，而不是随便一个 webview 对应的页。
+ * 小程序同一 context 下并存多个 page，选错会导致元素定位全部超时。
+ *
  * @param {import('playwright').AndroidDevice} device
- * @returns {Promise<import('playwright').Page>} 小程序 webview 的 page
+ * @returns {Promise<import('playwright').Page>} 小程序前台 webview 的 page
  */
 async function getWxWebviewPage(device = null) {
   if (!device)
@@ -164,7 +227,15 @@ async function getWxWebviewPage(device = null) {
   await page.waitForLoadState("domcontentloaded");
   // 关键：等待页面视口宽度>0
   await page.waitForFunction(() => document.documentElement.clientWidth > 10, { timeout: 15000 });
-  return page;
+
+  // 关键：上面按 URL 匹配到的可能只是"并存页面之一"，未必是屏幕上正在显示的那个。
+  // 这里再挑一次前台页，避免把空壳页/后台页当成目标页。
+  const picked = await pickForegroundPage(page);
+  if (picked !== page) {
+    const count = await picked.locator("*").count().catch(() => 0);
+    log.info(`已切换到前台页: 元素数=${count}`);
+  }
+  return picked;
 }
 
 /**
@@ -225,4 +296,5 @@ module.exports = {
   appTest,
   runAppSteps,
   getWxWebviewPage,
+  pickForegroundPage,
 };
