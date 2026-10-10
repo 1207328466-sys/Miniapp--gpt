@@ -12,6 +12,7 @@
 产出（都写到 knowledge/ 下）：
     knowledge/工作项清单.md        全部工作项（**机器生成，勿手改**）
     knowledge/迭代与模块汇总.md    按迭代 / 模块 / 领域 / 类型 / 状态计数（**机器生成**）
+    knowledge/需求描述汇编.md      每条工作项的**描述正文**，按迭代分组（**机器生成**）
 控制台另打印一份紧凑汇总，供人工写 `knowledge/小程序功能地图.md`。
 """
 
@@ -138,6 +139,46 @@ def write_summary_md(items):
     return out
 
 
+def write_descriptions_md(items):
+    """把每条工作项的**描述正文**按迭代导出。
+
+    描述是需求正文最接近的一手材料（实测 30 列导出里 100/100 非空、平均 445 字），
+    比只看标题更能搞清楚"这个功能到底要做什么"。
+    """
+    out = os.path.join(KB_DIR, "需求描述汇编.md")
+    groups = defaultdict(list)
+    for r in items.values():
+        groups[norm(r.get("迭代")) or "(未归入迭代)"].append(r)
+
+    def sprint_key(name):
+        m = re.search(r"(\d+)", name)
+        return (0, int(m.group(1))) if m else (1, 0)
+
+    with open(out, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write("# 需求描述汇编（机器生成，勿手改）\n\n")
+        fh.write("> 来源：超云生态平台导出的工作项 xlsx（30 列格式才有描述字段）。\n")
+        fh.write("> 重新生成：`python tools/build_requirements_kb.py <导出解包目录>`\n")
+        fh.write(f"> 共 {len(items)} 条，按迭代分组。\n\n")
+        for sprint in sorted(groups, key=sprint_key):
+            fh.write(f"## {sprint}（{len(groups[sprint])} 条）\n\n")
+            for r in sorted(groups[sprint], key=lambda x: norm(x.get("创建时间"))):
+                title = norm(r.get("标题"), 90)
+                meta = " / ".join(
+                    x for x in (
+                        norm(r.get("编号"), 24),
+                        norm(r.get("类型"), 8),
+                        norm(r.get("状态"), 8),
+                        norm(r.get("处理人"), 10),
+                    ) if x
+                )
+                fh.write(f"### {title}\n\n")
+                fh.write(f"> {meta}\n\n")
+                desc = norm(r.get("描述")) or "（无描述）"
+                # 描述里可能有表格/换行，统一压成一段，避免破坏 markdown 结构
+                fh.write(desc + "\n\n")
+    return out
+
+
 def main(argv):
     if not argv:
         print(__doc__)
@@ -154,7 +195,9 @@ def main(argv):
 
     p1 = write_items_md(items)
     p2 = write_summary_md(items)
-    print("已生成：", os.path.relpath(p1, REPO), "/", os.path.relpath(p2, REPO))
+    p3 = write_descriptions_md(items)
+    for p in (p1, p2, p3):
+        print("已生成：%s（%.0f KB）" % (os.path.relpath(p, REPO), os.path.getsize(p) / 1024))
 
     print("\n=== 紧凑汇总（供人工写功能地图）===")
     for key in ("类型", "状态", "模块", "领域", "迭代", "发布版本号"):
