@@ -474,9 +474,47 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 
 ### 换了台电脑/手机就跑不起来
 
-**原因**：设备序列号在代码里硬编码了（详见第八节 P0 问题）。
+**已修复（第四轮）**：设备序列号不再硬编码。解析顺序是
+显式参数 > 环境变量 `UITEST_DEVICE_SERIAL` > 唯一连接的设备；
+接了多台设备会**直接报错**，而不是随便挑一台静默测错对象。
 
-**临时解决**：改 `common/app_common.js` 顶部的 `DEFAULT_DEVICE_SERIAL`。
+换机器时：只有一台设备连着就什么都不用做；多台就设一次环境变量：
+
+```powershell
+$env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
+```
+
+### 输入中文没反应，还不报错
+
+**原因**：`adb shell input text` **不支持中文**。传中文进去不报错，但字不会进去 ——
+又是那类最危险的"静默失败"。
+
+**现状**：`qaPage.typeKeyword` 会**主动拒绝**非 ASCII 关键词并明确报错，
+而不是让你拿到一个"跑了但什么都没测"的绿结果。
+
+**可行方案（尚未实现）**：装 `ADBKeyboard` 这类专用输入法，用
+`adb shell am broadcast` 发中文；或改用剪贴板粘贴。需要在手机上装 APK，
+所以先记在这里，真要用的时候再上。
+
+### 「有问必答」和「首页」是同一个页面
+
+文档里这两个叫法指的是**同一页**（实测 418 元素、标题是`压铸人的社区百科`）：
+底部 tab 上写的是「有问必答」，早期文档叫它「首页（社区百科）」。
+判据是页面上有 `.search-container` 搜索栏。别再当成两页。
+
+### 输入框的值读不到，是不是没输进去？
+
+**不一定 —— 很可能是读法错了。**小程序的自定义输入组件（`wx-input`）把值放在
+**`value` 属性**上，不在 DOM property 上：
+
+| 读法 | 结果 |
+|---|---|
+| `el.value` | `undefined`（自定义元素没有这个 property） |
+| `el.querySelector("input").value` | `""`（内层是 `visibility:hidden disabled` 的占位 input） |
+| `el.getAttribute("value")` | ✅ 真实内容 |
+
+用错读法做校验，会得到"输入未生效"的**假失败**（本轮实测踩到）。
+统一用 `pages/base_page.js` 的 `inputValue()`，它按上面的顺序取第一个有效的。
 
 ---
 
@@ -542,6 +580,17 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 > `config/config.yaml`，样例文件里写清了这条边界。把 JS 侧也接到 YAML 是后续项
 > （需要引入 YAML 解析依赖，或由 Python 侧生成）。
 
+### 已修复 · 第六轮（3 项）
+
+| # | 缺陷 | 修复要点 |
+|---|---|---|
+| 14 | `inputText` 的读回校验用了错的读法，必然误报"未真正写入" | 改为优先读 `value` 属性（`getAttribute("value")`）；小程序自定义组件把值放在属性上 |
+| 15 | 搜索路径的页面知识硬编码在关键字层，关键词写死 `test` | 新增 `pages/qa_page.js`（有问必答页 + 搜索页）；`focusSearchInput` 退化为兼容外壳 |
+| 16 | `test_example.js` 必须人工把手机停在有问必答页，否则必失败 | `openSearch` 自导航（幂等）；用例改为"打开搜索页 → 输入关键词 → 读回校验" |
+
+> ⚠️ **仍未覆盖**：提交搜索与结果页校验（结果页结构还没实测，不凭猜测写断言）。
+> ⚠️ **中文限制**：`adb input text` 不支持中文，`typeKeyword` 会主动拒绝非 ASCII 关键词。
+
 ### P0 · 仍待修
 
 无。
@@ -561,7 +610,8 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 - ~~诊断脚本堆积在 `test_case/`~~ ✅ 已移入 `test_case/diagnostic/`
 - `pytest.ini` 注释写「重试 2 次」，配置却是 `reruns = 1`，注释与实现不一致
 - 无 marker（`P0`~`P3`）使用示例：`pytest.ini` 已注册 marker，但 JS 用例里没法直接打 marker
-- 无公共前置步骤：每个 JS 文件都要自己连设备、自己回到起点页
+- ~~无公共前置步骤~~ ⏳ 部分完成：`learnCenter.ensureOnColumnList` / `qaPage.openSearch`
+  已能自导航；另两条用例仍要求人工把手机停在合适页面
 - `addopts` 里的 `-p pytest_asyncio` 对纯 JS 用例无意义
 
 ### 建议的推进顺序
@@ -606,7 +656,8 @@ miniapp_test_case/
 │           ├── base_page.js         #   公共能力：解析前台页 / 判定 / 真实 tap / 轮询等待
 │           ├── learn_center_page.js #   学习中心（含「专栏」列表）
 │           ├── column_detail_page.js#   专栏详情页
-│           └── user_center_page.js  #   用户中心
+│           ├── user_center_page.js  #   用户中心
+│           └── qa_page.js           #   有问必答页 + 搜索页
 ├── test_case/                       # 用例层
 │   ├── pytest.ini                   # pytest 配置
 │   ├── diagnostic/                  # 诊断工具（不以 test_ 开头，pytest 不收集）

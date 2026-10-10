@@ -19,10 +19,9 @@ const { _android: android } = require("playwright");
 /** 纯等待。不依赖 page 对象：page 被销毁后 page.waitForTimeout 会抛错 */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 有问必答页的搜索栏（是个 wx-view，不是输入框）；点击后进入搜索页
-const SEARCH_BAR = ".search-container";
-// 搜索页的真实输入框
-const SEARCH_INPUT = "wx-input.search-input";
+// 有问必答页的搜索栏（.search-container）与搜索页的输入框
+// （wx-input.search-input）这两个选择器已经移到 pages/qa_page.js 的 SEL 里
+// —— 它们属于"某个页面的知识"，不该留在关键字层。
 
 /**
  * 懒加载安卓设备，仅用 shell() 执行 adb 命令（不依赖 playwright 的 driver apk）
@@ -271,48 +270,36 @@ async function waitImeShown(device, page, timeout = 5000) {
 
 
 /**
- * 打开搜索框：点击搜索栏跳转到搜索页，并聚焦搜索页的输入框。
- * 搜索栏（.search-container）只在“有问必答”页，且它是 wx-view 不能 fill，只能真实 tap 跳转；
- * 跳转后再 tap 输入框，软键盘弹出即表示聚焦成功。关键词输入由调用方自行处理。
+ * 打开搜索页 → 输入关键词 test → 回车提交。
+ *
+ * 【已迁移到页面对象】页面知识（有问必答页、.search-container、
+ * wx-input.search-input）已收进 `pages/qa_page.js`。这里保留同名导出，
+ * 只为兼容历史调用方，行为与原实现一致（关键词仍写死 test）。
+ *
+ * ⚠️ 新代码请直接用页面对象，并且**不要再写死关键词**：
+ *     const qaPage = require("./pages/qa_page");
+ *     [qaPage.openSearch, null]                                  // 自导航到搜索页
+ *     [qaPage.typeKeyword, { keyword: "你要搜的词" }]             // 输入并读回校验
+ *
  * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{timeout?: number}} params timeout: 等待搜索页出现的超时（毫秒）
- * @returns {Promise<import('playwright').Page>} 搜索页 page，可在其 wx-input 上继续输入
+ * @param {{timeout?: number}} [options] timeout: 等待搜索页出现的超时（毫秒）
+ * @returns {Promise<import('playwright').Page>} 搜索页 page
  */
 async function focusSearchInput(page, { timeout = 10000 } = {}) {
-  try {
-    const device = await getDevice();
-    // 1. 同一 context 下并存多个 tab 页，先在所有 page 中找出含搜索栏的那个
-    const target = await findPageWith(page, SEARCH_BAR);
-    if (!target) {
-      throw new Error(`没有 page 含搜索栏 ${SEARCH_BAR}，请先切到有问必答页`);
-    }
-    // 2. 真实 tap 搜索栏，跳到搜索页
-    await tapElement(device, target, target.locator(SEARCH_BAR).first());
-    // 3. 搜索页是新出现的 page，等它渲染出来
-    let searchPage = null;
-    const deadline = Date.now() + timeout;
-    while (Date.now() < deadline && !searchPage) {
-      await target.waitForTimeout(500);
-      searchPage = await findPageWith(page, SEARCH_INPUT);
-    }
-    if (!searchPage) {
-      throw new Error(`未进入搜索页，没找到 ${SEARCH_INPUT}`);
-    }
-    // 4. tap 输入框聚焦，软键盘弹出说明焦点已拿到
-    await tapElement(device, searchPage, searchPage.locator(SEARCH_INPUT).first());
-    if (!(await waitImeShown(device, searchPage))) {
-      throw new Error("输入框未获得焦点（软键盘没弹出）");
-    }
-    console.log("已打开搜索页并聚焦输入框");
-    await searchPage.waitForTimeout(1500);
-    await device.shell("input text test");
-    await device.shell("input keyevent 66");
-    await device.shell("input keyevent 66");
-    return searchPage;
-  } catch (e) {
-    console.error(`打开搜索框失败: ${e.message}`);
-    throw e;
-  }
+  // 延迟 require：本文件与 pages/ 互相引用，运行时取可确保两边都已加载
+  const qaPage = require("./pages/qa_page");
+  // openSearch 内部自带幂等与自导航（原来是"没有 page 含搜索栏就报错"，
+  // 要求人工先把手机停在有问必答页）
+  let fg = await qaPage.openSearch(page, { timeout });
+  fg = await qaPage.typeKeyword(fg, { keyword: "test" });
+
+  // 提交。⚠️ 提交之后的"结果页"结构尚未实测，所以这里**没有**断言 ——
+  // 属于已知的未覆盖部分，不要误以为搜索全链路已被验证。
+  const device = await getDevice();
+  await device.shell("input keyevent 66");
+  await device.shell("input keyevent 66");
+  console.log("已提交搜索（结果页校验尚未实现）");
+  return fg;
 }
 
 /**
@@ -394,10 +381,19 @@ async function inputText(page, { elementId, text, timeout = 10000 } = {}) {
     // ⚠️ 关键校验：小程序的自定义输入组件（wx-input / wx-textarea）可能
     // 不接受浏览器层面的赋值，此时 fill() 不报错但内容为空 —— 典型的假通过。
     // 这里主动读回校验，避免静默失败。
+    //
+    // 【读法的坑，本轮实测修正】值放在 **value 属性**上：
+    //   el.value                          -> undefined（自定义元素没有这个 property）
+    //   el.querySelector("input").value   -> ""（内层是 style="visibility:hidden" disabled 的占位 input）
+    //   el.getAttribute("value")          -> 真实内容 ✅
+    // 原来的实现用的是第二种读法，于是**必然误报** "fill() 未真正写入"。
+    // 这是一个真 bug：读不到 ≠ 没输进去（见账本第十六节）。
     const actual = await el.evaluate((node) => {
-      if ("value" in node) return node.value;
-      const inner = node.querySelector("input, textarea");
-      return inner ? inner.value : "";
+      const attr = node.getAttribute ? node.getAttribute("value") : null;
+      if (attr !== null) return String(attr);
+      if ("value" in node && node.value != null) return String(node.value);
+      const inner = node.querySelector ? node.querySelector("input, textarea") : null;
+      return inner && inner.value != null ? String(inner.value) : "";
     });
     if (actual !== text) {
       throw new Error(
@@ -875,6 +871,8 @@ module.exports = {
   WX_WEBVIEW_PKG,
   getDevice,
   getForegroundPage,
+  findPageWith,
+  waitImeShown,
   login,
   clickElementById,
   clickElementByText,

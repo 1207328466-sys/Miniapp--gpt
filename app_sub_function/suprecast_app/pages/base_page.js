@@ -162,6 +162,33 @@ async function classOf(p, selector) {
   }
 }
 
+/**
+ * 读回输入框的真实内容。
+ *
+ * 【为什么不能直接读 el.value】
+ * 小程序的自定义输入组件（wx-input / wx-textarea）把值放在**属性**上，
+ * 不在 DOM 属性（property）上，也不在文本节点里。实测三种读法只有第一种有效：
+ *
+ *   el.value                          -> undefined（自定义元素没有这个 property）
+ *   el.querySelector("input").value   -> ""（内层是个 style="visibility:hidden" disabled 的占位 input）
+ *   el.getAttribute("value")          -> "testzzq9x"  ✅
+ *
+ * 这个坑非常隐蔽：**读不到 ≠ 没输进去**。用错的读法做校验，会得到
+ * "输入未生效"的**假失败**（本轮实测踩到，见账本第十六节）。
+ *
+ * @param {import('playwright').Locator} locator 输入元素
+ * @returns {Promise<string>}
+ */
+async function inputValue(locator) {
+  return locator.evaluate((el) => {
+    const attr = el.getAttribute ? el.getAttribute("value") : null;
+    if (attr !== null) return String(attr);
+    if ("value" in el && el.value != null) return String(el.value);
+    const inner = el.querySelector ? el.querySelector("input, textarea") : null;
+    return inner && inner.value != null ? String(inner.value) : "";
+  });
+}
+
 module.exports = {
   sleep,
   foreground,
@@ -175,4 +202,5 @@ module.exports = {
   tapText,
   textOf,
   classOf,
+  inputValue,
 };

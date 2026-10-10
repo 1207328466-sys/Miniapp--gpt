@@ -19,4 +19,5 @@ module.exports = {
   learnCenter: require("./learn_center_page"),
   columnDetail: require("./column_detail_page"),
   userCenter: require("./user_center_page"),
+  qaPage: require("./qa_page"),
 };
