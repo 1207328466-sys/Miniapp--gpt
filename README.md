@@ -764,6 +764,8 @@ miniapp_test_case/
 │   │   ├── capability_check.js      # 15 个函数的能力矩阵探测
 │   │   ├── dump_page.js             # 抓页面 DOM 到文件 + 各 page 身份判定
 │   │   ├── probe_raf.js             # 校准前台页判据（RAF 信号 vs 截图真值）
+│   │   ├── probe_feed_tabs.js       # 校准首页筛选 tab 的"选中态"判据（--read 只看当前状态）
+│   │   ├── set_feed_tab.js          # 把首页筛选 tab 切到指定那个（准备现场 / 验收用）
 │   │   └── run_case.py              # 跑单个用例并把输出按正确编码落盘
 │   └── suprecast_app/
 │       ├── conftest.py              # ★ 桥接层：让 pytest 能执行 .js；表格用例按编号拆成多条

@@ -45,6 +45,27 @@ const BOTTOM_TAB_TEXT = "有问必答";
  */
 const FEED_TABS = ["最新提问", "推荐", "精选问答", "我的关注"];
 
+/** 「回到首页」的默认筛选 tab：标准起点 */
+const FEED_DEFAULT_TAB = "最新提问";
+
+/**
+ * 首页那排筛选 tab 的**选中态怎么认**。
+ *
+ * 【证据】2026/10/10 真机实测（探针 `test_case/diagnostic/probe_feed_tabs.js`，
+ * 点「最新提问」前后两次快照对照，两个 tab 的值正好互换）：
+ *
+ *   选中  ： color rgba(0,0,0,0.88) + font-weight 500
+ *   未选中： color rgba(0,0,0,0.48) + font-weight 400
+ *
+ * ⚠️ **没有 class 可用**：首页这排 tab 的标签连 class 都没有（探针里 `cls:` 一行是空的），
+ *    选中态完全由计算样式表达，只能读 getComputedStyle。
+ *    （对比：学习中心那排顶部 tab 用的是 `class active` —— 两套组件不一样，别互相套用。）
+ *
+ * 阈值取 0.8 / 500：离实测值足够远（0.88/500 与 0.48/400）。判据万一失效，
+ * 报错里会把四个 tab 的原始值全打出来，一眼就能看出是小程序改版了。
+ */
+const FEED_TAB_SELECTED = { minAlpha: 0.8, minWeight: 500 };
+
 /**
  * 断言「活动入口（活动卡）在内容流的每个筛选 tab 下都显示」。
  * 需求原文：「在最新/推荐/精选/我的关注下都显示」。
@@ -96,6 +117,16 @@ async function assertActivityBlockInAllFeedTabs(page, { tabs = FEED_TABS, waitAf
     console.log(`  [${tab}] 活动卡数=${cards} ${hasSwiper ? "(有轮播容器)" : "(无轮播容器)"}`);
   }
 
+  // 谁弄脏谁负责：本函数会把 4 个 tab 逐个点一遍，最后停在最后一个（实测是「我的关注」）。
+  // 收尾时把 tab 还回默认的「最新提问」，否则后面的用例会从一个意料之外的筛选 tab 上开始
+  //（owner 2026/10/10 反馈的现象）。
+  // 注意：归位失败只提示、不影响本次断言结论 —— 免得把"首页有问题"写成"归位失败"。
+  try {
+    await switchToFeedTab(page, { timeout: 5000 });
+  } catch (e) {
+    console.warn(`  [提示] 收尾时没能把筛选 tab 归位到「${FEED_DEFAULT_TAB}」：${e.message.split("\n")[0]}`);
+  }
+
   const checked = results.filter((r) => r.cards !== null);
   const bad = checked.filter((r) => r.cards === 0);
 
@@ -142,6 +173,107 @@ async function isOnHomeFeed(page) {
     if ((await base.countOfText(fg, tab)) > 0) return true;
   }
   return false;
+}
+
+/**
+ * 读首页那排筛选 tab 的原始状态（只读）。
+ *
+ * 【为什么必须先锁定「tab 栏」再去读】实测：和某个 tab 同名的元素在整页里不止一处 ——
+ * 「最新提问」命中 3 个嵌套元素；点完「最新提问」之后「推荐」甚至命中 6 个，
+ * 多出来的是白色 9px 的卡片角标。全页乱找就会读到别的元素（判据假成立/假失败）。
+ * 做法：先找**同时包含 4 个 tab 文案的最内层容器**，那就是 tab 栏；再在它里面找标签。
+ *
+ * @returns {Promise<{found: boolean, selected: string, tabs: Array}>}
+ */
+async function readFeedTabs(page) {
+  const fg = await base.foreground(page);
+  return fg.evaluate(
+    ({ tabs, minAlpha, minWeight }) => {
+      const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+      const all = Array.from(document.querySelectorAll("*"));
+      const bars = all.filter((el) => tabs.every((t) => norm(el.innerText).includes(t)));
+      const bar = bars.length ? bars[bars.length - 1] : null; // 文档顺序里最靠后的那个 = 最内层
+      if (!bar) return { found: false, selected: "", tabs: [] };
+
+      const rows = tabs.map((t) => {
+        const hits = Array.from(bar.querySelectorAll("*")).filter((el) => norm(el.innerText) === t);
+        if (!hits.length) return { tab: t, found: false, alpha: null, weight: null, selected: false };
+        const el = hits[hits.length - 1]; // 最内层那个（外层包裹元素的 innerText 也等于 tab 名）
+        const cs = getComputedStyle(el);
+        const m = cs.color.match(/rgba?\(([^)]+)\)/);
+        const nums = m ? m[1].split(",").map((x) => parseFloat(x)) : [];
+        const alpha = nums.length === 4 ? nums[3] : 1; // rgb(...) 没有 alpha 位 -> 视为 1
+        const weight = parseInt(cs.fontWeight, 10) || 400;
+        return {
+          tab: t,
+          found: true,
+          alpha,
+          weight,
+          color: cs.color,
+          selected: alpha >= minAlpha && weight >= minWeight,
+        };
+      });
+      const hit = rows.find((r) => r.selected);
+      return { found: true, selected: hit ? hit.tab : "", tabs: rows };
+    },
+    {
+      tabs: FEED_TABS,
+      minAlpha: FEED_TAB_SELECTED.minAlpha,
+      minWeight: FEED_TAB_SELECTED.minWeight,
+    }
+  );
+}
+
+/** 当前选中的是哪个筛选 tab（拿不到返回空串） */
+async function activeFeedTab(page) {
+  const info = await readFeedTabs(page);
+  return info.selected || "";
+}
+
+/** 把四个 tab 的实测值拼成一行，用于日志与报错（判据失效时一眼看到真相） */
+function describeFeedTabs(info) {
+  if (!info.found) return "找不到首页的 tab 栏（当前页可能不在首页信息流上）";
+  return info.tabs
+    .map((r) => (r.found ? `${r.tab}(alpha=${r.alpha}, weight=${r.weight})` : `${r.tab}(找不到)`))
+    .join("，");
+}
+
+/**
+ * 切到某个筛选 tab，并且**等到它真的变成选中态**才算成功；已选中则直接返回（幂等）。
+ *
+ * 【为什么非要验证】点一下 ≠ 切过去了：真机回归里出现过"adb 点到 tab 的祖先容器、
+ * 页面被带到别处"（踩坑记录坑 17）。不验证就会静默停在错的 tab 上，
+ * 让后面的用例在一个意料之外的筛选 tab 上开始 —— 这正是 owner 2026/10/10 反馈的现象。
+ */
+async function switchToFeedTab(page, { tab = FEED_DEFAULT_TAB, timeout = 8000, maxAttempts = 2 } = {}) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if ((await activeFeedTab(page)) === tab) {
+      console.log(`已选中筛选 tab「${tab}」，无需切换（幂等）`);
+      return await base.foreground(page);
+    }
+
+    const fg = await base.foreground(page);
+    if ((await base.countOfText(fg, tab)) === 0) {
+      throw await base.notFound(`筛选 tab「${tab}」`, fg);
+    }
+    await base.tapText(fg, tab, `筛选 tab「${tab}」${attempt > 1 ? "（重试）" : ""}`);
+
+    const ok = await base.waitUntil(async () => (await activeFeedTab(page)) === tab, { timeout });
+    if (ok) {
+      console.log(`已切到筛选 tab「${tab}」`);
+      return await base.foreground(page);
+    }
+    console.warn(
+      `  第 ${attempt} 次点「${tab}」之后它没有变成选中态。实测：${describeFeedTabs(await readFeedTabs(page))}`
+    );
+  }
+
+  throw new Error(
+    `点了「${tab}」${maxAttempts} 次，它都没有变成选中态（每次等 ${timeout}ms）。\n` +
+      `  实测四个 tab：${describeFeedTabs(await readFeedTabs(page))}\n` +
+      `  判据依据：选中 = 颜色 alpha>=${FEED_TAB_SELECTED.minAlpha} 且 font-weight>=${FEED_TAB_SELECTED.minWeight}` +
+      `（2026/10/10 实测 0.88/500，未选中 0.48/400）。若四个值整体都变了，多半是小程序改版，判据要重新校准。`
+  );
 }
 
 /** 现在是不是搜索页（判据：出现真实输入框；此时搜索栏已消失） */
@@ -205,7 +337,12 @@ async function ensureOnHomeFeed(page, { maxAttempts = 3 } = {}) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     page = await base.ensureOnTabPage(page); // 二级页（搜索页/详情页/答题页）先点返回退出
     page = await ensureOn(page); // 切到「有问必答」tab（幂等）
-    if (await isOnHomeFeed(page)) return await base.foreground(page);
+    if (await isOnHomeFeed(page)) {
+      // 到了信息流还不算完：小程序会记住上次选中的是哪个筛选 tab
+      //（上一次跑「检查活动入口」会把 tab 停在「我的关注」），所以顺手归位到默认 tab ——
+      // 这样表格里的「回到首页」才真的是"标准起点"。owner 2026/10/10 反馈的就是这个。
+      return await switchToFeedTab(page);
+    }
     console.log(
       `  [自愈] 已在「有问必答」tab 但看不到信息流筛选 tab（多半停在搜索页/搜索结果页），点返回退出（第 ${attempt}/${maxAttempts} 次）`
     );
@@ -338,8 +475,12 @@ module.exports = {
   SEL,
   BOTTOM_TAB_TEXT,
   FEED_TABS,
+  FEED_DEFAULT_TAB,
   isOn,
   isOnHomeFeed,
+  readFeedTabs,
+  activeFeedTab,
+  switchToFeedTab,
   isOnSearchPage,
   ensureOn,
   ensureOnHomeFeed,

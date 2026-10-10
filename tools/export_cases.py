@@ -24,6 +24,7 @@
 用法:
     python tools/export_cases.py           # 读 cases/用例表.xlsx，写 cases/用例表.json
     python tools/export_cases.py --init    # 生成模板（表已存在时报错，加 --force 才覆盖）
+    python tools/export_cases.py --dropdown # 给已有表格补「动作」列下拉框（不动已填内容）
 退出码: 0 成功；1 表格有错；2 没有表格（已生成模板）；3 缺少 openpyxl
 """
 
@@ -164,6 +165,8 @@ HELP_LINES = [
     "7. 每条用例开头都先用「回到首页」把起点摆正；会把手机停在二级页（搜索页/详情页/答题页）的用例，",
     "   最后再补一步「回到首页」把手机交还。原因：表里的用例共用同一部手机，",
     "   上一条停在二级页上，下一条可能报「找不到底部 tab」—— 开头摆正 + 结尾交还就不受影响。",
+    "8. 「动作」列是**下拉框**（点单元格右边的小箭头选），可选项来自「动作清单」工作表；",
+    "   「步骤序号」列只接受 1、2、3… 这样的正整数。填错的动作名根本选不出来，省一轮报错。",
     "",
     "默认禁止（安全阀，避免手滑把真实数据改了）",
     "   · 「点文字」不能点这些字：提交、兑换、签到、下单、支付、购买、领取、抽奖、报名、删除、退出登录、退款、取消订单",
@@ -198,6 +201,52 @@ def cell_text(value):
     return str(value).strip()
 
 
+def add_dropdowns(ws, last_row=1000):
+    """给「用例」工作表加两个下拉/校验（**不改任何已填内容**）：
+
+      1. 动作列（D）：下拉选择，选项来自「动作清单」工作表的 A 列 ——
+         好处是"能选的动作"只有一处定义：以后加动作只改那张表，下拉跟着变；
+         而且填错的动作名**在输入时就选不出来**，省掉一轮导出报错。
+      2. 步骤序号列（C）：只能填 ≥1 的整数。
+
+    范围一路铺到第 last_row 行（默认 1000），所以以后往下加行也有下拉。
+
+    ⚠️ 为什么校验比"随便填"好：本项目最怕的是**静默出错**。下拉 = 在源头挡掉
+    手滑（把「检查文字显示」打成「检查文字」，或者填成旁边那列的内容），
+    比"导出时才发现"早一步。
+    """
+    from openpyxl.worksheet.datavalidation import DataValidation
+
+    # 1) 动作列：跨表引用「动作清单」的 A2:A(n+1)
+    dv_action = DataValidation(
+        type="list",
+        formula1="='%s'!$A$2:$A$%d" % (SHEET_ACTIONS, len(ACTIONS) + 1),
+        allow_blank=True,  # 表格尾部常有空行
+        showErrorMessage=True,
+    )
+    dv_action.promptTitle = "动作"
+    dv_action.prompt = "点右边的小箭头选一个动作（可选项见「动作清单」工作表）"
+    dv_action.errorTitle = "没有这个动作"
+    dv_action.error = "只能从列表里选。全部可选项见「动作清单」工作表；确实需要新动作时找 AI 加。"
+    ws.add_data_validation(dv_action)
+    dv_action.add("D2:D%d" % last_row)
+
+    # 2) 步骤序号列：正整数
+    dv_seq = DataValidation(
+        type="whole",
+        operator="greaterThanOrEqual",
+        formula1="1",
+        allow_blank=True,
+        showErrorMessage=True,
+    )
+    dv_seq.promptTitle = "步骤序号"
+    dv_seq.prompt = "同一用例内的顺序号：1、2、3…（要么全写，要么全不写，都不写就按表格先后顺序跑）"
+    dv_seq.errorTitle = "序号不合法"
+    dv_seq.error = "只能填 1、2、3… 这样的正整数。"
+    ws.add_data_validation(dv_seq)
+    dv_seq.add("C2:C%d" % last_row)
+
+
 def build_template(path):
     """生成模板（3 个工作表：用例 / 动作清单 / 填写说明）"""
     from openpyxl import Workbook
@@ -215,6 +264,7 @@ def build_template(path):
     for col, width in zip("ABCDEFG", (14, 34, 9, 20, 20, 12, 34)):
         ws.column_dimensions[col].width = width
     ws.freeze_panes = "A2"  # 滚动时表头冻结，填表时不会看错列
+    add_dropdowns(ws)  # 动作列下拉 + 步骤序号校验（不改数据，只是让手滑填不进去）
 
     wa = wb.create_sheet(SHEET_ACTIONS)
     wa.append(["动作", "参数1", "参数2", "说明"])
@@ -413,6 +463,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="把 Excel 用例表导出成 JSON（填表就能写用例）")
     parser.add_argument("--init", action="store_true", help="生成用例表模板")
     parser.add_argument("--force", action="store_true", help="配合 --init：覆盖已存在的用例表")
+    parser.add_argument(
+        "--dropdown",
+        action="store_true",
+        help="给现有的用例表补上「动作」列下拉框（不改动你已经填好的内容）",
+    )
     parser.add_argument("--xlsx", default=str(XLSX_PATH), help="用例表路径（默认 cases/用例表.xlsx）")
     parser.add_argument("--json", default=str(JSON_PATH), help="导出路径（默认 cases/用例表.json）")
     args = parser.parse_args(argv)
@@ -434,6 +489,29 @@ def main(argv=None):
         build_template(xlsx)
         print("已生成用例表模板：%s" % xlsx)
         print("  用 Excel/WPS 打开，按「填写说明」填，然后跑：python run.py")
+        return 0
+
+    if args.dropdown:
+        if not xlsx.exists():
+            print("还没有用例表：%s" % xlsx)
+            print("  先跑 python tools/export_cases.py --init 生成模板（新模板自带下拉框）")
+            return 1
+        from openpyxl import load_workbook
+
+        wb = load_workbook(xlsx)
+        if SHEET_DATA not in wb.sheetnames or SHEET_ACTIONS not in wb.sheetnames:
+            print("这份表里缺少「%s」或「%s」工作表，加不了下拉框。" % (SHEET_DATA, SHEET_ACTIONS))
+            print("  建议换成 python tools/export_cases.py --init --force 生成的新模板")
+            return 1
+        ws = wb[SHEET_DATA]
+        # 先清空旧的校验规则，重复执行不会叠加（叠加会让 Excel 弹两次提示）
+        ws.data_validations.dataValidation = []
+        add_dropdowns(ws)
+        wb.save(xlsx)
+        print("已给用例表补上下拉框：%s" % xlsx)
+        print("  · 动作列（D）现在是下拉框，选项来自「动作清单」工作表")
+        print("  · 步骤序号列（C）只接受 1、2、3… 这样的正整数")
+        print("  · 你已经填好的内容一行都没动")
         return 0
 
     if not xlsx.exists():

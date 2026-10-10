@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-10 16:06:10",
+  "generated_at": "2026-10-10 16:34:25",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
   "actions": [
@@ -214,6 +214,74 @@
           "param1": "",
           "param2": "",
           "note": "把手机交还给下一条用例",
+          "num": 4
+        }
+      ]
+    },
+    {
+      "id": "积分商城_001",
+      "name": "用户中心能看到积分商城",
+      "steps": [
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 1
+        },
+        {
+          "action": "切到用户中心",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 2
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "积分商城",
+          "param2": "",
+          "note": "",
+          "num": 3
+        },
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 4
+        }
+      ]
+    },
+    {
+      "id": "学习中心_002",
+      "name": "学习中心能看见压铸百科",
+      "steps": [
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 1
+        },
+        {
+          "action": "打开学习中心专栏",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 2
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "压铸百科",
+          "param2": "",
+          "note": "",
+          "num": 3
+        },
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
           "num": 4
         }
       ]
