@@ -4,10 +4,27 @@
 @project_name: UITest
 @cur_file: conftest.py
 @create_date: 2026/10/8
+
+桥接层：让 pytest 能执行 .js 用例，并把 JS 侧的**结构化步骤日志**还原成报告。
+
+【为什么报告放在这一层做】
+JS 那边只负责"跑步骤 + 写 JSONL"，把步骤明细变成
+  - 控制台可读摘要
+  - Allure 的 feature -> story -> step 层次 + 失败步骤截图
+是 Python 侧的活。这样 JS 不必关心 pytest/Allure，Python 也不必关心测试逻辑。
+
+【步骤日志的路径怎么传】
+由这里生成一个**临时文件**路径，经环境变量 UITEST_STEP_LOG 交给 node 进程。
+不采用"约定固定目录再扫描回来"的做法 —— 那样并发跑（xdist）时必然串台，
+而且还要处理"这次是哪个文件"的歧义。
 '''
+
+import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -23,9 +40,103 @@ for _stream in (sys.stdout, sys.stderr):
         # 被 pytest 替换成捕获对象时没有 reconfigure，忽略即可
         pass
 
+try:
+    import allure
+except Exception:  # allure 只是报告增强，缺了也要能正常跑
+    allure = None
 
-class JsTestFailure(Exception):
-    """JS 脚本执行失败异常"""
+
+class JsTestFailure(AssertionError):
+    """JS 脚本执行失败异常。
+
+    刻意继承 AssertionError（而不是普通 Exception）：pytest 会把它记成
+    **用例失败(failed)**，Allure 也标 failed；用普通 Exception 时 Allure 会标成
+    **broken**，报告读者会误以为"框架/环境坏了"，而实际上是用例断言没过 ——
+    这两种状态在报告里的含义完全不同，会直接误导排查方向。
+    """
+
+
+def _read_step_log(path):
+    """读取 JSONL 步骤日志。
+
+    读不到或解析失败时**不抛错**：报告是附加价值，不该因为它影响用例结论；
+    但也不能静默 —— 所以两种情况都明确告警。
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            return [json.loads(line) for line in f if line.strip()]
+    except FileNotFoundError:
+        print("[WARN] 没有生成步骤日志：JS 侧可能没读到 UITEST_STEP_LOG")
+        return []
+    except Exception as exc:
+        print(f"[WARN] 步骤日志解析失败：{exc}")
+        return []
+
+
+def _print_step_summary(entries):
+    """在控制台打印人可读的步骤明细（不用去翻 JSON）"""
+    steps = [e for e in entries if e.get("type") == "step"]
+    summary = next((e for e in entries if e.get("type") == "summary"), None)
+    if not steps:
+        return
+
+    print("\n--- 步骤明细 ---")
+    for s in steps:
+        mark = "OK  " if s.get("status") == "passed" else "FAIL"
+        print(f"  [{mark}] {s.get('num')}. {s.get('name')}  {s.get('duration')}s")
+        if s.get("error"):
+            print(f"          错误: {s['error']}")
+        if s.get("screenshot"):
+            print(f"          截图: {s['screenshot']}")
+
+    if summary:
+        print(
+            f"  合计 {summary.get('steps')} 步：通过 {summary.get('passed')}，"
+            f"失败 {summary.get('failed')}，总耗时 {summary.get('total')}s"
+        )
+        if summary.get("context"):
+            print(f"  上下文: {json.dumps(summary['context'], ensure_ascii=False)}")
+
+
+def _attach_to_allure(entries, case_name):
+    """把步骤日志还原成 Allure 的层次结构"""
+    if allure is None:
+        return
+
+    header = next((e for e in entries if e.get("type") == "case"), {})
+    steps = [e for e in entries if e.get("type") == "step"]
+    summary = next((e for e in entries if e.get("type") == "summary"), None)
+
+    # feature -> story -> title 三层，报告里才有的分组可看
+    allure.dynamic.feature(header.get("feature") or "未分类")
+    allure.dynamic.story(header.get("story") or case_name)
+    allure.dynamic.title(header.get("title") or case_name)
+
+    for s in steps:
+        with allure.step(f"{s.get('num')}. {s.get('name')} ({s.get('duration')}s)"):
+            if s.get("error"):
+                allure.attach(str(s["error"]), "错误信息", allure.attachment_type.TEXT)
+            # 只把**失败步骤**的截图塞进报告：每步都塞会让报告膨胀到几十 MB。
+            # 通过的步骤本来就在磁盘上留着截图（report/photo_app/...），不必都进报告。
+            shot = s.get("screenshot")
+            if s.get("status") == "failed" and shot and os.path.exists(shot):
+                allure.attach.file(
+                    shot,
+                    name=os.path.basename(shot),
+                    attachment_type=allure.attachment_type.PNG,
+                )
+
+    if summary and summary.get("context"):
+        allure.attach(
+            json.dumps(summary["context"], ensure_ascii=False, indent=2),
+            "用例上下文",
+            allure.attachment_type.JSON,
+        )
+    allure.attach(
+        json.dumps(entries, ensure_ascii=False, indent=2),
+        "步骤日志(原始 JSON)",
+        allure.attachment_type.JSON,
+    )
 
 
 class JsTestItem(pytest.Item):
@@ -37,21 +148,42 @@ class JsTestItem(pytest.Item):
 
     def runtest(self):
         node = shutil.which("node") or "node"
-        result = subprocess.run(
-            [node, str(self.node_script)],
-            cwd=str(self.node_script.parent),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
 
-        if result.stdout:
-            print(result.stdout)
-        if result.stderr:
-            print(result.stderr)
-        if result.returncode != 0:
-            raise JsTestFailure(f"node 执行失败(exit={result.returncode}): {self.node_script.name}")
+        # 步骤日志写到临时文件：与本次运行一一对应，既不污染仓库也不会并发串台
+        fd, step_log_path = tempfile.mkstemp(prefix="uitest_steps_", suffix=".jsonl")
+        os.close(fd)
+        env = {**os.environ, "UITEST_STEP_LOG": step_log_path}
+
+        try:
+            result = subprocess.run(
+                [node, str(self.node_script)],
+                cwd=str(self.node_script.parent),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+            )
+
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print(result.stderr)
+
+            # 先出报告再判成败：失败时恰恰更需要看到步骤明细
+            entries = _read_step_log(step_log_path)
+            _print_step_summary(entries)
+            _attach_to_allure(entries, self.node_script.name)
+
+            if result.returncode != 0:
+                raise JsTestFailure(
+                    f"node 执行失败(exit={result.returncode}): {self.node_script.name}"
+                )
+        finally:
+            try:
+                os.remove(step_log_path)
+            except OSError:
+                pass
 
     def repr_failure(self, excinfo, outerr=None):
         if isinstance(excinfo.value, JsTestFailure):

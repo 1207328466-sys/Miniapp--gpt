@@ -16,6 +16,7 @@
 const fs = require("fs");
 const path = require("path");
 const { _android: android } = require("playwright");
+const { createStepLogger } = require("./step_log");
 
 // 设备序列号没有默认值 —— 它必须来自"显式指定 / 环境变量 / 唯一连接的设备"，
 // 见 pickDevice 的说明（写死一个序列号在换机器时必挂，而且会静默连错设备）。
@@ -124,6 +125,55 @@ function appIdOf(url) {
 }
 
 /**
+ * 创建"用例上下文"：给同一用例里的所有步骤共享数据用。
+ *
+ * 【为什么需要它】
+ * 步骤之间经常要传数据，最典型的是"上一步从页面上取到的值，下一步拿来断言"。
+ * 之前没有这个能力，用例只能把值挂在函数属性上（`stepClickFirstColumn.firstName = ...`），
+ * 那是拿函数对象当全局变量用 —— 名字一旦改了、函数被包装了，就会静默失效。
+ *
+ * 【作用域】每次 appTest 调用创建一个新 ctx。
+ * 这一点是刻意与"参考框架"不同的：那边把提取到的数据放在**类属性**里，
+ * 用例之间会互相污染（多进程下更危险）。这里保证每个用例一份，用完即弃。
+ *
+ * @param {Object} [initial] 初始数据
+ * @returns {{data: Object, set: Function, get: Function, has: Function, require: Function, snapshot: Function}}
+ */
+function createCaseContext(initial = {}) {
+  const data = { ...initial };
+  return {
+    data,
+    set(key, value) {
+      data[key] = value;
+      return value;
+    },
+    get(key) {
+      return data[key];
+    },
+    has(key) {
+      return Object.prototype.hasOwnProperty.call(data, key);
+    },
+    /**
+     * 取一个**必须存在**的值：缺失时立刻报错。
+     * 缺数据时返回 undefined，会让错误在几步之后以"元素找不到"的形式炸出来，
+     * 那时的报错完全看不出根因 —— 与其那样，不如在这里点明。
+     */
+    require(key) {
+      if (!Object.prototype.hasOwnProperty.call(data, key)) {
+        throw new Error(
+          `上下文里没有 "${key}"。它应该由前面的某个步骤 ctx.set("${key}", ...) 写入；` +
+            `当前已有的键：${JSON.stringify(Object.keys(data))}`
+        );
+      }
+      return data[key];
+    },
+    snapshot() {
+      return { ...data };
+    },
+  };
+}
+
+/**
  * 注入页面执行的探针：能否在超时内等到一帧动画。
  *
  * 后台页对应的原生 WebView 已被系统挂起，渲染线程不再产出帧，
@@ -182,17 +232,21 @@ function getCaller() {
  * @param {string|null} photoPath 截图保存路径，为空则不截图
  * @param {{fileName: string, funcName: string}} caller 调用者信息（用于截图目录命名）
  * @param {import('playwright').AndroidDevice|null} device 设备对象，用于截图失败时回退到 adb screencap
- * @param {{resolveForeground?: boolean}} [options] resolveForeground: 是否在每步开始前把
- *        page 换成当前真正的前台页（默认 true）
+ * @param {{resolveForeground?: boolean, stepLog?: Object|null, ctx?: Object|null}} [options]
+ *        resolveForeground: 是否在每步开始前把 page 换成当前真正的前台页（默认 true）
+ *        stepLog: 结构化步骤日志写入器（见 common/step_log.js）
+ *        ctx: 用例上下文（见 createCaseContext），会作为第 3 个参数传给每个步骤
  * @returns {Promise<import('playwright').Page>} page
  */
 async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { fileName: "app", funcName: "unknown" }, device = null, options = {}) {
-  const { resolveForeground = true } = options;
+  const { resolveForeground = true, stepLog = null, ctx = null } = options;
   let savedError = null;
   const totalStart = Date.now();
   const stepTimes = [];
+  let stepIndex = 0;
 
   for (const [func, kwargs] of testSubFunctions) {
+    stepIndex += 1;
     log.info(`正在执行${func.name}步骤`);
 
     // 【关键】每步开始前把 page 换成"当前真正显示在屏幕上的前台页"。
@@ -213,11 +267,14 @@ async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { 
 
     const stepStart = Date.now();
     let stepDuration = 0;
+    let curPhotoPath = null;
     try {
+      // 第 3 个参数是共享上下文。注意无参分支要显式传 undefined 而不是 null ——
+      // 很多步骤写成 `(page, { x = 1 } = {})`，传 null 会触发解构报错，传 undefined 才走默认值。
       if (kwargs) {
-        page = await func(page, kwargs);
+        page = await func(page, kwargs, ctx);
       } else {
-        page = await func(page);
+        page = await func(page, undefined, ctx);
       }
     } catch (e) {
       savedError = e;
@@ -226,7 +283,7 @@ async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { 
       // 记录步骤结束时间并计算执行时间
       stepDuration = (Date.now() - stepStart) / 1000;
       if (photoPath) {
-        const curPhotoPath = path.join(
+        curPhotoPath = path.join(
           photoPath,
           `${caller.fileName}_${caller.funcName}`,
           `_${func.name}_${timestamp()}.png`
@@ -253,6 +310,20 @@ async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { 
         }
       }
       stepTimes.push([func.name, stepDuration]);
+
+      // 结构化日志：一行一步，供 conftest 还原成报告层次。
+      // 必须在 throw 之前写，否则失败的这一步会缺失。
+      if (stepLog) {
+        stepLog.step({
+          num: stepIndex,
+          name: func.name,
+          status: savedError ? "failed" : "passed",
+          duration: stepDuration,
+          screenshot: curPhotoPath,
+          error: savedError ? savedError.message : null,
+        });
+      }
+
       if (savedError) {
         throw savedError;
       }
@@ -533,16 +604,38 @@ async function getWxWebviewPage(device = null, options = {}) {
  * @param {string|null} [options.photosPath] 截图存放路径
  * @param {number} [options.webviewTimeout] 等待 webview 出现的超时（毫秒），默认 40000
  * @param {boolean} [options.closeOnFinish] 结束后是否关闭设备连接，默认 true
- * @returns {Promise<{device: import('playwright').AndroidDevice, page: import('playwright').Page}>}
+ * @param {{feature?: string, story?: string, title?: string}} [options.meta] 用例元数据，
+ *        用于报告分组；省略时按用例文件名推导
+ * @param {Object} [options.context] 用例上下文的初始数据
+ * @param {string} [options.stepLogPath] 步骤日志路径；默认取环境变量 UITEST_STEP_LOG
+ * @returns {Promise<{device: import('playwright').AndroidDevice, page: import('playwright').Page, ctx: Object}>}
  */
 async function appTest(testSubFunctions, options = {}) {
-  const { deviceSerial, photosPath = null, closeOnFinish = true } = options;
+  const { deviceSerial, photosPath = null, closeOnFinish = true, meta = null, context = null } = options;
   // 这三个参数以前"解构出来了却从没用过"：deviceSerial 被硬编码序列号盖掉，
   // pkg / webviewTimeout 则完全没传下去。现在统一走解析函数，真的生效。
   const webviewOptions = resolveWebviewOptions(options);
 
+  // 用例上下文：每个用例一份，不跨用例共享可变状态
+  const ctx = createCaseContext(context);
+
+  // 结构化步骤日志：路径由 Python 侧经环境变量指定（见 common/step_log.js 的说明）
+  const casePath = process.argv[1] || "";
+  const stepLog = createStepLogger({
+    filePath: options.stepLogPath || process.env.UITEST_STEP_LOG || null,
+    caseFile: casePath ? path.basename(casePath) : null,
+    meta,
+  });
+
   let device = null;
+  let failure = null;
   try {
+    stepLog.case({
+      // 缺省分组：用例所在目录名 / 文件名去掉 test_ 前缀，至少让报告有层次可看
+      feature: casePath ? path.basename(path.dirname(casePath)) : null,
+      story: casePath ? path.basename(casePath).replace(/\.js$/, "").replace(/^test_/, "") : null,
+    });
+
     // 【官方API：android.devices】连接安卓设备，adb必须已经识别设备
     const devices = await android.devices();
     device = pickDevice(devices, deviceSerial);
@@ -550,12 +643,15 @@ async function appTest(testSubFunctions, options = {}) {
     // 等待微信小程序 WebView 并获取 Page
     let page = await getWxWebviewPage(device, webviewOptions);
     const caller = getCaller();
-    page = await runAppSteps(page, testSubFunctions, photosPath, caller, device);
-    return { device, page };
+    page = await runAppSteps(page, testSubFunctions, photosPath, caller, device, { stepLog, ctx });
+    return { device, page, ctx };
   } catch (e) {
+    failure = e;
     log.error(`异常：${e.message}`);
     throw e;
   } finally {
+    // 无论成功失败都写总结行（含上下文快照）—— 失败时的数据状态是复现问题的关键
+    stepLog.finish({ context: ctx.snapshot(), error: failure ? failure.message : null });
     if (closeOnFinish && device) {
       await device.close();
       log.info("设备连接关闭");
@@ -572,6 +668,7 @@ module.exports = {
   appIdOf,
   pickDevice,
   resolveWebviewOptions,
+  createCaseContext,
   DEFAULT_WX_PKG,
   DEFAULT_WEBVIEW_TIMEOUT,
 };

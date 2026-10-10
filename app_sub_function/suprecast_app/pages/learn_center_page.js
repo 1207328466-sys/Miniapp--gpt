@@ -185,8 +185,13 @@ async function ensureOnColumnList(page, { maxAttempts = 4, waitAfterTab = 2500 }
 /**
  * 点第一张专栏卡片进入详情页，并确认真的进去了。
  * 点击后**必须重新解析前台页**：卡片点击会新建 page，旧 page 会冻结。
+ *
+ * @param {import('playwright').Page} page
+ * @param {{timeout?: number, waitAfterTap?: number}} [options]
+ * @param {Object|null} [ctx] 用例上下文；传入时会把第一张卡片的名称存成
+ *        `firstColumnName`，供后续步骤断言"点进去的确实是同一个专栏"
  */
-async function openFirstColumn(page, { timeout = 12000, waitAfterTap = 3000 } = {}) {
+async function openFirstColumn(page, { timeout = 12000, waitAfterTap = 3000 } = {}, ctx = null) {
   page = await base.foreground(page);
 
   const count = await columnCardCount(page);
@@ -199,6 +204,10 @@ async function openFirstColumn(page, { timeout = 12000, waitAfterTap = 3000 } = 
 
   const name = await firstColumnName(page);
   console.log(`  当前共 ${count} 张卡片，第一张是「${name}」`);
+  // 把"点的是哪一个"记进上下文：后面才能断言详情页就是这一个，
+  // 而不是只断言"进了某个详情页"（后者在点错卡片时照样会通过）。
+  if (ctx) ctx.set("firstColumnName", name);
+
   await base.tapSelector(page, SEL.columnCard, "第一张专栏卡片");
   await base.sleep(waitAfterTap);
 

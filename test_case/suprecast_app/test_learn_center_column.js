@@ -46,6 +46,7 @@ const pages = require("../../app_sub_function/suprecast_app/pages");
 
 const learnCenter = pages.learnCenter;
 const columnDetail = pages.columnDetail;
+const base = pages.base;
 
 const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
 
@@ -73,11 +74,38 @@ const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
     [assertSelectorCount, { selector: columnDetail.SEL.title, expected: 1 }],
     [assertTextNotVisible, { text: learnCenter.MARKER_COLUMN_LIST }],
 
+    // 断言：进的就是刚才点的那一个专栏（用步骤间共享上下文传数据）
+    // 只断言"进了详情页"是不够的 —— 点错卡片、或者列表顺序变了，那样仍然会通过。
+    [
+      async function assertDetailIsTheSameColumn(page, kwargs, ctx) {
+        const fg = await base.foreground(page);
+        // ctx.require 在缺数据时立刻报错：否则会退化成"拿 undefined 去 includes"，
+        // 报错信息完全看不出根因
+        const expected = ctx.require("firstColumnName");
+        const text = await base.pageText(fg);
+        if (!text.includes(expected)) {
+          throw new Error(
+            `详情页里没有出现列表页第一张卡片的名称「${expected}」。\n` +
+              `  可能是点错了卡片，或者列表顺序变了。\n` +
+              `  当前页面前 200 字: ${JSON.stringify(text.slice(0, 200))}`
+          );
+        }
+        console.log(`断言通过: 详情页标题包含第一张卡片名称「${expected}」`);
+        return fg;
+      },
+      null,
+    ],
+
     // 附加：打印详情页结构，便于后续写更多断言
     [dumpElements, { tag: ["wx-view", "wx-text"] }],
   ];
 
-  await appTest(funcList, { photosPath });
+  await appTest(funcList, {
+    photosPath,
+    // 用例元数据：决定报告里的 feature / story / title 分组。
+    // 不传也能跑（会按文件名推导），但传了报告才真的可读。
+    meta: { feature: "学习中心", story: "专栏列表", title: "点击第一张专栏进入详情页" },
+  });
 
   console.log("\n" + "=".repeat(60));
   console.log("test_learn_center_column.js 执行完成（全部步骤通过）");

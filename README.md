@@ -84,6 +84,16 @@ collected 1 item
 
 ### 第 5 步：真正执行
 
+推荐用统一入口 —— 它会自己切到 `test_case`，避免"在错误目录下跑导致一条用例都收集不到"（踩坑记录坑 5）：
+
+```powershell
+python run.py                       # 跑全部用例 + 生成 Allure HTML 报告
+python run.py -k 专栏                # 其余参数原样透传给 pytest
+python run.py suprecast_app/test_example.js
+```
+
+也可以照旧手动跑（**必须在 `test_case` 目录下**）：
+
 ```powershell
 cd test_case
 python -m pytest -v
@@ -91,9 +101,23 @@ python -m pytest -v
 
 ### 第 6 步：看结果
 
-- **控制台**：pytest 会把 JS 里的 `console.log` 打印出来
+- **控制台步骤明细**：每条用例跑完会打印一张紧凑的步骤表 —— 状态、耗时、截图路径一目了然，
+  失败的那一步直接给出错误首行，不用再去翻日志或按时间戳找截图：
+
+  ```
+  --- 步骤明细 ---
+    [OK  ] 1. ensureOnColumnList  5.21s
+    [FAIL] 2. openFirstColumn  5.64s
+            错误: 点击第一张专栏卡片后没有进入详情页...
+            截图: report\photo_app\...\_openFirstColumn_1010_121256.png
+    合计 5 步：通过 4，失败 1，总耗时 33.2s
+    上下文: {"firstColumnName": "N1-预热期专栏"}
+  ```
+
 - **截图**：`report/photo_app/{用例文件}_{用例函数}/_{步骤名}_{时间戳}.png`
-- **HTML 报告**：`pytest.ini` 里配了 `--self-contained-html`，加 `--html=report/result.html` 可生成单文件报告
+- **Allure 报告**：`run.py` 生成 `report/allure-report/index.html`，按
+  `feature -> story -> 步骤` 分层，失败步骤附带错误信息与截图
+- **日志文件**：`report/log/pytest.log`
 
 ---
 
@@ -591,6 +615,22 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 > ⚠️ **仍未覆盖**：提交搜索与结果页校验（结果页结构还没实测，不凭猜测写断言）。
 > ⚠️ **中文限制**：`adb input text` 不支持中文，`typeKeyword` 会主动拒绝非 ASCII 关键词。
 
+### 已修复 · 第七轮（4 项，借鉴 Web 框架后补齐工程化）
+
+这一轮的四个改动来源是 `webzdh4.7`（同事的 Web UI 框架）——它用 Selenium + Excel 数据驱动，
+有几处工程化做得比我们好，借过来补齐：
+
+| # | 缺陷 | 修复要点 |
+|---|---|---|
+| 17 | 只有控制台日志，没有步骤级报告；失败要人肉按时间戳翻截图 | 新增 `common/step_log.js`（JSONL）+ `conftest.py` 还原：控制台步骤明细、Allure `feature -> story -> step` 分层、失败步骤附错误与截图 |
+| 18 | **步骤之间没法传数据** | 新增 `createCaseContext()`：上下文作为第 3 个参数传给每个步骤，`ctx.set/get/require`；**每个用例一份**（不学对方用类属性共享，那会跨用例污染） |
+| 19 | 必须在 `test_case` 下跑 pytest（踩坑记录坑 5 的根源）；没有任何日志配置 | 新增 `run.py` 统一入口；`pytest.ini` 补 `log_file` + `log_cli` |
+| 20 | JS 用例失败在 Allure 里显示成 **broken**（像是环境故障） | `JsTestFailure` 改为继承 `AssertionError`，报告里正确显示为 **failed** |
+
+> 同轮还顺手改掉 `pytest.ini` 里一处注释与配置不符（注释写"重试2次/间隔1秒"，
+> 实际是 `reruns=1`/`reruns_delay=10`），并加了一句提醒：UI 用例的重试会重复点击，
+> 可能把偶发失败变成状态污染。
+
 ### P0 · 仍待修
 
 无。
@@ -636,14 +676,16 @@ miniapp_test_case/
 ├── .gitattributes                   # 换行符锁定为 LF
 ├── package.json                     # Node 依赖（只有 playwright）
 ├── requirements.txt                 # Python 依赖
+├── run.py                           # ★ 一键运行入口（切到 test_case + pytest + Allure 报告）
 ├── docs/
 │   ├── 框架导读.md                   # 深度导读（设计原理、执行链路、自测题）
 │   ├── android-js-逐行详解.md        # android.js 700 行逐段讲解
 │   ├── 框架能力与问题账本.md          # 实测能力清单 + 7 个根因的定位与修复证据
 │   └── 踩坑记录.md                   # 12 条实战踩坑记录
 ├── common/
-│   ├── __init__.py                  # ⚠️ 导入不存在的模块，待修
-│   ├── app_common.js                # ★ 驱动层核心
+│   ├── __init__.py                  # Python 侧导出（只导出确实存在的模块）
+│   ├── app_common.js                # ★ 驱动层核心：连设备、抓 WebView、跑步骤、上下文、截图
+│   ├── step_log.js                  # ★ 结构化步骤日志（JSONL），供 pytest 侧还原成报告
 │   └── share/
 │       ├── base_config.py           # 配置基础类（单例 + 懒加载 + 热重载）
 │       ├── base_log.py              # 日志基础类（单例 + 双通道 + 按天轮转）
