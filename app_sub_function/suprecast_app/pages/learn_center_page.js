@@ -33,6 +33,9 @@ const SEL = {
   headerTabBar: ".course-header-tabs",
   columnCard: ".column-card",
   columnCardName: ".column-card-name",
+  // 课程卡片的外壳（实测 2026/10/12：wx-view.rounded-_32px_.overflow-hidden，319x198；
+  // 信息块在里面是 wx-view.p-4，文字形如「免费课程 26人已学习 15课程评价 ¥0」）
+  courseCard: '[class*="rounded-_32px_"]',
 };
 
 const TOP_TAB = { course: "课程", column: "专栏", encyclopedia: "压铸百科" };
@@ -218,6 +221,133 @@ async function openFirstColumn(page, { timeout = 12000, waitAfterTap = 3000 } = 
   return base.foreground(page);
 }
 
+/**
+ * **纯函数**：把课程卡片上的动态前缀剥掉，剩下的开头就是课程名。
+ *
+ * 卡片文字形如（实测）：
+ *   「免费课程 26 人已学习 15 课程评价 ¥0」
+ *   「已购买(学习进度 0%) 717 13人已学习 1课程评价 ¥1」
+ *   「0 免费课程 26 人已学习 15 课程评价 ¥0」   ← 前面还挂着一个纯数字角标
+ * 所以要依次剥掉：已购买(学习进度 N%) → 纯数字前缀。
+ *
+ * ⚠️ 剥"纯数字前缀"要小心：课程名本身可能是数字（库里就有叫「18」的课）。
+ * 所以调用方**两个变体都要试**（剥过的 + 没剥的），见 test_from_table.js 的那个动作。
+ */
+function stripCourseCardPrefix(text) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .replace(/^\s*已购买\s*[（(]\s*学习进度\s*\d+\s*%\s*[）)]\s*/, "")
+    .trim();
+}
+
+/**
+ * **纯函数**：一张课程卡能给出的所有"名字候选"。
+ *
+ * 卡片文字里有两类动态前缀：
+ *   · 「已购买(学习进度 0%)」—— 直接剥掉；
+ *   · 一个**纯数字角标**（实测形如「0 免费课程 26人已学习」）—— 这个要**谨慎**剥：
+ *     课程名本身可能是纯数字（库里就有一门叫「18」的课），盲目剥会把名字吃掉。
+ *     判据：剥完之后，剩下的文字还得能看出"名字 + N人已学习"的形态（名字不是纯数字）—— 才认这个剥法。
+ *
+ * 第一版就是盲目剥数字，离线自检当场抓到：`已购买(学习进度 0%) 717 13人已学习` 被剥成
+ * 「13 人已学习」，「717」这个课程名没了。
+ */
+function cardVariants(text) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  const noBuy = stripCourseCardPrefix(raw);
+  const out = [raw, noBuy];
+
+  const stripped = noBuy.replace(/^\d+\s+/, "").trim();
+  const m = stripped.match(/^(.+?)\s+\d+\s*人已学习/);
+  if (stripped !== noBuy && m && m[1].trim() && !/^\d+$/.test(m[1].trim())) {
+    out.push(stripped);
+  }
+  return Array.from(new Set(out.filter(Boolean)));
+}
+
+/**
+ * **纯函数**：在一堆课程卡片里，找出"库里 0 课时的课程名"有没有出现（对账用）。
+ *
+ * 为什么不用"整页文字里 includes(名字)"：**会被前缀骗**。
+ * 库里既有「付费课程1」也有「付费课程10」—— 只做子串匹配的话，
+ * 列表里出现「付费课程10」就会被误判成"0 课时的「付费课程1」显示了"，报一条假失败。
+ * 所以这里要求：**名字后面得是空白**（卡片文字形如「付费课程10 3人已学习 …」），
+ * 并且"剥过前缀的"和"原文"两个版本都试（课程名本身可能是纯数字，库里就有一门叫「18」的课）。
+ *
+ * @param {Array<{text:string, name:string}>} cards 小程序列表里读到的卡片
+ * @param {string[]} dbNames 库里 0 课时的课程名
+ * @returns {string[]} 真出现了的名字（空数组 = 全部符合需求）
+ */
+function findZeroLessonShown(cards, dbNames) {
+  const hits = [];
+  for (const name of new Set(dbNames || [])) {
+    const n = String(name || "").trim();
+    if (!n) continue;
+    const found = (cards || []).some((c) => {
+      const variants = cardVariants((c && c.text) || "");
+      return variants.some((v) => v === n || v.startsWith(n + " "));
+    });
+    if (found) hits.push(n);
+  }
+  return hits;
+}
+
+/**
+ * 把「课程」tab 里的课程**逐张**读出来（只读）：边往下滚边收集，滚到底或连着几次没新增就停。
+ *
+ * @returns {Promise<Array<{text:string, name:string}>>} text = 卡片原文（规范化后），name = 剥掉前缀的版本
+ */
+async function readCourseList(page, { maxScrolls = 12 } = {}) {
+  const collected = [];
+  const seen = new Set();
+
+  const collectOnce = async () => {
+    const fg = await base.foreground(page);
+    const cards = await fg.evaluate(
+      (sel) => {
+        const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+        const out = [];
+        for (const el of Array.from(document.querySelectorAll(sel))) {
+          const r = el.getBoundingClientRect();
+          // 只要课程卡那个尺寸段（实测 319x198；放宽到 100~400 高，避开整页容器）
+          if (r.width < 200 || r.height < 100 || r.height > 400) continue;
+          const t = norm(el.innerText);
+          if (!/人已学习/.test(t)) continue; // 课程卡的标志：有「N人已学习」
+          out.push(t.slice(0, 80));
+        }
+        return out;
+      },
+      SEL.courseCard
+    );
+    let added = 0;
+    cards.forEach((t) => {
+      if (seen.has(t)) return;
+      seen.add(t);
+      collected.push({ text: t, name: stripCourseCardPrefix(t) });
+      added += 1;
+    });
+    return { total: cards.length, added };
+  };
+
+  let last = await collectOnce();
+  for (let i = 1; i <= maxScrolls; i++) {
+    // 滚一屏（列表在 wx-scroll-view 里，用真实滑动最稳）
+    page = await require("../android").swipeUp(page);
+    await base.sleep(900);
+    last = await collectOnce();
+    const text = await base.pageText(await base.foreground(page));
+    if (/已经到底了|没有更多/.test(text)) {
+      console.log(`  课程列表已经到底（第 ${i} 次滑动后），共收集 ${collected.length} 张卡片`);
+      break;
+    }
+    if (last.added === 0 && i >= 2) {
+      console.log(`  连着两次滑动都没有新增卡片（第 ${i} 次），认为到底了，共 ${collected.length} 张`);
+      break;
+    }
+  }
+  return collected;
+}
+
 module.exports = {
   SEL,
   TOP_TAB,
@@ -232,4 +362,8 @@ module.exports = {
   firstColumnName,
   ensureOnColumnList,
   openFirstColumn,
+  readCourseList,
+  stripCourseCardPrefix,
+  cardVariants,
+  findZeroLessonShown,
 };

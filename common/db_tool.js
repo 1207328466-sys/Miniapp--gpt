@@ -19,6 +19,7 @@ const { execFileSync } = require("child_process");
 const TOOLS = {
   cleanup: path.join(__dirname, "..", "tools", "quiz_data_cleanup.py"),
   caseCopy: path.join(__dirname, "..", "tools", "case_copy_reset.py"),
+  courseList: path.join(__dirname, "..", "tools", "course_list_report.py"),
 };
 
 const CLEANUP_TOOL = TOOLS.cleanup;

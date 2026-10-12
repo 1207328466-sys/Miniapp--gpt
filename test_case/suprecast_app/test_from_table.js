@@ -30,7 +30,7 @@
 const fs = require("fs");
 const path = require("path");
 const { appTest } = require("../../common/app_common");
-const { runDbTool, writeSwitchOn, writeSwitchOffError } = require("../../common/db_tool");
+const { runTool, runDbTool, writeSwitchOn, writeSwitchOffError } = require("../../common/db_tool");
 const android = require("../../app_sub_function/suprecast_app/android");
 const pages = require("../../app_sub_function/suprecast_app/pages");
 const caseCopy = require("../../app_sub_function/suprecast_app/case_copy");
@@ -383,6 +383,57 @@ const HANDLERS = {
 
   检查课程详情页符合需求: {
     run: (page, expectActiveTab, _p2, ctx) => courseDetail.assertRules(page, { expectActiveTab }, ctx),
+  },
+
+  /**
+   * 需求 713367615 第 1 条：「管理后台的课程下的课时数为 0 时，小程序端不显示该课程」。
+   *
+   * 这条**必须跟数据库对账**：界面上本来就看不到它们，光看界面证明不了什么 ——
+   * 得先去库里把"0 课时的课程名单"拿出来，再确认这些名字一个都没出现在小程序课程列表里。
+   * 只读（SELECT + 读界面文字），不需要写开关。
+   */
+  检查课时数为0的课程不显示: {
+    run: async (page, _p1, _p2, ctx) => {
+      // 1) 库里的名单（工具会把名单放在 [COURSE] ... names=[...] 这一行）
+      const out = runTool("courseList", []);
+      const m = out.match(/\[COURSE\][^\n]*names=(\[.*\])/);
+      if (!m) throw new Error(`读不到"0 课时课程"名单（工具输出里没有 [COURSE] ... names=[]）。\n  输出末尾：${out.trim().slice(-200)}`);
+      let dbNames = [];
+      try {
+        dbNames = JSON.parse(m[1]);
+      } catch (e) {
+        throw new Error(`名单 JSON 解析失败：${e.message}；原文：${m[1].slice(0, 200)}`);
+      }
+      console.log(`  库里 0 课时的公开课程：${dbNames.length} 门（去重后 ${new Set(dbNames).size} 个名字）`);
+      if (!dbNames.length) {
+        throw new Error("库里一门 0 课时的课程都没有 —— 这条断言就无从谈起（数据换形态了，别当通过）");
+      }
+
+      // 2) 小程序课程列表（边滚边读）
+      page = await learnCenter.ensureOnColumnList(page);
+      page = await learnCenter.switchToTopTab(page, { tab: "课程" });
+      const cards = await learnCenter.readCourseList(page);
+      console.log(`  小程序课程列表里读到 ${cards.length} 张课程卡`);
+      if (!cards.length) throw new Error("小程序课程列表一张卡都没读到 —— 断言没法做（不是通过）");
+
+      // 3) 对账：名单里的每个名字，都不该在小程序里出现
+      //（匹配逻辑抽成纯函数 findZeroLessonShown，另有离线自检钉住它 —— 见 selftest_course_zero_lesson_match.js）
+      const hits = learnCenter.findZeroLessonShown(cards, dbNames);
+      if (hits.length) {
+        throw new Error(
+          `下面这些课程在库里是 0 课时，但小程序课程列表里**出现了**：${JSON.stringify(hits)}\n` +
+            `  需求 713367615 原文：管理后台的课程下的课时数为 0 时，小程序端不显示该课程。`
+        );
+      }
+      console.log(
+        `断言通过: 库里 ${new Set(dbNames).size} 个"0 课时"课程名，一个都没出现在小程序课程列表（${cards.length} 张卡）里`
+      );
+      if (ctx) {
+        ctx.set("courseZeroLessonNames", new Set(dbNames).size);
+        ctx.set("courseCardsSeen", cards.length);
+      }
+      return page;
+    },
   },
 };
 
