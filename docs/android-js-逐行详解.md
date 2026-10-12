@@ -59,6 +59,26 @@ indPageWith / login / clickElementById / clickElementByText / inputText /
 > ssertElementExists / switchToWxWebview / clickWxText；其中后两个实现与其他函数重复），
 > 本文对应章节与速查表行也一并移除 —— 留下的都是现在真在用的。
 
+
+## 目录
+
+> 长文档，先看这里定位；Ctrl+F 搜小节名更快。
+
+- 第 0 节：先建立整体认知
+- 第 1 节：文件头与依赖（1-29 行）
+- 第 2 节：设备懒加载（30-62 行：`getDevice`）
+- 第 3 节：真实 adb 点击（63-317 行：`findClickableAncestor` + `tapElement`）★核心原理【已重构】
+- 第 5 节：切换到用户中心（318-336 行：`switchToUserCenter`）【已重构】
+- 第 6 节：前台页面探测（337-359 行：`getForegroundPage`）★核心原理
+- 第 8 节：等软键盘（360-386 行：`waitImeShown`）★核心原理
+- 第 9 节：打开搜索页（387-433 行：`focusSearchInput`）★历史实现，见下面说明
+- 第 10 节：通用操作与断言（590-677 行：`swipeUp` 等）【均已重构】
+- 第 11 节：返回上一页（678-759 行：`goBack`）
+- 第 14 节：输出页面结构（760-795 行：`dumpElements`）★调试利器
+- 第 15 节：导出清单（796-811 行：`module.exports`）
+- 附：全文 17 个函数速查表（行号按 811 行版本校准）
+- 附：本文件问题清单（状态已更新至 2026/10/10）
+
 ## 第 0 节：先建立整体认知
 
 这个文件里有 **18 个函数**，按用途分四类：
@@ -510,7 +530,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 10 节：通用操作与断言（590-677 行：`clickElementById` 起、`swipeUp` 止）【均已重构】
+## 第 10 节：通用操作与断言（590-677 行：`swipeUp` 等）【均已重构】
 
 这五个函数结构高度相似，掌握了规律就能快速看懂。
 
@@ -685,7 +705,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 附：全文 24 个函数速查表（行号已按 939 行版本校准）
+## 附：全文 17 个函数速查表（行号按 811 行版本校准）
 
 | 行号 | 函数 | 参数 | 用途 | 导出 |
 |---|---|---|---|---|
