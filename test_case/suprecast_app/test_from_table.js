@@ -41,6 +41,7 @@ const quizPage = pages.quizPage;
 const userCenter = pages.userCenter;
 const pointsMall = pages.pointsMall;
 const postDetail = pages.postDetail;
+const caseLibrary = pages.caseLibrary;
 
 const TABLE_JSON = path.join(__dirname, "..", "..", "cases", "用例表.json");
 const TABLE_XLSX = path.join(__dirname, "..", "..", "cases", "用例表.xlsx");
@@ -331,6 +332,17 @@ const HANDLERS = {
       console.log(`断言通过: 活动「${activityName}」的提交记录 = ${actual} 条`);
       return page;
     },
+  },
+
+  /* ---------- 2026/10/12 追加：案例库（需求 713381608）---------- */
+
+  打开案例库: {
+    // 入口就是底部 tab「设计专区」（2026/10/12 才找到；之前试过的两条路都是死路，见页面对象注释）
+    run: (page) => caseLibrary.ensureOn(page),
+  },
+
+  检查案例库列表符合需求: {
+    run: (page, _p1, _p2, ctx) => caseLibrary.assertListRules(page, {}, ctx),
   },
 };
 

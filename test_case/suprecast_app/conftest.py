@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -267,7 +268,13 @@ class JsTestItem(pytest.Item):
             # ⚠️ 注意：skip 必须**可见且可计数**。pytest 会把 SKIPPED 单独统计并打印原因，
             # Allure 也标 skipped —— 若某次运行里 skip 数量异常增多，那是信号，不是"全绿"。
             if result.returncode == SKIP_EXIT_CODE:
-                reason = self._precondition_reason(result.stdout) or f"前置条件不满足：{self.node_script.name}"
+                # ⚠️ 必须 **stdout + stderr 一起找**：JS 侧的 `[PRECONDITION]` 是用
+                # `console.error` 打的（走 stderr），第一版只读了 stdout —— 于是每次都退回到
+                # 兜底文案「前置条件不满足：xxx.js」，把"为什么跳过"这个最有用的信息丢了。
+                reason = (
+                    self._precondition_reason((result.stdout or "") + "\n" + (result.stderr or ""))
+                    or f"前置条件不满足：{self.node_script.name}"
+                )
                 pytest.skip(reason)
 
             if result.returncode != 0:
@@ -324,3 +331,111 @@ def pytest_collect_file(file_path, parent):
     if file_path.suffix == ".js" and file_path.name.startswith("test_"):
         return JsTestFile.from_parent(parent, path=file_path)
     return None
+
+
+# ============================================================================
+# 跑完给一份**中文摘要**（给"不想开 Allure、只想看结果"的人）
+# ============================================================================
+#
+# 【为什么要它】Allure 报告好看，但要 Java + allure CLI + 浏览器，而且还得知道点哪。
+# 零基础的同事跑完真正想知道的是三句话：**过了几条、哪条红了、为什么红**。
+# 于是每次跑完都在 report/结果摘要.md 落一份，并在控制台把"红的和跳过的"直接打出来
+# （全绿的用例不用列 —— 21 行里找那 1 行红的，是负担）。
+#
+# 【纪律：摘要必须是**从真实结果生成**的，不许自己编】
+# 数据来源是 pytest 自己的 report 对象（runtest_logreport），不是我们另外判断一遍。
+# 另外：**没有产生的报告不写** —— 宁可不生成文件，也不给一份"看起来全绿"的假摘要。
+
+_OUTCOMES = {}  # nodeid -> {"outcome", "when", "duration", "reason"}
+
+
+def _display_name(nodeid):
+    """把 `suprecast_app/test_from_table.js::活动入口_001 首页活动入口…` 取成后半截给人看"""
+    return nodeid.split("::")[-1] if "::" in nodeid else Path(nodeid).name
+
+
+def _reason_of(report):
+    """从 pytest 的 report 里抠出**人话原因**。
+
+    踩过的坑：`pytest.skip(reason)` 的 longrepr 在"跳过"时是个三元组
+    `(文件, 行号, 'Skipped: 原因')`，直接 `str()` 出来给用户看就是一坨元组，
+    所以跳过要取第三项并去掉 `Skipped: ` 前缀；失败则优先找我们自己的那句
+    `node 执行失败(...)`（比一整段 traceback 有用）。
+    """
+    if report.skipped:
+        lr = report.longrepr
+        text = str(lr[2]) if isinstance(lr, tuple) and len(lr) >= 3 else (getattr(report, "longreprtext", "") or "")
+        return text.replace("Skipped: ", "").strip()
+
+    lines = [l.strip() for l in (getattr(report, "longreprtext", "") or "").splitlines() if l.strip()]
+    for l in lines:
+        if "node 执行失败" in l:
+            return l
+    return lines[-1] if lines else ""
+
+
+def pytest_runtest_logreport(report):
+    """把每条用例的结果攒起来（pytest 自己产出的 report，不另做判断）"""
+    rec = _OUTCOMES.setdefault(report.nodeid, {"outcome": "passed", "duration": 0.0, "reason": ""})
+    rec["duration"] += report.duration or 0.0
+    # 三个阶段都看：setup（前置条件跳过就在这）／call／teardown（收尾炸了也算）
+    if report.failed:
+        rec["outcome"] = "failed"
+        rec["reason"] = _reason_of(report)
+    elif report.skipped and rec["outcome"] != "failed":
+        rec["outcome"] = "skipped"
+        rec["reason"] = _reason_of(report)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """跑完写摘要文件 + 在控制台打印"红的和跳过的"（全绿时只说一句全绿）"""
+    if not _OUTCOMES:
+        return  # 一条都没跑（例如 --collect-only）：不产出摘要，免得给人错觉
+
+    passed = [n for n, r in _OUTCOMES.items() if r["outcome"] == "passed"]
+    failed = [(n, r) for n, r in _OUTCOMES.items() if r["outcome"] == "failed"]
+    skipped = [(n, r) for n, r in _OUTCOMES.items() if r["outcome"] == "skipped"]
+
+    out_dir = Path(__file__).resolve().parents[2] / "report"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_file = out_dir / "结果摘要.md"
+
+    lines = [
+        "# 本次测试结果（中文摘要）",
+        "",
+        "> 自动生成，别手改 —— 数据来自 pytest 每条用例的真实结果。",
+        "",
+        f"- 时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- 合计：**{len(_OUTCOMES)} 条**（通过 {len(passed)}，失败 {len(failed)}，跳过 {len(skipped)}）",
+        f"- 详细报告（带截图）：report/allure-report/index.html",
+        "",
+    ]
+    if failed:
+        lines += ["## ❌ 失败的（要看这几条）", ""]
+        for n, r in failed:
+            lines += [f"### {_display_name(n)}", "", f"- 原因：{r['reason'] or '(没拿到原因，去看控制台)'}", ""]
+    if skipped:
+        lines += ["## ⏭ 跳过的（= 这次没测，不算通过）", ""]
+        for n, r in skipped:
+            lines += [f"- **{_display_name(n)}**：{r['reason'] or '(没写原因)'}"]
+        lines += [""]
+    if passed:
+        lines += ["## ✅ 通过的", ""]
+        for n in passed:
+            lines += [f"- {_display_name(n)}（{_OUTCOMES[n]['duration']:.1f}s）"]
+        lines += [""]
+
+    out_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    bar = "=" * 62
+    emit("\n" + bar)
+    emit(f"本次结果：合计 {len(_OUTCOMES)} 条，通过 {len(passed)}，失败 {len(failed)}，跳过 {len(skipped)}")
+    for n, r in failed:
+        emit(f"  [红] {_display_name(n)}")
+        emit(f"       {r['reason'] or '(没拿到原因)'}")
+    for n, r in skipped:
+        emit(f"  [跳过] {_display_name(n)}：{r['reason'] or '(没写原因)'}")
+    if not failed and not skipped:
+        emit("  全绿：没有失败，也没有跳过。")
+    emit(f"中文摘要（可以直接发给同事）：report/结果摘要.md")
+    emit(bar)

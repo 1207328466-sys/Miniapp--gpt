@@ -151,6 +151,32 @@ async function findClickableAncestor(locator) {
 }
 
 /**
+ * 软键盘（输入法）开着吗？开着就先收起来。
+ *
+ * 【为什么需要】2026/10/12 真机踩到：手机停在搜索页、**软键盘弹着**（有人手动点过 / 上一步输过字），
+ * 这时「回到首页」去点底部 tab —— 坐标落在**键盘**上，adb 照样"执行成功"，页面一动不动，
+ * 最后报出「点击底部 tab 后没有进入有问必答页」，看着像导航坏了。
+ *
+ * ⚠️ 这一例**命中测试也救不了**：软键盘是**原生窗口**，不在页面 DOM 里，
+ * `document.elementFromPoint` 在那个坐标上照样返回页面元素（返回的是被键盘盖住的那个）。
+ * 只能到系统层问一句：`dumpsys input_method` 的 `mInputShown`。
+ *
+ * 收起用 `keyevent 111`（ESC）：它只收输入法、**不会返回上一页**（真机实测过）。
+ * 不用 keyevent 4（BACK）—— 那在部分页面上会真的返回，属于"用一个坑换另一个坑"。
+ *
+ * @param {import('playwright').AndroidDevice} device
+ * @returns {Promise<boolean>} 是否真的收过一次
+ */
+async function hideKeyboardIfShown(device) {
+  const out = await device.shell("dumpsys input_method").catch(() => "");
+  if (!/mInputShown=true|mIsInputViewShown=true/.test(String(out))) return false;
+  await device.shell("input keyevent 111");
+  await new Promise((r) => setTimeout(r, 600));
+  console.log("  [提示] 软键盘正开着（会盖住屏幕底部）—— 已先收起它再继续");
+  return true;
+}
+
+/**
  * 用真实 adb tap 点击元素。
  * 小程序视图层只响应真实触摸事件，Playwright 合成的鼠标事件点了没反应，
  * 因此把 DOM 坐标按 devicePixelRatio 换算成屏幕坐标后走 input tap。
@@ -252,6 +278,14 @@ async function tapElement(device, page, locator) {
         `  常见原因：页面被滚上去了一段，目标虽然还在布局里，但被吸顶的头部压住了。\n` +
         `  表格里的办法：在点它之前先加一步「滑动」（方向=下）把页面滚回顶部。`
     );
+  }
+
+  // 【软键盘保护】点屏幕下缘（底部 tab 就在那儿）之前，先确认输入法没开着。
+  // 它盖住的是**原生层**，DOM 命中测试看不见 —— 只有系统层能问出来（见 hideKeyboardIfShown）。
+  if (screen.h > 0 && m.py > screen.h * 0.75) {
+    if (await hideKeyboardIfShown(device)) {
+      m = await measure(); // 键盘收起后布局可能变，重量一次再点
+    }
   }
 
   await device.shell(`input tap ${m.px} ${m.py}`);
@@ -1006,4 +1040,5 @@ module.exports = {
   focusSearchInput,
   dumpElements,
   tapElement,
+  hideKeyboardIfShown,
 };

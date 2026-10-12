@@ -23,4 +23,5 @@ module.exports = {
   quizPage: require("./quiz_activity_page"),
   pointsMall: require("./points_mall_page"),
   postDetail: require("./post_detail_page"),
+  caseLibrary: require("./simulation_case_page"),
 };
