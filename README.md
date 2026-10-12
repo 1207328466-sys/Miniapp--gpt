@@ -311,7 +311,7 @@ const myStep = async (page) => { ... }          // ⚠️ name 可能是 "myStep
 
 | 路线 | 适合谁 | 怎么做 |
 |---|---|---|
-| **填表**（不用写代码） | 只描述「先点这个、再检查那个」的用例 | 打开 `cases/用例表.xlsx`，按「动作清单」一行一步地填，然后 `python run.py`。规则与 41 个动作见 [使用手册-零基础.md](docs/使用手册-零基础.md) |
+| **填表**（不用写代码） | 只描述「先点这个、再检查那个」的用例 | 打开 `cases/用例表.xlsx`，按「动作清单」一行一步地填，然后 `python run.py`。规则与 42 个动作见 [使用手册-零基础.md](docs/使用手册-零基础.md) |
 | 写 .js 用例 | 流程复杂、要判断条件、要读页面数据 | 往下看本节 |
 
 表格里的「动作」不够用时，正确的做法是**先把新动作加到动作清单与页面对象**，
@@ -781,6 +781,7 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 ├── app_sub_function/                # 关键字层 + 页面对象层
 │   └── suprecast_app/
 │       ├── android.js               # 关键字层：★ 可复用的原子操作 + 断言
+│       ├── case_copy.js             # 案例复制的写链路（表格动作与 .js 用例共用一份实现）
 │       └── pages/                   # 页面对象层：★ 每个页面的选择器与页面级操作
 │           ├── index.js             #   统一入口（pages.learnCenter / pages.columnDetail ...）
 │           ├── base_page.js         #   公共能力：解析前台页 / 判定 / 真实 tap / 轮询等待
@@ -810,6 +811,10 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │   │   ├── probe_design_zone.js     # 设计专区里有什么 —— 案例库入口就是这么找到的
 │   │   ├── probe_case_library_page.js # 案例库列表页结构（介绍 banner / 复制图标 / 卡片类名）
 │   │   ├── probe_ime_blocks_bottom_tab.js # 软键盘开着时「回到首页」还走不走得通（坑 26）
+│   │   ├── probe_home_feed_foreground.js # 「回到首页」会不会"报成功但屏幕上还停在搜索页"（坑 28）
+│   │   ├── probe_case_detail_page.js # 案例详情页结构（评论区标题 / 底部图标）
+│   │   ├── probe_case_intro_banner.js # 点案例库首页那张 banner 落到哪一页（介绍长图）
+│   │   ├── probe_case_copy.js       # 点「复制案例」会发生什么（写操作，配套复位工具）
 │   │   └── run_case.py              # 跑单个用例并把输出按正确编码落盘
 │   └── suprecast_app/
 │       ├── conftest.py              # ★ 桥接层：让 pytest 能执行 .js；表格用例按编号拆成多条
