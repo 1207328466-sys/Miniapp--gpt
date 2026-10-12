@@ -73,11 +73,36 @@ async function findClickableAncestor(locator) {
       return `${el.tagName.toLowerCase()}${cls ? "." + cls : ""}`;
     };
 
+    /**
+     * 命中测试：这个元素的中心点，最上面压着的是不是它（或它的亲属）？
+     *
+     * 【为什么必须按"真正要点的那一层"来判】2026/10/12 踩了两次：
+     *   ① 首页滚上去之后，搜索栏的坐标还在屏幕内、却被吸顶头部压住 —— 点了个空、还不报错（坑 25）；
+     *   ② 第一版护栏拿"原始元素"去比（比如一行文字里的 span），而实际点击用的是**向上找到的
+     *      可点击容器**（比如整行）—— 于是正常的点击也被判成"被盖住"，误伤了一个好用例。
+     * 所以：**用哪一层的坐标去点，就用哪一层来判命中**。
+     *
+     * @returns {string} 空串 = 能点到；否则是"盖在上面的那个元素"的描述
+     */
+    const coveredByOf = (el) => {
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      if (!top) return "(空：那个坐标上没有元素)";
+      if (top === el || el.contains(top) || top.contains(el)) return "";
+      return describe(top);
+    };
+
     const startRect = rectOf(start);
 
     // 起点本身尺寸正常，不必向上找
     if (startRect.area > 400) {
-      return { selector: "self", level: 0, box: startRect, reason: "起点元素尺寸正常" };
+      return {
+        selector: "self",
+        level: 0,
+        box: startRect,
+        reason: "起点元素尺寸正常",
+        coveredBy: coveredByOf(start),
+      };
     }
 
     // 容器面积上限：既防止爬到整页容器，又要给"文字节点极小"的情况留足空间。
@@ -102,6 +127,7 @@ async function findClickableAncestor(locator) {
             level: i + 1,
             box: r,
             reason: `向上第 ${i + 1} 层找到可点击容器`,
+            coveredBy: coveredByOf(cur), // 按"真正要点的这一层"判命中（见上面说明）
           };
         }
         return {
@@ -109,11 +135,18 @@ async function findClickableAncestor(locator) {
           level: 0,
           box: startRect,
           reason: `向上第 ${i + 1} 层容器过大（${describe(cur)} 面积 ${Math.round(r.area)}），改用起点`,
+          coveredBy: coveredByOf(start),
         };
       }
     }
 
-    return { selector: "self", level: 0, box: startRect, reason: "未找到合适的祖先，改用起点" };
+    return {
+      selector: "self",
+      level: 0,
+      box: startRect,
+      reason: "未找到合适的祖先，改用起点",
+      coveredBy: coveredByOf(start),
+    };
   });
 }
 
@@ -144,6 +177,9 @@ async function tapElement(device, page, locator) {
     const dpr = await page.evaluate(() => window.devicePixelRatio);
     return {
       found,
+      // CSS 坐标也留着：下面做"命中测试"要用 CSS 坐标（elementFromPoint 认的是 CSS 像素）
+      cx: Math.round(x + w / 2),
+      cy: Math.round(y + h / 2),
       px: Math.round((x + w / 2) * dpr),
       py: Math.round((y + h / 2) * dpr),
     };
@@ -181,6 +217,40 @@ async function tapElement(device, page, locator) {
         `  这种情况 adb 依然会"执行"点击，但点了等于没点 —— 所以这里直接报错，\n` +
         `  而不是留到后面变成一条看不懂的失败。常见原因：页面上滑之后目标被顶出屏幕了。\n` +
         `  表格里的办法：先加一步「滑动」（方向=下）把页面滚回顶部，再点它。`
+    );
+  }
+
+  /*
+   * 【被盖住保护】坐标在屏幕内 ≠ 点得到它。
+   *
+   * 2026/10/12 真机踩到：首页被滚上去之后，搜索栏的布局坐标仍在屏幕内，但被吸顶头部压住 ——
+   * adb 老老实实点了那个坐标，**点到了头部**：页面没动，而且不报错（一直到后面某一步才以
+   * 一个看不懂的原因失败）。失败截图 + `probe_search_bar_covered.js` 的复现都证明了这条因果。
+   *
+   * 这与坑 20（坐标落到屏幕外）是**相邻但不同**的一类静默失败：
+   *   · 屏幕外：坐标是负的 / 超过屏幕尺寸 —— 用坐标就能判出来
+   *   · 被盖住：坐标漂漂亮亮在屏幕里，就是点不到它 —— **只能靠命中测试判**
+   *
+   * 判据由 findClickableAncestor 给出（`coveredBy`）：**用哪一层的坐标去点，就用哪一层来判**。
+   * 第一版拿"原始元素"去比，误伤了一个正常用例（点「积分商城」时，盖着它的是同一行里的文字节点）
+   * —— 这条错也记在坑 25 里。
+   */
+  let coveredBy = m.found.coveredBy;
+  if (coveredBy) {
+    console.warn(`  [提示] 目标坐标上被 ${coveredBy} 盖着（adb tap 坐标 ${m.px},${m.py}）—— 先尝试滚动，再量一次`);
+    await locator.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
+    await new Promise((r) => setTimeout(r, 400));
+    m = await measure();
+    coveredBy = m.found.coveredBy;
+  }
+
+  if (coveredBy) {
+    throw new Error(
+      `点不到：目标被 ${coveredBy} 盖住了（adb tap 坐标 ${m.px},${m.py}）。\n` +
+        `  这种情况 adb 照样会"执行"点击，但点到的是盖在上面的那个元素 —— 页面不会动，也不会报错，\n` +
+        `  属于最坑的一类静默失败。命中测试（document.elementFromPoint）就是专门用来抓它的。\n` +
+        `  常见原因：页面被滚上去了一段，目标虽然还在布局里，但被吸顶的头部压住了。\n` +
+        `  表格里的办法：在点它之前先加一步「滑动」（方向=下）把页面滚回顶部。`
     );
   }
 

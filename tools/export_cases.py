@@ -25,7 +25,10 @@
     python tools/export_cases.py           # 读 cases/用例表.xlsx，写 cases/用例表.json
     python tools/export_cases.py --init    # 生成模板（表已存在时报错，加 --force 才覆盖）
     python tools/export_cases.py --dropdown # 给已有表格补「动作」列下拉框（不动已填内容）
-退出码: 0 成功；1 表格有错；2 没有表格（已生成模板）；3 缺少 openpyxl
+退出码: 0 成功（含「某几条用例自己填错了」——那种错误记在那条用例身上，导出的 json 照常有它，
+           真机跑的时候**只有那一条红**，其他用例不受影响）；
+        1 表格本身有错（表头被改 / 缺工作表 / 整行没有用例编号 / 一条用例都没有）—— 不导出；
+        2 没有表格（已生成模板）；3 缺少 openpyxl
 """
 
 import argparse
@@ -212,6 +215,37 @@ ACTIONS = [
         "p2": "",
         "desc": "断言这个选择器一个都命中不到（例如首页上不该出现 .activity-quiz-page）。它等的是「消失」，本来就不在时会立刻通过",
     },
+    # ---------- 2026/10/12 追加：答题的「写链路」（owner 当天拍板可以测写，见 docs/待owner拍板.md Q2/Q3）----------
+    {
+        "name": "逐题作答",
+        "p1": "",
+        "p2": "",
+        "desc": "把答题页上每道题都选上第一个选项（多题活动会一题一题点过去，屏幕外的题会自动滚进可视区）。"
+        "只改前端选中态、**不写库**，所以不需要开关；但选完不提交的话，离开页面就没了"
+        "（需求原文：未提交已选的选项不会保存）",
+    },
+    {
+        "name": "提交答卷",
+        "p1": "",
+        "p2": "",
+        "desc": "点答题页的提交按钮 —— **会真的写数据**。必须打开开关 UITEST_ALLOW_SUBMIT=1，"
+        "否则这一步直接报错（不跳过、不静默）。跑完记得用「复位答题记录」把数据清掉",
+    },
+    {
+        "name": "复位答题记录",
+        "p1": "活动名",
+        "p2": "",
+        "desc": "删掉这个活动在测试库里留下的答题记录（提交 + 明细），让「答题机会」回到能用状态。"
+        "⚠️ 这是护栏动作：**默认只预览、不删**，真删要打开开关 UITEST_ALLOW_SUBMIT=1；"
+        "活动名要跟页面上的标题一字不差（例如 Z-B4-答题角标）；名字找不到或有重名会被拒绝执行",
+    },
+    {
+        "name": "检查答题记录数",
+        "p1": "活动名",
+        "p2": "期望条数",
+        "desc": "读数据库，断言这个活动的**提交记录**正好是 N 条（例如提交前填 0、提交后填 1）。"
+        "用来把「界面上说提交成功」和「库里真有这条」对上 —— 只读，不需要开关",
+    },
 ]
 
 ACTION_BY_NAME = {a["name"]: a for a in ACTIONS}
@@ -287,10 +321,23 @@ HELP_LINES = [
     "     原因：这些操作会改真实数据/消耗真实积分。真要测它们，得单独写用例并显式打开开关，不能靠表格里写一行就触发。",
     "   · 「打开答题活动」只打开页面，不选选项、不提交（选选项会消耗答题机会）。",
     "",
+    "要测「会改数据」的操作？开着开关跑（owner 2026/10/12 同意）",
+    "   · 开关就是一句环境变量：跑之前先执行  $env:UITEST_ALLOW_SUBMIT=\"1\"  （PowerShell）",
+    "     不设这个开关时，下面这两个动作会**直接报错**，不会偷偷执行，也不会假装跳过。",
+    "   · 「复位答题记录」（参数1=活动名）：删掉该活动在测试库里留下的答题记录。",
+    "     默认只预览不删；开了开关才真删。跑完写数据的用例，务必用它把记录清干净。",
+    "   · 「提交答卷」：真的提交一次，用来测「提交后按钮变成已提交已参加」这条需求。",
+    "   · 「逐题作答」「检查答题记录数」不需要开关：前者只改前端选中态（不写库），后者是只读。",
+    "   · 写链路的标准写法（照抄即可）：回到首页 → 打开答题活动 → 复位答题记录(活动名) →",
+    "     逐题作答 → 检查文字显示(已答) → 提交答卷 → 检查文字显示(已参加) →",
+    "     检查答题记录数(活动名 / 1) → 复位答题记录(活动名) → 回到首页",
+    "   · 现成模板：test_case/suprecast_app/test_quiz_submit.js（跑法：$env:UITEST_ALLOW_SUBMIT=\"1\"; python run.py -k 答题写链路）",
+    "",
     "已知限制（诚实标注，别误读成框架不行）",
     "   · 搜索关键词只能是字母/数字/下划线/点/连字符：关键词是通过 adb 发过去的，adb 发中文不报错但不生效。",
     "   · 「点文字」点的是屏幕上看得见的文字；同名文字有多个时点第 1 个。",
     "   · 断言的等待时间写死在框架里（文字类 8 秒、元素类 8 秒），表格里暂时改不了。",
+    "   · 「复位答题记录」只能删答题相关的两张表；别的写操作（积分兑换、签到）还没做复位手段。",
 ]
 
 
@@ -453,33 +500,50 @@ def read_rows(path):
 
 
 def validate(rows):
-    """校验并组装成用例结构。有问题一次性全报出来（不要"改一个跑一次"）"""
-    errors = []
+    """校验并组装成用例结构。有问题一次性全报出来（不要「改一个跑一次」）。
+
+    【两类错误刻意分开处理】（2026/10/12 owner 定的口径）
+      · **能归到某条用例身上的**（动作名写错、参数填错、序号重复 / 漏写…）
+        → 记在那条用例的 `errors` 里，**导出照常成功**。真机跑的时候只有那一条红，
+          别的用例照常跑 —— 表格里有一条填错，不该把整轮测试废掉。
+      · **归不到用例的**（整行没有「用例编号」、表头被改、工作表名不对、一条用例都没有）
+        → 整张表报错、不导出。没有编号就不知道该算谁的问题，
+          而且这几种情况会让"跑出来的结果"整体不可信（宁可停下来）。
+    """
+    table_errors = []  # 表格级：归不到具体某条用例
     cases = []  # 保序：[{"id", "name", "steps": [...]}]
     index = {}  # 用例编号 -> 用例
 
+    def case_errors_of(case):
+        """取（必要时建）这条用例自己的错误清单"""
+        return case.setdefault("errors", [])
+
     for lineno, (cid, cname, cseq, action, p1, p2, note) in rows:
         if not cid:
-            errors.append("第 %d 行：「用例编号」是空的。没有编号就不知道该把它并到哪条用例里" % lineno)
-            continue
-        if not action:
-            errors.append("第 %d 行：「动作」是空的。可写哪些动作见「动作清单」工作表" % lineno)
+            table_errors.append("第 %d 行：「用例编号」是空的。没有编号就不知道该把它并到哪条用例里" % lineno)
             continue
 
+        # 先建/找到这条用例，后面所有问题都能挂在它身上（这样才做得到"只让那一条红"）
         case = index.get(cid)
         if case is None:
             case = {"id": cid, "name": cname or cid, "steps": []}
             index[cid] = case
             cases.append(case)
         elif cname and cname != case["name"]:
-            errors.append(
+            case_errors_of(case).append(
                 "第 %d 行：用例「%s」已经叫「%s」了，这里又写成「%s」。同一个用例编号只能有一个名字"
                 % (lineno, cid, case["name"], cname)
             )
 
+        if not action:
+            case_errors_of(case).append(
+                "第 %d 行：「动作」是空的。可写哪些动作见「动作清单」工作表" % lineno
+            )
+            continue
+
         spec = ACTION_BY_NAME.get(action)
         if spec is None:
-            errors.append(
+            case_errors_of(case).append(
                 "第 %d 行：不认识动作「%s」。可用的动作（共 %d 个）：%s"
                 % (lineno, action, len(ACTIONS), "、".join(a["name"] for a in ACTIONS))
             )
@@ -487,35 +551,57 @@ def validate(rows):
 
         # 参数校验：该用的必须填，不该用的不许填 —— 后者专治「把参数填错了列」
         if spec["p1"] and not p1:
-            errors.append("第 %d 行：动作「%s」的「参数1」要填「%s」，现在是空的" % (lineno, action, spec["p1"]))
+            case_errors_of(case).append(
+                "第 %d 行：动作「%s」的「参数1」要填「%s」，现在是空的" % (lineno, action, spec["p1"])
+            )
         if not spec["p1"] and p1:
-            errors.append("第 %d 行：动作「%s」用不到「参数1」，请清空（现在填的是 %s）" % (lineno, action, p1))
+            case_errors_of(case).append(
+                "第 %d 行：动作「%s」用不到「参数1」，请清空（现在填的是 %s）" % (lineno, action, p1)
+            )
         if spec["p2"] and not p2:
-            errors.append("第 %d 行：动作「%s」的「参数2」要填「%s」，现在是空的" % (lineno, action, spec["p2"]))
+            case_errors_of(case).append(
+                "第 %d 行：动作「%s」的「参数2」要填「%s」，现在是空的" % (lineno, action, spec["p2"])
+            )
         if not spec["p2"] and p2:
-            errors.append("第 %d 行：动作「%s」用不到「参数2」，请清空（现在填的是 %s）" % (lineno, action, p2))
+            case_errors_of(case).append(
+                "第 %d 行：动作「%s」用不到「参数2」，请清空（现在填的是 %s）" % (lineno, action, p2)
+            )
 
         seq = None
         if cseq:
             if not cseq.isdigit() or int(cseq) <= 0:
-                errors.append("第 %d 行：「步骤序号」只能填 1、2、3… 这样的正整数，现在填的是 %s" % (lineno, cseq))
+                case_errors_of(case).append(
+                    "第 %d 行：「步骤序号」只能填 1、2、3… 这样的正整数，现在填的是 %s" % (lineno, cseq)
+                )
             else:
                 seq = int(cseq)
 
         if action == "等待" and p1 and not (p1.isdigit() and int(p1) > 0):
-            errors.append("第 %d 行：「等待」的参数1 是毫秒数，应该像 2000 这样，现在填的是 %s" % (lineno, p1))
+            case_errors_of(case).append(
+                "第 %d 行：「等待」的参数1 是毫秒数，应该像 2000 这样，现在填的是 %s" % (lineno, p1)
+            )
         if action == "检查元素数量" and p2 and not (p2.isdigit() and int(p2) >= 0):
-            errors.append("第 %d 行：「检查元素数量」的参数2 是数量，应该像 1 这样，现在填的是 %s" % (lineno, p2))
+            case_errors_of(case).append(
+                "第 %d 行：「检查元素数量」的参数2 是数量，应该像 1 这样，现在填的是 %s" % (lineno, p2)
+            )
         if action == "滑动" and p1 and not (p1.isdigit() and 1 <= int(p1) <= 10):
-            errors.append("第 %d 行：「滑动」的参数1 是次数，只能填 1~10 之间的整数，现在填的是 %s" % (lineno, p1))
+            case_errors_of(case).append(
+                "第 %d 行：「滑动」的参数1 是次数，只能填 1~10 之间的整数，现在填的是 %s" % (lineno, p1)
+            )
         if action == "检查文字出现次数" and p2 and not (p2.isdigit() and int(p2) >= 0):
-            errors.append("第 %d 行：「检查文字出现次数」的参数2 是次数，应该像 1 这样，现在填的是 %s" % (lineno, p2))
+            case_errors_of(case).append(
+                "第 %d 行：「检查文字出现次数」的参数2 是次数，应该像 1 这样，现在填的是 %s" % (lineno, p2)
+            )
+        if action == "检查答题记录数" and p2 and not (p2.isdigit() and int(p2) >= 0):
+            case_errors_of(case).append(
+                "第 %d 行：「检查答题记录数」的参数2 是条数，应该像 0 或 1 这样，现在填的是 %s" % (lineno, p2)
+            )
 
         # 只能从固定几个值里选的动作：填错字当场挡下（比真机跑到一半再报错友好）
         for field, value in (("p1", p1), ("p2", p2)):
             allowed = ACTION_PARAM_CHOICES.get(action, {}).get(field)
             if allowed and value and value not in allowed:
-                errors.append(
+                case_errors_of(case).append(
                     "第 %d 行：动作「%s」的「参数%s」只能填这 %d 个之一：%s（现在填的是 %s）"
                     % (lineno, action, field[-1], len(allowed), " / ".join(allowed), value)
                 )
@@ -543,19 +629,19 @@ def validate(rows):
                     dup.add(s["seq"])
                 seen.add(s["seq"])
             if dup:
-                errors.append(
+                case_errors_of(case).append(
                     "用例「%s」里有重复的「步骤序号」：%s。同一条用例里的序号必须互不相同"
                     % (case["id"], "、".join(str(d) for d in dup))
                 )
         elif any(s is not None for s in seqs):
             bad = [str(s["_line"]) for s in steps if s["seq"] is None]
-            errors.append(
+            case_errors_of(case).append(
                 "用例「%s」里有的步骤写了「步骤序号」、有的没写（没写的是第 %s 行）。"
                 "要么全写，要么全不写（全不写就按表格里的先后顺序执行）" % (case["id"], "、".join(bad))
             )
 
-    if errors:
-        raise TableError(errors)
+    if table_errors:
+        raise TableError(table_errors)
 
     for case in cases:
         for i, step in enumerate(case["steps"], start=1):
@@ -604,6 +690,10 @@ def lint_cases(cases):
     """
     warnings = []
     for c in cases:
+        # 这条用例自己就有填错（真机跑到它时直接红）：不用再给它体检了，免得提示里
+        # 混进"它还没法跑"和"它写得不够好"两种话，看的人分不清该先改哪个
+        if c.get("errors"):
+            continue
         actions = [s["action"] for s in c["steps"]]
         if not any(a in CHECK_ACTIONS for a in actions):
             warnings.append(
@@ -730,6 +820,10 @@ def main(argv=None):
 
     warnings = lint_cases(cases)
 
+    # 填错的行归到了各自用例身上（见 validate 的说明）：导出照常成功，
+    # 真机跑的时候只有这几条红，别的照跑。
+    bad_cases = [c for c in cases if c.get("errors")]
+
     payload = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "generated_by": "tools/export_cases.py",
@@ -757,7 +851,14 @@ def main(argv=None):
     print("用例表导出成功：%s" % json_path)
     print("  共 %d 条用例、%d 个步骤%s" % (len(cases), total_steps, "" if changed else "（表格内容没变，文件未改动）"))
     for c in cases:
-        print("    - %s  %s（%d 步）" % (c["id"], c["name"], len(c["steps"])))
+        mark = "  [这条填错了]" if c.get("errors") else ""
+        print("    - %s  %s（%d 步）%s" % (c["id"], c["name"], len(c["steps"]), mark))
+    if bad_cases:
+        print("\n[注意] 有 %d 条用例填错了 —— 跑起来时**只有这几条会红**，其他用例照常执行：" % len(bad_cases))
+        for c in bad_cases:
+            print("  · %s %s" % (c["id"], c["name"]))
+            for err in c["errors"]:
+                print("      · %s" % err)
     if warnings:
         print("\n[建议] 表格能跑，但这几处按经验值得改一改（只提示，不影响执行）：")
         for w in warnings:

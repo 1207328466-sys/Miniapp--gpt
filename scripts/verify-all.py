@@ -6,10 +6,11 @@
   1. 语法：所有 .js 过 `node --check`；所有 .py 过 `py_compile`
   2. 用例收集：`pytest --collect-only`（能查出 conftest / 用例收集被改坏）
   3. `scripts/check-docs.py`            文档死链
-  4. `scripts/selftest-export-cases.py` 表格校验与体检规则（14 项）
-  5. `scripts/check-safety.py`          数据/凭据安全不变式（9 项）
-  6. `scripts/check-invariants.py`      框架自身完整性（7 项：动作↔实现、中文名、退出码兜底、安全阀、文档数字）
-  7. `tools/calibrate_android_doc.py --check`  android.js 逐行详解里的行号引用是否漂移
+  4. `scripts/selftest-export-cases.py` 表格校验与体检规则（17 项，含"一条填错只红它自己"）
+  5. `scripts/selftest-quiz-cleanup.py` 复位工具的安全闸门（12 项：该拦的必须拦、该放的必须放）
+  6. `scripts/check-safety.py`          数据/凭据安全不变式（9 项）
+  7. `scripts/check-invariants.py`      框架自身完整性（7 项：动作↔实现、中文名、退出码兜底、安全阀、文档数字）
+  8. `tools/calibrate_android_doc.py --check`  android.js 逐行详解里的行号引用是否漂移
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -84,6 +85,7 @@ def main():
     # 3~5) 三道闸门
     run("check-docs（文档死链）", [sys.executable, os.path.join("scripts", "check-docs.py")])
     run("selftest-export-cases（表格规则）", [sys.executable, os.path.join("scripts", "selftest-export-cases.py")])
+    run("selftest-quiz-cleanup（复位护栏）", [sys.executable, os.path.join("scripts", "selftest-quiz-cleanup.py")])
     run("check-safety（安全不变式）", [sys.executable, os.path.join("scripts", "check-safety.py")])
     run("check-invariants（框架不变式）", [sys.executable, os.path.join("scripts", "check-invariants.py")])
     run(

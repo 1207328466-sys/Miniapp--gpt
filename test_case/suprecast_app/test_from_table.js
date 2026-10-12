@@ -30,6 +30,7 @@
 const fs = require("fs");
 const path = require("path");
 const { appTest } = require("../../common/app_common");
+const { runDbTool, writeSwitchOn, writeSwitchOffMessage } = require("../../common/db_tool");
 const android = require("../../app_sub_function/suprecast_app/android");
 const pages = require("../../app_sub_function/suprecast_app/pages");
 
@@ -272,6 +273,65 @@ const HANDLERS = {
       return fg;
     },
   },
+
+  /* ---------- 2026/10/12 追加：答题的写链路 ----------
+   * owner 当天拍板「可以测会改数据的操作」（docs/待owner拍板.md Q2/Q3）。
+   * 开关是**环境变量** UITEST_ALLOW_SUBMIT=1：跑的人决定"这次要不要写数据"，
+   * 而不是代码里写死。没开开关时这两个动作**报错**，不跳过 —— 跳过会让"没测"看着像"没问题"。
+   */
+
+  逐题作答: {
+    // 只改前端选中态、不写库（账本第二十一节有数据库实验证据），所以不需要开关
+    run: (page) => quizPage.answerAllQuestions(page, { allowInteract: true }),
+  },
+
+  提交答卷: {
+    run: async (page) => {
+      if (!writeSwitchOn()) throw new Error(writeSwitchOffMessage("「提交答卷」"));
+      return quizPage.submitAnswers(page, { allowSubmit: true });
+    },
+  },
+
+  复位答题记录: {
+    run: async (page, activityName) => {
+      if (!writeSwitchOn()) throw new Error(writeSwitchOffMessage("「复位答题记录」"));
+      const out = runDbTool(["--activity-name", activityName, "--yes"]);
+      // 工具可能因为"名字不唯一 / 库名不像测试库 / 量太大"而**拒绝执行**（那时一条都没删），
+      // 所以这里必须认 [CLEANUP] mode=clean 这一行，不能只看"命令跑完了"
+      const line = (out.match(/^\[CLEANUP\].*$/m) || [""])[0];
+      if (!line.includes("mode=clean")) {
+        throw new Error(
+          `「复位答题记录」没有真的删掉记录（活动名 ${JSON.stringify(activityName)}）：` +
+            `${line || "工具没有输出 [CLEANUP] 行"}`
+        );
+      }
+      return page;
+    },
+  },
+
+  检查答题记录数: {
+    run: async (page, activityName, expected) => {
+      // 只读检查：不需要开关。expectOk=false -> 数量对不上时不抛错，由下面自己给一句人话报错
+      const out = runDbTool(["--activity-name", activityName, "--expect-submits", String(expected)], {
+        expectOk: false,
+      });
+      const m = out.match(/submits=(\d+)/);
+      if (!m) {
+        throw new Error(
+          `「检查答题记录数」读不到结果（多半是活动名跟库里对不上）。\n  工具输出末尾：${out.trim().slice(-300)}`
+        );
+      }
+      const actual = Number(m[1]);
+      if (actual !== Number(expected)) {
+        throw new Error(
+          `断言失败: 活动「${activityName}」在库里的提交记录是 ${actual} 条，期望 ${expected} 条。\n` +
+            `  常见原因：上一步「提交答卷」没成功，或者中间有人也在动这个活动。`
+        );
+      }
+      console.log(`断言通过: 活动「${activityName}」的提交记录 = ${actual} 条`);
+      return page;
+    },
+  },
 };
 
 /* ---------------- 读表格 + 校验 ---------------- */
@@ -407,6 +467,16 @@ function buildStepFunc(step) {
 /* ---------------- 跑一条用例 ---------------- */
 
 async function runOneCase(caseDef) {
+  // 【表格填错了怎么办】导出时（tools/export_cases.py）已经把"能归到某条用例身上的错误"
+  // 记在它的 errors 里：这里当场报错，**只让这一条红**，别的用例照常往下跑。
+  // 为什么不是"整张表停下来"：owner 2026/10/12 定的口径 —— 一条填错不该废掉整轮测试。
+  // 为什么不是"跳过它"：跳过等于把"填错了"藏起来，报告看着全绿，那是假绿。
+  if (caseDef.errors && caseDef.errors.length) {
+    throw new Error(
+      "这条用例在表格里填错了（改 cases/用例表.xlsx 的这几行）：\n    " + caseDef.errors.join("\n    ")
+    );
+  }
+
   const funcList = caseDef.steps.map(buildStepFunc);
   console.log("\n" + "=".repeat(66));
   console.log(`用例 ${caseDef.id}：${caseDef.name}（${funcList.length} 步）`);

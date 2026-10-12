@@ -70,6 +70,23 @@ const SEL = {
   submit: ".activity-quiz-submit",
 };
 
+/*
+ * ⚠️ 多选题库活动（一整页渲染好几道题）的**题目边界**（2026/10/12 真机实测拿到）
+ *
+ * 在此之前只知道"整页 52 个选项行"，不知道一道题到哪儿为止，于是多题活动只能记跳过（坑 16）。
+ * 实测结构（活动「Z-题干图验证」15 题，一页渲染全部）：
+ *   .quiz-card                     一道题（实测 333x465）—— **这就是题目边界**
+ *     .quiz-card__head             题号 / 分值 / 状态（形如「1．单选题 1 积分 未答」）
+ *     .quiz-options                这道题的选项容器
+ *       .quiz-option--row          选项行（**只属于它所在的那个 .quiz-card**）
+ * 另一套是"活动信息卡"，名字像但别混：`.activity-quiz-card__title` 是**活动标题**，
+ * `.quiz-card` 才是**题目**。
+ */
+const SEL_Q = {
+  card: ".quiz-card",
+  head: ".quiz-card__head",
+};
+
 const HOME_TAB_TEXT = "有问必答";
 const CARD_TAG_QUIZ = "答题";
 
@@ -496,13 +513,207 @@ async function submitIfAllowed(page, { allowSubmit = false } = {}) {
   return base.foreground(page);
 }
 
+/* ==========================================================================
+ * 多选题库活动：按"一道题"来读和答
+ * ==========================================================================
+ * 能力边界（写在最前面，避免误用）：
+ *   · 下面用的 `.quiz-card` 边界是 **2026/10/12 真机实测**的结果（活动「Z-题干图验证」）。
+ *     换一种活动实现，类名可能不同 —— 那时要重新实测（跑 probe_quiz_page.js），别猜。
+ *     一道题都读不到时会明确报错，不会静默当成"只有一道题"。
+ *   · 点选项**只改前端选中态、不写库**（账本第二十一节有数据库实验证据）；
+ *     真正写库的是「提交」。
+ */
+
+/**
+ * 逐题读状态（**只读**）：一题 = 一个 `.quiz-card`。
+ * @returns {Promise<Array<{index:number, head:string, text:string, options:Array<{text:string, checked:boolean}>}>>}
+ */
+async function readQuestions(page) {
+  const fg = (await findQuizPage(page)) || (await base.foreground(page));
+  return fg.evaluate(
+    (sel) => {
+      const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+      const out = [];
+      document.querySelectorAll(sel.card).forEach((card, i) => {
+        const head = card.querySelector(sel.head);
+        const options = [];
+        card.querySelectorAll(sel.option).forEach((el) => {
+          options.push({
+            text: norm(el.innerText),
+            checked: /checked|selected|active|--on/i.test(String(el.getAttribute("class") || "")),
+          });
+        });
+        out.push({
+          index: i,
+          head: norm(head ? head.innerText : ""),
+          text: norm(card.innerText).slice(0, 80),
+          options,
+        });
+      });
+      return out;
+    },
+    { card: SEL_Q.card, head: SEL_Q.head, option: SEL.option }
+  );
+}
+
+/**
+ * 逐题作答：把还没选的题都选上**第一个选项**，每题选完立刻验证"真的选中了"。
+ *
+ * 【为什么要有它】需求要求"登录用户须答完全部题目才能提交" —— 想跑「提交」这条链路，
+ * 必须先有能力把 15 道题都答上。以前没有这个能力，多题活动只能整体记跳过（坑 16）。
+ * 现在知道了题目边界（`.quiz-card`），就能按题来读、按题来点。
+ *
+ * 屏幕外的题不用手滑：`tapElement` 发现目标在屏幕外时会先把它滚进可视区再点
+ * （android.js 2026/10/10 起就有的保护）。
+ *
+ * @param {{allowInteract?: boolean, ctx?: object}} params
+ *   allowInteract 默认 false：虽然是"只改前端"的操作，仍然要显式声明 ——
+ *   免得它被顺手塞进一条只读用例里。
+ */
+async function answerAllQuestions(page, { allowInteract = false, ctx = null } = {}) {
+  if (!allowInteract) {
+    throw new Error(
+      "「逐题作答」需要显式打开开关（allowInteract: true）。\n" +
+        "  为什么：它会在页面上逐个点选项。已用数据库实验证明**只点选项不写库**（账本第二十一节），\n" +
+        "  但这种「点一下就变」的操作仍然要显式声明，免得它被顺手塞进一条只读用例里。"
+    );
+  }
+
+  page = (await findQuizPage(page)) || page;
+  const fg = await base.foreground(page);
+  const cards = fg.locator(SEL_Q.card);
+  const n = await cards.count();
+  if (n === 0) {
+    throw new Error(
+      `答题页上找不到题目容器（${SEL_Q.card}）—— 无法按题作答。\n` +
+        `  这是**框架识别能力**不足（不是产品 bug）：说明这个活动的 DOM 结构和 2026/10/12 实测的多题活动不同。\n` +
+        `  别猜 —— 先跑 node test_case/diagnostic/probe_quiz_page.js 看清结构再改页面对象。`
+    );
+  }
+
+  const before = await state(page);
+  console.log(`  本次活动共 ${n} 道题（进度 ${JSON.stringify(before.progressText)}）`);
+
+  let already = 0;
+  let picked = 0;
+  for (let i = 0; i < n; i++) {
+    const qs = await readQuestions(page);
+    const q = qs[i];
+    if (!q) throw new Error(`读不到第 ${i + 1} 题（一共读到 ${qs.length} 题）`);
+    if (q.options.some((o) => o.checked)) {
+      already += 1;
+      console.log(`  第 ${i + 1}/${n} 题已经选过了（${JSON.stringify(q.head)}），跳过`);
+      continue;
+    }
+
+    const opts = cards.nth(i).locator(SEL.option);
+    const firstText = String(await opts.first().innerText().catch(() => ""))
+      .replace(/\s+/g, " ")
+      .trim();
+    await base.tapLocator(fg, opts.first(), `第 ${i + 1} 题的选项「${firstText}」`);
+
+    // 动作结果断言：点完必须真的变成"选中态"，否则后面那句"答完了"就是空话
+    const ok = await base.waitUntil(
+      async () => {
+        const now = await readQuestions(page);
+        return !!(now[i] && now[i].options.some((o) => o.checked));
+      },
+      { timeout: 5000, interval: 300 }
+    );
+    if (!ok) {
+      const now = await readQuestions(page);
+      throw new Error(
+        `第 ${i + 1} 题的选项点了但没变成选中态（题目状态：${JSON.stringify((now[i] || {}).head)}）。\n` +
+          `  当前选项：${JSON.stringify((now[i] || {}).options)}`
+      );
+    }
+    picked += 1;
+    const cur = await state(page);
+    console.log(`  第 ${i + 1}/${n} 题已选「${firstText}」-> 进度 ${JSON.stringify(cur.progressText)}`);
+  }
+
+  const after = await state(page);
+  console.log(
+    `  逐题作答完成：新选 ${picked} 题、原本已选 ${already} 题；进度 ${JSON.stringify(after.progressText)}`
+  );
+  if (ctx) {
+    ctx.set("quizQuestionCount", n);
+    ctx.set("quizPickedCount", picked);
+    ctx.set("quizProgressAfterAnswer", after.progressText);
+  }
+  return base.foreground(page);
+}
+
+/**
+ * 提交答卷 —— **会写真实账号的数据**；没有开关就**报错**（不是静默跳过）。
+ *
+ * 与 `submitIfAllowed` 的区别（两个都留着，别用错）：
+ *   · `submitIfAllowed`：老用例（test_quiz_activity.js）用的。开关关着只打一句日志就继续，
+ *     语义是"这条用例本来就不打算提交"；它还会在"进度已满"时跳过提交 —— 那是按**单题**活动的
+ *     旧经验写的（单题时"1/1"曾被当成"已答过"）。
+ *   · `submitAnswers`：给**写链路**用的。开关关着直接抛错；并且要求"题目答完、按钮可用"才点 ——
+ *     在多题活动里"进度满了"恰恰是"可以提交"的意思，两者语义正好相反。
+ *
+ * @param {{allowSubmit?: boolean, ctx?: object}} params
+ */
+async function submitAnswers(page, { allowSubmit = false, ctx = null } = {}) {
+  if (!allowSubmit) {
+    throw new Error(
+      "「提交答卷」没有打开开关，已拒绝执行（这个操作会**真的写数据**）。\n" +
+        "  打开方式：跑用例时设环境变量 UITEST_ALLOW_SUBMIT=1。\n" +
+        "  为什么报错而不是跳过：跳过会让「没测」看起来像「没问题」。\n" +
+        "  提交前请确认：这是我们自己的测试活动，跑完用 tools/quiz_data_cleanup.py 复位。"
+    );
+  }
+
+  const st = await state(page);
+  console.log(
+    `  提交前：进度 ${JSON.stringify(st.progressText)}，按钮 ${JSON.stringify(st.submitText)} 禁用=${st.submitDisabled}`
+  );
+  if (st.submitDisabled) {
+    throw new Error(
+      `提交按钮是禁用态（进度 ${st.progressText}）—— 说明题目还没答完，不能硬点。\n` +
+        `  需求口径：登录用户须答完全部题目才能提交。先跑「逐题作答」把题答完。`
+    );
+  }
+  if (st.answered !== null && st.total !== null && st.answered < st.total) {
+    throw new Error(`进度显示还没答完（${st.progressText}），不能提交`);
+  }
+
+  const fg = await base.foreground(page);
+  await base.tapSelector(fg, SEL.submit, "提交按钮");
+
+  // 判据取自需求原文：「提交后按钮变成"已提交已参加本次活动"状态，不可再次点击」
+  const ok = await base.waitUntil(
+    async () => {
+      const text = await base.pageText(await base.foreground(page));
+      return /已提交|已参加|提交成功/.test(text);
+    },
+    { timeout: 10000, interval: 400 }
+  );
+  const after = await base.foreground(page);
+  const text = await base.pageText(after);
+  if (!ok) {
+    throw new Error(
+      "点了提交，但页面上没出现「已提交 / 已参加」这类提交成功的样子。\n" +
+        `  当前页面前 300 字: ${JSON.stringify(text.slice(0, 300))}`
+    );
+  }
+  const st2 = await state(after);
+  console.log(`  提交成功：按钮变成 ${JSON.stringify(st2.submitText)}，进度 ${JSON.stringify(st2.progressText)}`);
+  if (ctx) ctx.set("quizSubmitTextAfter", st2.submitText);
+  return after;
+}
+
 module.exports = {
   SEL,
+  SEL_Q,
   HOME_TAB_TEXT,
   CARD_TAG_QUIZ,
   isOn,
   findQuizPage,
   state,
+  readQuestions,
   findCard,
   cardListScrollable,
   openQuizCard,
@@ -511,4 +722,6 @@ module.exports = {
   logState,
   selectFirstOption,
   submitIfAllowed,
+  answerAllQuestions,
+  submitAnswers,
 };

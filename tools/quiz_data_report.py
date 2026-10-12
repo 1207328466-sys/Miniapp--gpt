@@ -25,10 +25,13 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config" / "db.local.yaml"
 
 
-def load_conn(config_path):
-    """读 config/db.local.yaml 并连库。配置被 gitignore（含真实凭据），且**不打印密码**。"""
+def read_config(config_path):
+    """读 config/db.local.yaml，返回一个规整过的字典（host/port/user/password/database）。
+
+    单独的读配置函数（不连库）：这样别的工具（如 quiz_data_cleanup）也能拿到**库名**
+    做安全判断 —— 删数据的工具得先确认"我连的是测试库"，不能靠猜。
+    """
     try:
-        import pymysql
         import yaml
     except ImportError as e:
         print("缺少依赖：%s（装一下：pip install -r requirements.txt）" % e.name)
@@ -47,13 +50,31 @@ def load_conn(config_path):
     def get(key):
         return db.get(key) or cfg.get(key)
 
-    print("连接：%s@%s/%s（密码不回显）" % (get("user"), get("host"), get("database")))
+    return {
+        "host": get("host"),
+        "port": int(get("port") or 3306),
+        "user": get("user"),
+        "password": get("password"),
+        "database": get("database"),
+    }
+
+
+def load_conn(config_path):
+    """读 config/db.local.yaml 并连库。配置被 gitignore（含真实凭据），且**不打印密码**。"""
+    try:
+        import pymysql
+    except ImportError as e:
+        print("缺少依赖：%s（装一下：pip install -r requirements.txt）" % e.name)
+        sys.exit(1)
+
+    cfg = read_config(config_path)
+    print("连接：%s@%s/%s（密码不回显）" % (cfg["user"], cfg["host"], cfg["database"]))
     return pymysql.connect(
-        host=get("host"),
-        port=int(get("port") or 3306),
-        user=get("user"),
-        password=get("password"),
-        database=get("database"),
+        host=cfg["host"],
+        port=cfg["port"],
+        user=cfg["user"],
+        password=cfg["password"],
+        database=cfg["database"],
         charset="utf8mb4",
         connect_timeout=8,
     )

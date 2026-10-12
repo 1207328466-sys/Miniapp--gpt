@@ -29,6 +29,12 @@ WRITE_WORDS = (
     "抽奖", "报名", "删除", "退款", "取消订单",
 )
 
+# owner 2026/10/12 拍板：可以测「会改数据」的操作（见 docs/待owner拍板.md Q2/Q3）。
+# 所以这条规则从"一刀切禁止"改成"白名单 + 必须有开关"：
+#   · 白名单里的动作，实现里**必须**走 writeSwitchOn()（下面第 3 节逐条检查）
+#   · 白名单外，仍然一个字都不许出现 —— 加白名单是件要写进文档的事，不该顺手就加
+APPROVED_WRITE_ACTIONS = {"提交答卷", "复位答题记录"}
+
 failures = []
 passed = 0
 
@@ -55,9 +61,23 @@ def tracked_files():
     return out.stdout.splitlines()
 
 
-# ---------- 1) 表格动作里不许有"会改数据"的动作 ----------
-hit = [a["name"] for a in m.ACTIONS if any(w in a["name"] for w in WRITE_WORDS)]
-check("表格动作里没有「会改数据」的动作", not hit, "发现：%s" % "、".join(hit))
+# ---------- 1) 表格动作里不许有"会改数据"的动作（owner 同意的那几个除外）----------
+hit = [
+    a["name"]
+    for a in m.ACTIONS
+    if any(w in a["name"] for w in WRITE_WORDS) and a["name"] not in APPROVED_WRITE_ACTIONS
+]
+check(
+    "表格动作里没有「会改数据」的动作（owner 同意的 %d 个除外）" % len(APPROVED_WRITE_ACTIONS),
+    not hit,
+    "发现：%s" % "、".join(hit),
+)
+declared_names = {a["name"] for a in m.ACTIONS}
+check(
+    "白名单里的动作确实存在（别写成没用的名字）",
+    APPROVED_WRITE_ACTIONS <= declared_names,
+    "清单里没有：%s" % "、".join(sorted(APPROVED_WRITE_ACTIONS - declared_names)),
+)
 
 # ---------- 2) 「点文字」的安全阀还在（且词表没被缩小）----------
 table_js = read("test_case/suprecast_app/test_from_table.js")
@@ -91,6 +111,41 @@ check(
     re.search(r"async function selectFirstOption\(page, \{ allowInteract = false \} = \{\}, ctx = null\)", quiz_page)
     is not None,
     "默认值被改了",
+)
+
+# ---------- 3.5) 白名单里的"写"动作必须真的被开关保护 ----------
+# 这一段查的是"开关有没有被绕过去"：如果有人把 handler 写成直接执行（去掉 writeSwitchOn），
+# 表格里随手写一行就会真的写数据 —— 而且**不会报错**。所以要逐条盯住。
+handlers = table_js.split("const HANDLERS = {", 1)[1].rsplit("};", 1)[0]
+
+
+def handler_body(name):
+    """取某个动作的实现代码片段（从「  动作名: {」到下一个「  },\n」）"""
+    start = handlers.find("\n  %s: {" % name)
+    if start < 0:
+        return None
+    end = handlers.find("\n  },", start)
+    return handlers[start : end if end > 0 else len(handlers)]
+
+
+for name in sorted(APPROVED_WRITE_ACTIONS):
+    body = handler_body(name)
+    check(
+        "写动作「%s」走了环境变量开关" % name,
+        bool(body) and "writeSwitchOn" in body,
+        "实现里找不到 writeSwitchOn() —— 这样表格里写一行就会直接写数据",
+    )
+
+db_tool = read("common/db_tool.js")
+check(
+    "开关只认「明确等于 1」（不是宽松判断）",
+    'process.env.UITEST_ALLOW_SUBMIT === "1"' in db_tool,
+    "db_tool.js 里的开关判断被改松了",
+)
+check(
+    "写链路用例默认不跑（没开关就跳过）",
+    'process.env.UITEST_ALLOW_SUBMIT === "1"' in read("test_case/suprecast_app/test_quiz_submit.js"),
+    "test_quiz_submit.js 的开关判断被改掉或被写死成 true",
 )
 
 # ---------- 4) 凭据 / 密钥不许进版本库 ----------

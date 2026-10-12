@@ -230,6 +230,10 @@ class JsTestItem(pytest.Item):
         env = {**os.environ, "UITEST_STEP_LOG": step_log_path}
         if self.case_id:
             env[CASE_ID_ENV] = self.case_id
+        # 把"当前这个 Python 解释器"交给 JS 侧：写链路用例要调 tools/quiz_data_cleanup.py
+        # 读库（pymysql/yaml 装在这个解释器里）。用 `python` 这个裸命令的话，
+        # 在多虚拟环境/多 Python 的机器上可能调到另一个没装依赖的解释器上。
+        env["UITEST_PYTHON"] = sys.executable
 
         try:
             result = subprocess.run(
