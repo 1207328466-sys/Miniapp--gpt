@@ -311,7 +311,7 @@ const myStep = async (page) => { ... }          // ⚠️ name 可能是 "myStep
 
 | 路线 | 适合谁 | 怎么做 |
 |---|---|---|
-| **填表**（不用写代码） | 只描述「先点这个、再检查那个」的用例 | 打开 `cases/用例表.xlsx`，按「动作清单」一行一步地填，然后 `python run.py`。规则与 37 个动作见 [使用手册-零基础.md](docs/使用手册-零基础.md) |
+| **填表**（不用写代码） | 只描述「先点这个、再检查那个」的用例 | 打开 `cases/用例表.xlsx`，按「动作清单」一行一步地填，然后 `python run.py`。规则与 41 个动作见 [使用手册-零基础.md](docs/使用手册-零基础.md) |
 | 写 .js 用例 | 流程复杂、要判断条件、要读页面数据 | 往下看本节 |
 
 表格里的「动作」不够用时，正确的做法是**先把新动作加到动作清单与页面对象**，
@@ -758,6 +758,7 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │   ├── import_db_config.py          # 从 miniapp-flow/.env 生成本地数据库配置（不入库）
 │   ├── quiz_data_report.py          # ★ 答题数据体检（只读）：有哪些记录、清理会涉及多少行
 │   ├── quiz_data_cleanup.py         # ★ 答题数据复位（**会删数据**：默认只预览，--yes 才删，三道闸）
+│   ├── case_copy_reset.py           # ★ 案例复制体检/复位（按"水位"只删自己刚造的那条记录）
 │   └── calibrate_android_doc.py     # 校准「逐行详解」里的行号引用（--check 接进离线闸门）
 ├── docs/
 │   ├── 使用手册-零基础.md            # ★ 没写过代码的人看这份：怎么跑、怎么看结果、怎么填表写用例
@@ -819,6 +820,7 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │       ├── test_login_and_navigation.js    # 切用户中心 + 打印页面结构（**故意留下的反例**）
 │       ├── test_quiz_activity.js    # 首页活动卡 -> 答题页（**默认不提交**，见文件头）
 │       ├── test_quiz_submit.js      # ★ 答题**写链路**：复位→逐题作答→提交→界面断言→库里校验→再复位
+│       ├── test_case_copy.js        # ★ 案例复制**写链路**：记水位→复制→断言提示→库里校验→复位
 │       └── test_switch_to_user_center.js   # 切用户中心（带真实验证）
 └── report/                          # 测试产物（已 gitignore）
     ├── photo_app/                   # 用例截图
