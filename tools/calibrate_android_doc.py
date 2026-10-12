@@ -127,7 +127,10 @@ def main(argv=None):
     if args.check:
         return 1 if changes else 0
     if changes:
-        DOC.write_text("\n".join(out) + "\n", encoding="utf-8")
+        # newline="\n"：仓库的 .gitattributes 把换行锁定成 LF。不加这句，
+        # Windows 上会把 \n 变 \r\n，于是这个"被生成的文件"在 git 里永远显示为已修改
+        #（export_cases.py 踩过同一个坑）。
+        DOC.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
         print("\nwritten back: %s" % DOC.name)
     return 0
 
