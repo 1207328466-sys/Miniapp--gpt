@@ -84,4 +84,27 @@ function writeSwitchOffMessage(what) {
   );
 }
 
-module.exports = { runTool, runDbTool, runCaseCopyTool, writeSwitchOn, writeSwitchOffMessage, CLEANUP_TOOL, TOOLS };
+/**
+ * 开关没开时的错误对象。
+ *
+ * ⚠️ 刻意带上 `preconditionNotMet`：这样它在 pytest 里会记成 **SKIPPED**（"这次不适用"），
+ * 而不是 FAILED（"这条坏了"）。区别很重要 —— 默认全量跑里带着一条红的"写用例"，
+ * 久而久之就没人看红了（本项目最忌讳的"报告说谎"）。
+ * 同时跳过是**可见的**：报告里会写"写开关没开"，摘要里也专门列一行"跳过的 = 这次没测"。
+ */
+function writeSwitchOffError(what) {
+  const e = new Error(writeSwitchOffMessage(what));
+  e.preconditionNotMet = true;
+  return e;
+}
+
+module.exports = {
+  runTool,
+  runDbTool,
+  runCaseCopyTool,
+  writeSwitchOn,
+  writeSwitchOffMessage,
+  writeSwitchOffError,
+  CLEANUP_TOOL,
+  TOOLS,
+};

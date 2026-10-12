@@ -431,8 +431,13 @@ async function ensureOnHomeFeed(page, { maxAttempts = 3 } = {}) {
     page = await ensureOn(page); // 切到「有问必答」tab（幂等）
     // 【不猜前台页】直接找"哪一页是首页信息流"（前台优先，找不到就跨页找），
     // 找到就把后续操作锚在它上面
+    const fg = await base.foreground(page);
     const feed = await findHomeFeedPage(page);
-    if (feed) {
+    // 【但它必须"真的显示在屏幕上"】2026/10/12 踩到：搜索页压在上面时，跨页查找会在
+    // **被盖住的**首页页里找到信息流 tab —— 于是这一步"报成功"，屏幕上却还停在搜索页；
+    // 紧接着的动作（点底部 tab）自然失败，而报错看着像"导航坏了"。
+    // 这正是坑 22 的规矩：**到达/幂等判断要看前台页**，跨页查找只用于"定位"。
+    if (feed && feed === fg) {
       // 到了信息流还不算完：小程序会记住上次选中的是哪个筛选 tab
       //（上一次跑「检查活动入口」会把 tab 停在「我的关注」），所以顺手归位到默认 tab ——
       // 这样表格里的「回到首页」才真的是"标准起点"。owner 2026/10/10 反馈的就是这个。
@@ -440,7 +445,8 @@ async function ensureOnHomeFeed(page, { maxAttempts = 3 } = {}) {
       return await scrollFeedToTop(switched);
     }
     console.log(
-      `  [自愈] 已在「有问必答」tab 但看不到信息流筛选 tab（多半停在搜索页/搜索结果页），点返回退出（第 ${attempt}/${maxAttempts} 次）`
+      `  [自愈] 屏幕上显示的不是首页信息流${feed ? "（首页被别的页盖住了）" : ""}，` +
+        `多半停在搜索页/搜索结果页/二级页，点返回退出（第 ${attempt}/${maxAttempts} 次）`
     );
     page = await goBack(await base.foreground(page));
   }

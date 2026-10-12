@@ -30,9 +30,10 @@
 const fs = require("fs");
 const path = require("path");
 const { appTest } = require("../../common/app_common");
-const { runDbTool, writeSwitchOn, writeSwitchOffMessage } = require("../../common/db_tool");
+const { runDbTool, writeSwitchOn, writeSwitchOffError } = require("../../common/db_tool");
 const android = require("../../app_sub_function/suprecast_app/android");
 const pages = require("../../app_sub_function/suprecast_app/pages");
+const caseCopy = require("../../app_sub_function/suprecast_app/case_copy");
 
 const base = pages.base;
 const qaPage = pages.qaPage;
@@ -288,14 +289,14 @@ const HANDLERS = {
 
   提交答卷: {
     run: async (page) => {
-      if (!writeSwitchOn()) throw new Error(writeSwitchOffMessage("「提交答卷」"));
+      if (!writeSwitchOn()) throw writeSwitchOffError("「提交答卷」");
       return quizPage.submitAnswers(page, { allowSubmit: true });
     },
   },
 
   复位答题记录: {
     run: async (page, activityName) => {
-      if (!writeSwitchOn()) throw new Error(writeSwitchOffMessage("「复位答题记录」"));
+      if (!writeSwitchOn()) throw writeSwitchOffError("「复位答题记录」");
       const out = runDbTool(["--activity-name", activityName, "--yes"]);
       // 工具可能因为"名字不唯一 / 库名不像测试库 / 量太大"而**拒绝执行**（那时一条都没删），
       // 所以这里必须认 [CLEANUP] mode=clean 这一行，不能只看"命令跑完了"
@@ -359,6 +360,18 @@ const HANDLERS = {
 
   检查案例库介绍长图符合需求: {
     run: (page, _p1, _p2, ctx) => caseLibrary.assertIntroRules(page, {}, ctx),
+  },
+
+  /*
+   * 复制案例 —— **一条龙**（记水位 → 点复制 → 断言提示 → 库里校验 → 自动复位）。
+   * 为什么不像别的动作那样"一步只干一件事"：这是**写数据**的动作，
+   * 拆开就意味着"有人可能忘了写最后那步复位"，而忘了复位的后果是别人看到数据被改过。
+   */
+  复制当前案例: {
+    run: async (page, _p1, _p2, ctx) => {
+      if (!writeSwitchOn()) throw writeSwitchOffError("「复制当前案例」");
+      return caseCopy.runCopyChain(page, { ctx });
+    },
   },
 };
 

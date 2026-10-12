@@ -3,21 +3,24 @@
  * @cur_file: test_case_copy.js
  * @create_date: 2026/10/12
  *
- * 用例：案例库的**复制写链路** —— 复位 -> 点复制 -> 断言提示 -> 库里校验 -> 再复位
+ * 用例：案例库的**复制写链路** —— 记水位 -> 点复制 -> 断言提示 -> 库里校验 -> 复位
  *
  * 【这条用例在测什么】
- * 需求 713381608：「案例复制完成后，弹出提示复制成功，提示『使用手机号登录智铸超云，即可查看案例详情』」
- * 「免费和付费案例都提示」—— 只有**真的复制一次**才测得到。
+ * 需求 713381608：「案例复制完成后，弹出提示复制成功，提示『使用手机号登录智铸超云，即可查看案例详情』」。
+ * 只有**真的复制一次**才测得到 —— 复制会写 `simulation_copy_record` 并让 `simulation_case.copy_count` +1。
  *
  * 【开关】
  *   `UITEST_ALLOW_SUBMIT=1` —— 不设就**记跳过**（不是失败，也不是偷偷跑）。
- *   复制会写 `simulation_copy_record` 并让 `simulation_case.copy_count` +1；
- *   免费案例不扣积分、付费案例会扣（本用例默认挑列表第一张，2026/10/12 那天是免费案例）。
+ *   免费案例复制不扣积分；付费案例会扣（本用例默认挑列表第一张，2026/10/12 那天是免费案例）。
  *
  * 【数据安全：跑前跑后都复位】
  *   `tools/case_copy_reset.py` 用**水位**复位：复制前记下最大记录 id，
- *   复位时只删"id 比水位大的、且属于这个案例的"记录，并把 copy_count 减回去 ——
- *   这样别人同时在复制也不会被误删。owner 2026/10/12 授权：可以改这个用户的数据。
+ *   复位时只删「id 比水位大的、且属于这个案例的」记录，并把 copy_count 减回去 ——
+ *   别人同时在复制也不会被误删。owner 2026/10/12 授权：可以改这个用户的数据。
+ *
+ * 【和表格动作「复制当前案例」的关系】
+ *   逻辑都在 `app_sub_function/suprecast_app/case_copy.js`（一处实现，两处用）。
+ *   表格动作走的是一条龙（含自动复位）；本文件把每一步拆成独立步骤，便于报告里逐步追溯。
  *
  * 运行（PowerShell）：
  *   $env:UITEST_ALLOW_SUBMIT="1"; python run.py -k 案例复制写链路
@@ -27,38 +30,18 @@
 
 const path = require("path");
 const { appTest } = require("../../common/app_common");
-const { runCaseCopyTool } = require("../../common/db_tool");
+const caseCopy = require("../../app_sub_function/suprecast_app/case_copy");
 const pages = require("../../app_sub_function/suprecast_app/pages");
 
-const base = pages.base;
 const caseLibrary = pages.caseLibrary;
 
 const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
 const ALLOW_SUBMIT = process.env.UITEST_ALLOW_SUBMIT === "1";
 
-// 这次复制的是哪个案例（由第 3 步从页面上读出来），以及复制前的水位
+// 这次复制的是哪个案例（第 3 步从页面读出来）、复制前的水位（第 4 步记下）
 let caseTitle = "";
-let baseline = null; // {copyCount, records, maxRecordId}
-
+let baseline = null;
 let resetDone = false;
-
-/**
- * 从工具输出里抠出 `[COPY] ...` 那一行的键值对。
- *
- * ⚠️ 必须取**最后一行**，不能取第一行：这个工具一次运行会打两行 ——
- * 先 `mode=report`（体检），再 `mode=reset`（复位）或 `mode=verify`（校验）。
- * 第一版取第一行，于是复位明明成功了、却被判成"没看到 mode=reset"（真机踩到）。
- */
-function parseCopyLine(out) {
-  const all = out.match(/^\[COPY\].*$/gm) || [""];
-  const line = all[all.length - 1];
-  const kv = {};
-  line.split(/\s+/).forEach((part) => {
-    const i = part.indexOf("=");
-    if (i > 0) kv[part.slice(0, i)] = part.slice(i + 1);
-  });
-  return { line, kv };
-}
 
 async function requireSubmitSwitch(page) {
   if (!ALLOW_SUBMIT) {
@@ -83,60 +66,43 @@ async function openFirstCaseAndRemember(page, _kwargs, ctx) {
   caseTitle = list[0].title;
   console.log(`  这次要复制的案例：${JSON.stringify(caseTitle)}（列表第一张）`);
   if (ctx) ctx.set("copyCaseTitle", caseTitle);
-  page = await caseLibrary.openFirstCase(page);
+  return caseLibrary.openFirstCase(page);
+}
+
+/** 页面上读到的标题要和列表里记的一致（防"点开的是别的案例"这种串台） */
+async function crossCheckTitle(page) {
+  const onPage = await caseCopy.readTitleFromPage(page);
+  if (onPage !== caseTitle) {
+    throw new Error(
+      `列表里记的标题是 ${JSON.stringify(caseTitle)}，详情页上却是 ${JSON.stringify(onPage)} ——` +
+        ` 两边对不上，说明点开的不是同一张卡片。复位会按标题定位，这一步必须先对齐。`
+    );
+  }
+  console.log(`  标题对齐：列表与详情页都是 ${JSON.stringify(caseTitle)}`);
   return page;
 }
 
 /** 记下复制前的水位（只读）——复位要用它 */
 async function readBaseline(page) {
-  const out = runCaseCopyTool(["--case-title", caseTitle]);
-  const { line, kv } = parseCopyLine(out);
-  if (!line.includes("mode=report")) {
-    throw new Error(`读案例状态失败（没看到 mode=report）：${line || "工具没有输出 [COPY] 行"}`);
-  }
-  baseline = {
-    copyCount: Number(kv.copy_count),
-    records: Number(kv.records),
-    maxRecordId: Number(kv.max_record_id),
-  };
+  baseline = caseCopy.readState(caseTitle);
   console.log(
     `  复制前：copy_count=${baseline.copyCount}、记录 ${baseline.records} 条、水位 id=${baseline.maxRecordId}`
   );
   return page;
 }
 
-/** 跑完（或失败）都把这次造的记录清掉 */
-async function resetCopy(page) {
-  if (!caseTitle || !baseline) return page; // 还没开始写，不用复位
-  const out = runCaseCopyTool([
-    "--case-title",
-    caseTitle,
-    "--reset",
-    "--since-id",
-    String(baseline.maxRecordId),
-    "--yes",
-  ]);
-  const { line } = parseCopyLine(out);
-  if (!line.includes("mode=reset")) {
-    throw new Error(`复位没成功（没看到 mode=reset）：${line || "工具没有输出 [COPY] 行"}`);
-  }
-  resetDone = true;
+/** 库里交叉验证：复制记录 +1、copy_count +1 */
+async function assertDbChanged(page) {
+  caseCopy.assertCopied(caseTitle, baseline);
   return page;
 }
 
-/** 库里交叉验证：复制记录 +1、copy_count +1（界面上说成功，库里也得真有） */
-async function assertDbChanged(page) {
-  const out = runCaseCopyTool(["--case-title", caseTitle]);
-  const { kv } = parseCopyLine(out);
-  const records = Number(kv.records);
-  const copyCount = Number(kv.copy_count);
-  const problems = [];
-  if (records !== baseline.records + 1) problems.push(`复制记录应当是 ${baseline.records + 1} 条，实际 ${records} 条`);
-  if (copyCount !== baseline.copyCount + 1) {
-    problems.push(`copy_count 应当是 ${baseline.copyCount + 1}，实际 ${copyCount}`);
-  }
-  if (problems.length) throw new Error("复制后数据库对不上：\n  - " + problems.join("\n  - "));
-  console.log(`  断言通过: 库里确实多了一条复制记录（${records} 条），copy_count ${baseline.copyCount} -> ${copyCount}`);
+/** 复位：按水位只删这次造的那条记录 */
+async function resetCopy(page) {
+  if (!caseTitle || !baseline) return page;
+  const line = caseCopy.reset(caseTitle, baseline.maxRecordId);
+  console.log(`  复位完成：${line}`);
+  resetDone = true;
   return page;
 }
 
@@ -144,6 +110,7 @@ async function assertDbChanged(page) {
   const funcList = [
     [requireSubmitSwitch, null],
     [openFirstCaseAndRemember, null],
+    [crossCheckTitle, null],
     [readBaseline, null],
     [caseLibrary.copyCurrentCase, { ctx: null }],
     [assertDbChanged, null],
