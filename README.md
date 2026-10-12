@@ -746,7 +746,9 @@ miniapp_test_case/
 │   └── selftest-export-cases.py     # 用例表规则自检（不需要手机）：校验 + 体检规则 14 项
 ├── tools/
 │   ├── build_requirements_kb.py     # 从超云生态平台导出生成 knowledge/ 清单
-│   └── export_cases.py              # ★ 把 cases/用例表.xlsx 导出成用例读的 json
+│   ├── export_cases.py              # ★ 把 cases/用例表.xlsx 导出成用例读的 json
+│   ├── import_db_config.py          # 从 miniapp-flow/.env 生成本地数据库配置（不入库）
+│   └── quiz_data_report.py          # ★ 答题数据体检（只读）：有哪些记录、清理会涉及多少行
 ├── docs/
 │   ├── 使用手册-零基础.md            # ★ 没写过代码的人看这份：怎么跑、怎么看结果、怎么填表写用例
 │   ├── 框架导读.md                   # 深度导读（设计原理、执行链路、自测题）
