@@ -43,6 +43,7 @@ const userCenter = pages.userCenter;
 const pointsMall = pages.pointsMall;
 const postDetail = pages.postDetail;
 const caseLibrary = pages.caseLibrary;
+const courseDetail = pages.courseDetail;
 
 const TABLE_JSON = path.join(__dirname, "..", "..", "cases", "用例表.json");
 const TABLE_XLSX = path.join(__dirname, "..", "..", "cases", "用例表.xlsx");
@@ -372,6 +373,16 @@ const HANDLERS = {
       if (!writeSwitchOn()) throw writeSwitchOffError("「复制当前案例」");
       return caseCopy.runCopyChain(page, { ctx });
     },
+  },
+
+  /* ---------- 2026/10/12 追加：课程详情页（需求 713367615）---------- */
+
+  打开课程详情: {
+    run: (page, courseName) => courseDetail.openByName(page, courseName),
+  },
+
+  检查课程详情页符合需求: {
+    run: (page, expectActiveTab, _p2, ctx) => courseDetail.assertRules(page, { expectActiveTab }, ctx),
   },
 };
 

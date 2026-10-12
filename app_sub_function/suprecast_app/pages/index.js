@@ -24,4 +24,5 @@ module.exports = {
   pointsMall: require("./points_mall_page"),
   postDetail: require("./post_detail_page"),
   caseLibrary: require("./simulation_case_page"),
+  courseDetail: require("./course_detail_page"),
 };
