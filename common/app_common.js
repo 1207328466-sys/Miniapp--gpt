@@ -75,6 +75,27 @@ const rafAliveState = new WeakMap();
 const rafAliveSince = new WeakMap();
 
 /**
+ * 这个页面能不能当「前台页候选」。
+ *
+ * 【为什么要有它】2026/10/12 真机抓到：context 里有一个 **11 个元素、正文全空**的页面
+ * （appid 与真页面相同，所以躲过了安全阀），它在某个瞬间"出了一帧"，
+ * 于是被「最近开始出帧的优先」这条规则挑中 —— 整个用例从一个空白页起步
+ * （表现：以「回到首页」开头的用例第一步就失败，报「返回无效、元素数 747→747 没变化」）。
+ *
+ * 判据（都是实测值，不是拍的）：
+ *   - url 含 `/preload/`：微信的预加载空壳页（框架早期文档里就记过这一类）
+ *   - 元素数 < 30：实测真实页面 74~747 个元素，空壳页 9~11 个 —— 中间留足余量
+ *
+ * 兜底：过滤后一个候选都不剩时，调用方会退回"不过滤"的集合 ——
+ * 宁可回到旧行为，也不能因为过滤变成"没有页面可用"。
+ */
+function isUsableForegroundCandidate({ url = "", count = -1 } = {}) {
+  if (/\/preload\//.test(String(url))) return false;
+  if (count >= 0 && count < 30) return false;
+  return true;
+}
+
+/**
  * 取"同一个目标小程序"的候选页面（appid 安全阀 + 丢掉已销毁的页）。
  *
  * ⚠️ 这里和 `resolveForegroundPage` 里的候选筛选是**同一套规则的两处实现**：
@@ -683,6 +704,17 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
     candidates = pool.length ? pool : all;
   }
 
+  // 3.5) 【空壳页先剔掉】按 url 剔一遍（`/preload/` 是微信的预加载空壳页）。
+  //      过滤后一个不剩就用原集合 —— 宁可回到旧行为，也不能"没有候选"。
+  const byUrl = candidates.filter((p) => {
+    try {
+      return isUsableForegroundCandidate({ url: p.url() });
+    } catch (e) {
+      return true;
+    }
+  });
+  if (byUrl.length) candidates = byUrl;
+
   // 4) 并行探测：只有还在产出动画帧的才是前台页。
   //    这里必须并行——串行探测每个页面最多要等一个 timeout，
   //    7 个页面就是 3.5 秒的纯等待，放到每一步之前会严重拖慢用例。
@@ -699,7 +731,11 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
       }
     })
   );
-  const alive = probes.filter(Boolean);
+  const aliveRaw = probes.filter(Boolean);
+  // 4.5) 【空壳页再剔一遍】这次按元素数（实测真实页面 74~747，空壳页 9~11）。
+  //      同样：剔完一个不剩就不过滤。
+  const alive = aliveRaw.filter((a) => isUsableForegroundCandidate({ count: a.count }));
+  if (!alive.length) alive.push(...aliveRaw);
 
   // 记录"每个页面是什么时候开始出帧的"（多候选时用它挑：刚出帧的那个 = 刚跳过去的页面）
   const nowTs = Date.now();
@@ -985,6 +1021,7 @@ module.exports = {
   appTest,
   runAppSteps,
   pickForegroundCandidate,
+  isUsableForegroundCandidate,
   getWxWebviewPage,
   pickForegroundPage,
   resolveForegroundPage,

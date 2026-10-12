@@ -9,7 +9,7 @@
  * 退出码：0 = 全过；1 = 有不过的
  */
 
-const { pickForegroundCandidate } = require("../../common/app_common");
+const { pickForegroundCandidate, isUsableForegroundCandidate } = require("../../common/app_common");
 
 let failed = 0;
 function check(name, got, want) {
@@ -73,6 +73,18 @@ const since = {};
   const alive = [HOME, SEARCH].map((p) => ({ page: p, count: p.count }));
   const r = pickForegroundCandidate(alive, { callerPage: null, sinceOf, now, recentMs: 0 });
   check("⑤ 关掉新规则后确实落回老行为（证明第①条真在起作用）", r.page.name, "首页");
+}
+
+// 场景⑥：空壳页不算候选 —— 数值全部来自 2026/10/12 真机实测
+{
+  const preload = { url: "https://servicewechat.com/preload/page-frame.html", count: 9 };
+  const blank = { url: "https://servicewechat.com/wx3de2e1d179b60303/0/page-frame.html", count: 11 };
+  const real = { url: "https://servicewechat.com/wx3de2e1d179b60303/0/page-frame.html", count: 423 };
+  const quiz = { url: "https://servicewechat.com/wx3de2e1d179b60303/0/page-frame.html", count: 747 };
+  check("⑥ 预加载空壳页（9 元素 /preload/）不算候选", isUsableForegroundCandidate(preload), false);
+  check("⑥ 空白页（11 元素、正文空）不算候选", isUsableForegroundCandidate(blank), false);
+  check("⑥ 真实首页（423 元素）算候选", isUsableForegroundCandidate(real), true);
+  check("⑥ 真实答题页（747 元素）算候选", isUsableForegroundCandidate(quiz), true);
 }
 
 console.log(failed ? `\n有 ${failed} 项不通过` : "\n全部通过");

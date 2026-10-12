@@ -57,9 +57,16 @@ async function describe(p) {
       };
     })
     .catch(() => null);
+  let url = "(拿不到)";
+  try {
+    url = p.url();
+  } catch (e) {
+    /* 页面刚被销毁 */
+  }
   const raf = await p.evaluate(RAF, RAF_TIMEOUT).catch(() => null);
   const count = await p.locator("*").count().catch(() => -1);
   return {
+    url,
     raf,
     count,
     ...(info || { vis: "(读不到)", focus: null, len: 0, text: "" }),
@@ -81,8 +88,9 @@ async function sample(page, label) {
     console.log(
       `  ${i + 1}) RAF=${String(r.raf).padEnd(5)} 元素=${String(r.count).padEnd(4)} ` +
         `字数=${String(r.len).padEnd(5)} vis=${String(r.vis).padEnd(8)} ` +
-        `focus=${String(r.focus).padEnd(5)} | ${r.text}`
+        `focus=${String(r.focus).padEnd(5)} | ${r.url.replace("https://servicewechat.com/", "")}`
     );
+    console.log(`      文字: ${r.text}`);
   });
   return page;
 }
