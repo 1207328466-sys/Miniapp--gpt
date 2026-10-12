@@ -311,7 +311,7 @@ const myStep = async (page) => { ... }          // ⚠️ name 可能是 "myStep
 
 | 路线 | 适合谁 | 怎么做 |
 |---|---|---|
-| **填表**（不用写代码） | 只描述「先点这个、再检查那个」的用例 | 打开 `cases/用例表.xlsx`，按「动作清单」一行一步地填，然后 `python run.py`。规则与 35 个动作见 [使用手册-零基础.md](docs/使用手册-零基础.md) |
+| **填表**（不用写代码） | 只描述「先点这个、再检查那个」的用例 | 打开 `cases/用例表.xlsx`，按「动作清单」一行一步地填，然后 `python run.py`。规则与 37 个动作见 [使用手册-零基础.md](docs/使用手册-零基础.md) |
 | 写 .js 用例 | 流程复杂、要判断条件、要读页面数据 | 往下看本节 |
 
 表格里的「动作」不够用时，正确的做法是**先把新动作加到动作清单与页面对象**，
@@ -787,7 +787,8 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │           ├── column_detail_page.js#   专栏详情页
 │           ├── user_center_page.js  #   用户中心
 │           ├── qa_page.js           #   有问必答页 + 搜索页
-│           └── quiz_activity_page.js#   首页活动卡区 + 答题活动页
+│           ├── quiz_activity_page.js#   首页活动卡区 + 答题活动页
+│           └── simulation_case_page.js #  案例库（**入口 = 底部 tab「设计专区」**，需求 713381608）
 ├── test_case/                       # 用例层
 │   ├── pytest.ini                   # pytest 配置
 │   ├── diagnostic/                  # 诊断工具（不以 test_ 开头，pytest 不收集）
@@ -804,6 +805,10 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │   │   ├── probe_quiz_answer_all.js # 逐题作答演练（**不提交**，选择不会保存）
 │   │   ├── probe_search_bar_covered.js  # 首页滚动后搜索栏的位置与"命中测试"（坑 25 的证据）
 │   │   ├── probe_tap_guard.js       # **反向验证**：盖住目标后点击必须被拦下（坑 25 的护栏）
+│   │   ├── probe_home_feed_scroll_reset.js # 「回到首页」有没有把信息流滚回顶部（三步正反验证）
+│   │   ├── probe_design_zone.js     # 设计专区里有什么 —— 案例库入口就是这么找到的
+│   │   ├── probe_case_library_page.js # 案例库列表页结构（介绍 banner / 复制图标 / 卡片类名）
+│   │   ├── probe_ime_blocks_bottom_tab.js # 软键盘开着时「回到首页」还走不走得通（坑 26）
 │   │   └── run_case.py              # 跑单个用例并把输出按正确编码落盘
 │   └── suprecast_app/
 │       ├── conftest.py              # ★ 桥接层：让 pytest 能执行 .js；表格用例按编号拆成多条
@@ -817,6 +822,7 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │       └── test_switch_to_user_center.js   # 切用户中心（带真实验证）
 └── report/                          # 测试产物（已 gitignore）
     ├── photo_app/                   # 用例截图
+    ├── 结果摘要.md                   # ★ 每次跑完自动生成的中文摘要（哪条红、哪条跳过、为什么）
     └── diagnostic/                  # 诊断脚本产物
 ```
 
