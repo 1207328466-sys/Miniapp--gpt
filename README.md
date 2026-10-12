@@ -801,6 +801,7 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │   │   ├── set_feed_tab.js          # 把首页筛选 tab 切到指定那个（准备现场 / 验收用）
 │   │   ├── probe_pages.js           # 每个页面的身份/可见性信号（--timeline 采样跳转过程）
 │   │   ├── selftest_pick_page.js    # 不需要手机：验证"多候选时挑前台页"的三条规则
+│   │   ├── selftest_quiz_question_options.js # 不需要手机：答题"选项 2~6 且互不相同"规则（10 项）
 │   │   ├── probe_case_banner_rotation.js  # 首页那张「教你玩转 仿真案例库」是不是轮播（结论：不在首屏）
 │   │   ├── probe_case_banner_img.js # 首页信息流的图片元素清单（认清"图片卡"是哪个）
 │   │   ├── probe_quiz_page.js       # 看答题页是单题还是多题 + **题目边界**（一题 = .quiz-card）
