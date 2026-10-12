@@ -58,6 +58,48 @@ async function probe(page) {
   console.log("\n=== 候选课程卡片（前 8 个）===");
   listInfo.cards.forEach((c) => console.log("  <%s> 位置=%s 文字=%s", c.cls, JSON.stringify(c.rect), JSON.stringify(c.text)));
 
+  // 课程卡片到底用什么类名？—— 从"人已学习"这段文字往上找祖先，看谁像卡片
+  const cardShape = await fg.evaluate(() => {
+    const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+    const out = [];
+    for (const el of Array.from(document.querySelectorAll("wx-view, wx-text, div"))) {
+      const t = norm(el.innerText);
+      if (!/人已学习/.test(t) || t.length > 60) continue;
+      let cur = el;
+      const chain = [];
+      for (let i = 0; i < 5 && cur; i++) {
+        const r = cur.getBoundingClientRect();
+        chain.push(`${cur.tagName.toLowerCase()}.${String(cur.getAttribute("class") || "").split(/\s+/).slice(0, 2).join(".")}(${Math.round(r.width)}x${Math.round(r.height)})`);
+        cur = cur.parentElement;
+      }
+      out.push({ text: t.slice(0, 30), chain });
+      if (out.length >= 3) break;
+    }
+    return out;
+  });
+  console.log("\n=== 课程卡片：从「人已学习」往上找祖先 ===");
+  cardShape.forEach((c) => {
+    console.log("  文字=%s", JSON.stringify(c.text));
+    c.chain.forEach((x, i) => console.log("     第 %d 层: %s", i, x));
+  });
+
+  // 卡片信息块里是**分行**的：看清楚哪一行是课程名
+  const lines = await fg.evaluate(() => {
+    const out = [];
+    for (const el of Array.from(document.querySelectorAll("wx-view"))) {
+      const cls = String(el.getAttribute("class") || "");
+      if (!/rounded-_32px_/.test(cls)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 200 || r.height < 100 || r.height > 400) continue;
+      const info = el.querySelector("wx-view.p-4") || el;
+      out.push(String(info.innerText || "").split("\n").map((s) => s.trim()).filter(Boolean));
+      if (out.length >= 4) break;
+    }
+    return out;
+  });
+  console.log("\n=== 卡片信息块的分行内容（前 4 张）===");
+  lines.forEach((l, i) => console.log("  #%d %s", i + 1, JSON.stringify(l)));
+
   /*
    * 点**我们已购买、且还没开始学**的那门课（列表上写着「已购买(学习进度 0%)」）——
    * 需求 713367615 第 3 条说的就是这种状态：「已购买用户-未开始学习：点击课程进入学习页，
