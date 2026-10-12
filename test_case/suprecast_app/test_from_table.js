@@ -81,6 +81,10 @@ const HANDLERS = {
     },
   },
 
+  打开搜索页: { run: (page) => qaPage.openSearch(page) },
+
+  点第一个热门话题: { run: (page) => qaPage.openFirstHotTopic(page) },
+
   执行搜索: {
     run: async (page) => {
       // 为什么要单独一个动作：`打开搜索并输入` 只是把字打进输入框 —— 不执行搜索的话

@@ -29,6 +29,11 @@ const base = require("./base_page");
 const SEL = {
   searchBar: ".search-container", // 有问必答页的搜索栏（点它跳搜索页）
   searchInput: "wx-input.search-input", // 搜索页的真实输入框
+  // 搜索页的「热门话题」区块（需求 713129788）。实测 2026/10/12：
+  //   .hot-topics                区块容器；**标题是一张图片**（按文字「热门话题」找不到！）
+  //   .hot-topics .inline-flex   每个条目（序号 1..5 + 话题名），实测正好 5 个
+  hotTopics: ".hot-topics",
+  hotTopicItem: ".hot-topics .inline-flex",
   // 首页内容流首块的「活动卡」（答题/图文/跳转链接三种类型共用）。
   // ⚠️ `quiz_activity_page.js` 用同一选择器点进答题活动 —— 两处引用同一个 class，
   // 小程序改版时这两个地方要一起改。
@@ -424,6 +429,32 @@ async function openSearch(page, { timeout = 15000 } = {}) {
   return found;
 }
 
+/** 搜索页上热门话题有几个（只读；0 通常说明没停在搜索页上） */
+async function hotTopicCount(page) {
+  const fg = await base.foreground(page);
+  return base.countOf(fg, SEL.hotTopicItem);
+}
+
+/**
+ * 点搜索页上的**第一个热门话题**（需求 713129788：点它应跳到"热门话题搜索结果页"）。
+ *
+ * 为什么按"第一个"点、不按名字点：热门话题是后台配置的（取前 5 个），名字会变 ——
+ * 把名字写进用例，过两天就红了。按位置点才稳定。
+ */
+async function openFirstHotTopic(page) {
+  const fg = await base.foreground(page);
+  const n = await base.countOf(fg, SEL.hotTopicItem);
+  if (n === 0) {
+    throw new Error(
+      `当前页面上没有热门话题条目（${SEL.hotTopicItem} 命中 0 个）—— 是不是没停在搜索页上？\n` +
+        `  当前页面前 120 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 120))}`
+    );
+  }
+  await base.tapLocator(fg, fg.locator(SEL.hotTopicItem).first(), `第 1 个热门话题（共 ${n} 个）`);
+  await base.sleep(2500); // 等结果页渲染
+  return base.foreground(page);
+}
+
 /**
  * 往搜索框输入关键词，并且**读回校验**。
  *
@@ -546,6 +577,8 @@ module.exports = {
   ensureOn,
   ensureOnHomeFeed,
   openSearch,
+  hotTopicCount,
+  openFirstHotTopic,
   typeKeyword,
   assertActivityBlockInAllFeedTabs,
 };
