@@ -526,6 +526,52 @@ def validate(rows):
     return cases
 
 
+# 「检查类」动作：名字以「检查」开头的就是（以后加检查动作不用改这里）
+CHECK_ACTIONS = tuple(a["name"] for a in ACTIONS if a["name"].startswith("检查"))
+
+# 这些动作跑完，手机多半会停在二级页（搜索页 / 答题页 / 专栏详情页）——
+# 表里的用例共用同一部手机，停在二级页会让下一条报「找不到底部 tab」（坑 15 / 坑 17）
+LEAVES_SECOND_LEVEL_PAGE = ("打开搜索并输入", "打开答题活动", "点第一张专栏")
+
+START_ACTION = "回到首页"
+
+
+def lint_cases(cases):
+    """对表格用例做**体检**，返回一组「建议」（不是错误，导出照常成功）。
+
+    为什么要有它：下面这几条都是本项目用真金白银换来的规矩，但它们原本只写在文档里 ——
+    零基础的人填表时看不到。把规矩变成导出时的一句提示，比事后解释便宜得多。
+
+    规则（每条都来自真实的坑）：
+      1. 一条用例里一个「检查」都没有 -> 这条用例测不出任何东西
+         （README §五 的反例 test_login_and_navigation.js 就是这个毛病）；
+      2. 第一步不是「回到首页」 -> 起点不干净，上一条用例的残留会带进来（坑 15 / 17）；
+      3. 最后一步会停在二级页 -> 建议补一步「回到首页」把手机交还（坑 15）。
+
+    注意：**只提示、不拦截**。拦下来会挡住"我就是要这样写"的合理场景，
+    提示的价值在于让人知道有这么回事。
+    """
+    warnings = []
+    for c in cases:
+        actions = [s["action"] for s in c["steps"]]
+        if not any(a in CHECK_ACTIONS for a in actions):
+            warnings.append(
+                "用例「%s」里一个「检查…」动作都没有 —— 只有操作没有检查的用例测不出问题，"
+                "建议补一条断言（参考 README §五 的反例说明）" % c["id"]
+            )
+        if actions and actions[0] != START_ACTION:
+            warnings.append(
+                "用例「%s」的第一步是「%s」，不是「回到首页」—— 起点不先摆正的话，"
+                "上一条用例停在哪儿会带进来（筛选 tab、二级页都可能有残留）" % (c["id"], actions[0])
+            )
+        if actions and actions[-1] in LEAVES_SECOND_LEVEL_PAGE:
+            warnings.append(
+                "用例「%s」最后一步是「%s」，跑完手机很可能停在二级页 —— 建议末尾补一步"
+                "「回到首页」把手机交还给下一条" % (c["id"], actions[-1])
+            )
+    return warnings
+
+
 def write_json_if_changed(payload, path):
     """内容没变就不重写文件。
 
@@ -626,10 +672,13 @@ def main(argv=None):
         print("\n  改完这张表再跑一次；若只想跑别的用例：python run.py suprecast_app/test_example.js")
         return 1
 
+    warnings = lint_cases(cases)
+
     payload = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "generated_by": "tools/export_cases.py",
         "source": "cases/用例表.xlsx",
+        "warnings": warnings,
         "actions": [
             {
                 "name": a["name"],
@@ -649,6 +698,10 @@ def main(argv=None):
     print("  共 %d 条用例、%d 个步骤%s" % (len(cases), total_steps, "" if changed else "（表格内容没变，文件未改动）"))
     for c in cases:
         print("    - %s  %s（%d 步）" % (c["id"], c["name"], len(c["steps"])))
+    if warnings:
+        print("\n[建议] 表格能跑，但这几处按经验值得改一改（只提示，不影响执行）：")
+        for w in warnings:
+            print("  · %s" % w)
     return 0
 
 

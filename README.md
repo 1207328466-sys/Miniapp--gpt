@@ -742,7 +742,8 @@ miniapp_test_case/
 │   ├── 工作项清单.md                 #   247 条需求（机器生成）
 │   └── 迭代与模块汇总.md              #   计数（机器生成）
 ├── scripts/
-│   └── check-docs.py                # 文档防腐检查：反引号路径是否真实存在
+│   ├── check-docs.py                # 文档防腐检查：反引号路径是否真实存在
+│   └── selftest-export-cases.py     # 用例表规则自检（不需要手机）：校验 + 体检规则 14 项
 ├── tools/
 │   ├── build_requirements_kb.py     # 从超云生态平台导出生成 knowledge/ 清单
 │   └── export_cases.py              # ★ 把 cases/用例表.xlsx 导出成用例读的 json

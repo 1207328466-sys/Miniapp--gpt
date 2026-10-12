@@ -1,7 +1,8 @@
 {
-  "generated_at": "2026-10-10 18:07:49",
+  "generated_at": "2026-10-12 10:40:55",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
+  "warnings": [],
   "actions": [
     {
       "name": "回到首页",
