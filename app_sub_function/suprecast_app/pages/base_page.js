@@ -181,10 +181,19 @@ async function classOf(p, selector) {
  */
 async function withBottomTabBar(page) {
   const fg = await foreground(page);
+  // 【先看结构，再看文字】2026/10/12 踩到：案例详情页的一条**评论内容里含「我的」**
+  // （"我的期待我委屈委屈我"），旧判据"四个 tab 文案里命中任意一个就算有 tab 栏"当场被骗 ——
+  // 于是框架认定"已经在 tab 页上"，不去点返回，接着点底部 tab 就报「找不到底部 tab」。
+  // 小程序的底部 tab 栏有稳定类名（custom-tab-bar），拿它当第一判据。
+  if ((await countOf(fg, '[class*="custom-tab-bar"]')) > 0) return fg;
+
+  // 结构上找不到时才退回文字判据，并且要求**至少两个** tab 文案同时出现：
+  // 只命中一个仍然可能只是页面内容里恰好有这两个字（比如评论、帖子标题）。
+  let hits = 0;
   for (const text of BOTTOM_TAB_TEXTS) {
-    if ((await countOfText(fg, text)) > 0) return fg;
+    if ((await countOfText(fg, text)) > 0) hits += 1;
   }
-  return null;
+  return hits >= 2 ? fg : null;
 }
 
 /**

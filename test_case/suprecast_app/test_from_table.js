@@ -344,6 +344,22 @@ const HANDLERS = {
   检查案例库列表符合需求: {
     run: (page, _p1, _p2, ctx) => caseLibrary.assertListRules(page, {}, ctx),
   },
+
+  打开第一个案例: {
+    run: (page) => caseLibrary.openFirstCase(page),
+  },
+
+  检查案例详情页符合需求: {
+    run: (page, _p1, _p2, ctx) => caseLibrary.assertDetailRules(page, {}, ctx),
+  },
+
+  打开案例库介绍长图: {
+    run: (page) => caseLibrary.openIntro(page),
+  },
+
+  检查案例库介绍长图符合需求: {
+    run: (page, _p1, _p2, ctx) => caseLibrary.assertIntroRules(page, {}, ctx),
+  },
 };
 
 /* ---------------- 读表格 + 校验 ---------------- */

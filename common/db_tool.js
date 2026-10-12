@@ -15,7 +15,13 @@
 const path = require("path");
 const { execFileSync } = require("child_process");
 
-const CLEANUP_TOOL = path.join(__dirname, "..", "tools", "quiz_data_cleanup.py");
+/** 框架用到的 Python 数据工具（路径集中在这里，别在调用处各写各的） */
+const TOOLS = {
+  cleanup: path.join(__dirname, "..", "tools", "quiz_data_cleanup.py"),
+  caseCopy: path.join(__dirname, "..", "tools", "case_copy_reset.py"),
+};
+
+const CLEANUP_TOOL = TOOLS.cleanup;
 
 /**
  * 跑 `tools/quiz_data_cleanup.py`。
@@ -25,12 +31,14 @@ const CLEANUP_TOOL = path.join(__dirname, "..", "tools", "quiz_data_cleanup.py")
  *        把输出原样返回（调用方要自己判读数对不对，例如「检查答题记录数」）。
  * @returns {string} 工具的完整输出
  */
-function runDbTool(args, { expectOk = true } = {}) {
+function runTool(which, args, { expectOk = true } = {}) {
+  const script = TOOLS[which];
+  if (!script) throw new Error(`未知的数据库工具：${which}（可选：${Object.keys(TOOLS).join(" / ")}）`);
   // 用 UITEST_PYTHON（conftest 会把它设成"当前这个 Python 解释器"），
   // 免得在多 Python/虚拟环境的机器上调到另一个没装 pymysql 的解释器上
   const py = process.env.UITEST_PYTHON || "python";
   try {
-    const out = execFileSync(py, [CLEANUP_TOOL, ...args], {
+    const out = execFileSync(py, [script, ...args], {
       encoding: "utf-8",
       env: { ...process.env, PYTHONIOENCODING: "utf-8" },
     });
@@ -41,10 +49,20 @@ function runDbTool(args, { expectOk = true } = {}) {
     if (out.trim()) console.log(out.trim());
     if (!expectOk) return out;
     throw new Error(
-      `数据库工具执行失败（参数：${args.join(" ")}，退出码 ${e.status}）：\n  ` +
+      `数据库工具执行失败（${path.basename(script)} 参数：${args.join(" ")}，退出码 ${e.status}）：\n  ` +
         out.trim().split("\n").slice(-4).join("\n  ")
     );
   }
+}
+
+/** 答题数据复位工具（tools/quiz_data_cleanup.py） */
+function runDbTool(args, opts) {
+  return runTool("cleanup", args, opts);
+}
+
+/** 案例复制体检/复位工具（tools/case_copy_reset.py） */
+function runCaseCopyTool(args, opts) {
+  return runTool("caseCopy", args, opts);
 }
 
 /**
@@ -66,4 +84,4 @@ function writeSwitchOffMessage(what) {
   );
 }
 
-module.exports = { runDbTool, writeSwitchOn, writeSwitchOffMessage, CLEANUP_TOOL };
+module.exports = { runTool, runDbTool, runCaseCopyTool, writeSwitchOn, writeSwitchOffMessage, CLEANUP_TOOL, TOOLS };

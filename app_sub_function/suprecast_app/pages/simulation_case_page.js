@@ -51,7 +51,20 @@ const SEL = {
   cardPoints: ".case-list-card-points",
   cardStats: ".case-list-card-stats",
   cardCount: ".case-list-card-viewcount",
+  // ---------- 详情页（2026/10/12 实测结构）----------
+  detailPage: ".case-detail-page",
+  detailTitle: ".case-title",
+  commentSection: ".case-comment-section",
+  commentCount: ".comment-count",
+  footerIcons: ".footer-icons",
+  // ---------- 介绍长图页（点案例库首页那张 banner 进去）----------
+  introPage: ".cases-ct-intro-page",
+  introImage: '[class*="cases-ct-intro-bg"]',
+  copyButtonText: "复制案例",
 };
+
+/** 复制成功后的提示文案（**逐字取自需求 713381608 原文**） */
+const COPY_TOAST = ["复制成功", "使用手机号登录智铸超云，即可查看案例详情"];
 
 /** 进入案例库的入口：底部 tab「设计专区」（它本身就是案例库） */
 const TAB_TEXT = "设计专区";
@@ -202,14 +215,290 @@ async function assertListRules(page, kwargs, ctx) {
   return fg;
 }
 
+/* ============================================================================
+ * 案例详情页（需求 713381608 的另一半）
+ * ============================================================================
+ * 实测结构（2026/10/12，点开列表第一张卡片「凝固应力」）：
+ *   .case-detail-page            整页根容器
+ *     custom-navbar              顶栏（返回箭头是 .nav-return / icon-base-nav-return）
+ *     .case-title                案例名
+ *     .meta-block-details / .case-id   案例信息（网格数、时间…）
+ *     .case-detail-after-card-divider  分割线
+ *     .case-comment-section > .comment-list / .comment-count / .comment-item
+ *     .flex.justify-end.footer-icons   底部操作条（实测只有三个图标：点赞 thumb-up / 收藏 star1 / 分享 fenxiang）
+ *
+ * 需求原文里跟本页有关的两条（都是只读能验的）：
+ *   ① 「案例详情页**取消显示底部的复制数图标、评论数图标**」
+ *      —— 实测底部操作条里只有 thumb-up / star1 / fenxiang，没有 fuzhi、也没有评论图标 ✓
+ *   ② 「评论区标题『**全部回答**』改为『**全部评论**』」
+ *      —— 实测页面上有「全部评论」、找不到「全部回答」✓
+ *   ③ 「案例详情分享时，缩略图采用案例封面图，标题采用案例名称」—— 分享走系统 UI，**测不了**（记在文档里）
+ */
+
+/** 现在屏幕上是不是案例详情页 */
+async function isOnDetail(page) {
+  const fg = await base.foreground(page);
+  return (await base.countOf(fg, SEL.detailPage)) > 0;
+}
+
+/** 定位案例详情页（前台优先，找不到就跨页找） */
+async function findDetailPage(page) {
+  const fg = await base.foreground(page);
+  if ((await base.countOf(fg, SEL.detailPage)) > 0) return fg;
+  return base.findPageContaining(page, { selector: SEL.detailPage });
+}
+
+/**
+ * 点开列表第一张卡片，进案例详情页（幂等：已经在详情页就直接返回）。
+ * 点击走 `tapLocator`（真实 adb 事件），并且会等 `.case-detail-page` 真的出现才算到达。
+ */
+async function openFirstCase(page, { timeout = 15000 } = {}) {
+  if (await isOnDetail(page)) {
+    console.log("已在案例详情页，跳过导航（幂等）");
+    return base.foreground(page);
+  }
+  page = await ensureOn(page);
+  const list = await readList(page);
+  if (!list.length) throw await base.notFound("案例卡片（列表是空的，没法点进详情页）", await base.foreground(page));
+
+  const fg = await base.foreground(page);
+  await base.tapLocator(fg, fg.locator(SEL.card).first(), `第一张案例卡片「${list[0].title}」`);
+  const ok = await base.waitUntil(async () => (await base.countOf(await base.foreground(page), SEL.detailPage)) > 0, {
+    timeout,
+  });
+  if (!ok) {
+    const now = await base.foreground(page);
+    throw new Error(
+      `点第一张案例卡片后没有进入详情页（未出现 ${SEL.detailPage}）。\n` +
+        `  当前页面前 120 字: ${JSON.stringify((await base.pageText(now)).slice(0, 120))}`
+    );
+  }
+  console.log(`已进入案例详情页（案例：${list[0].title}）`);
+  return base.foreground(page);
+}
+
+/**
+ * 校验案例详情页是否符合需求（**只读**，断言取自需求 713381608 原文）：
+ *   1. 「评论区标题『全部回答』改为『全部评论』」—— 断言：有「全部评论」、**没有**「全部回答」
+ *   2. 「案例详情页取消显示底部的复制数图标、评论数图标」—— 断言：底部操作条里的图标
+ *      **不含**复制（fuzhi）/ 评论（pinglun / comment）类图标（实测是点赞 / 收藏 / 分享三个）
+ */
+async function assertDetailRules(page, kwargs, ctx) {
+  const fg = (await findDetailPage(page)) || (await base.foreground(page));
+  const problems = [];
+
+  const info = await fg.evaluate(
+    (sel) => {
+      const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+      const text = norm(document.body.innerText);
+      const icons = [];
+      for (const el of Array.from(document.querySelectorAll("wx-text, wx-view"))) {
+        const c = String(el.getAttribute("class") || "");
+        if (!/icon-base|iconfont/i.test(c)) continue;
+        const r = el.getBoundingClientRect();
+        icons.push({ cls: c.slice(0, 80), y: Math.round(r.y) });
+      }
+      const commentSection = document.querySelector(sel.commentSection);
+      return {
+        hasAllComment: text.includes("全部评论"),
+        hasAllAnswer: text.includes("全部回答"),
+        icons,
+        commentSectionText: commentSection ? norm(commentSection.innerText).slice(0, 40) : "",
+        title: norm((document.querySelector(sel.detailTitle) || {}).innerText || ""),
+      };
+    },
+    { commentSection: SEL.commentSection, detailTitle: SEL.detailTitle }
+  );
+
+  if (!info.hasAllComment) problems.push("评论区标题不是「全部评论」（需求要求由「全部回答」改过来）");
+  if (info.hasAllAnswer) problems.push("页面上还能看到「全部回答」（需求要求改成「全部评论」）");
+
+  // 「底部的复制数图标、评论数图标」应当已经取消 —— 实测底部只有点赞/收藏/分享
+  const bottomIcons = info.icons.filter((i) => i.y > 600);
+  const badBottom = bottomIcons.filter((i) => /fuzhi|pinglun|comment/i.test(i.cls));
+  if (badBottom.length) {
+    problems.push(
+      `详情页底部仍有复制/评论类图标：${JSON.stringify(badBottom.map((i) => i.cls))}（需求要求取消）`
+    );
+  }
+
+  if (problems.length) {
+    throw new Error(
+      "案例详情页不符合需求（713381608）：\n  - " +
+        problems.join("\n  - ") +
+        `\n  实测: ${JSON.stringify({ 标题: info.title, 底部图标: bottomIcons.map((i) => i.cls), 评论区: info.commentSectionText })}`
+    );
+  }
+  console.log(
+    `断言通过: 评论区标题是「全部评论」（页面上没有「全部回答」）；` +
+      `详情页底部只有 ${bottomIcons.length} 个图标（${bottomIcons.map((i) => i.cls.split(" ").find((c) => c.startsWith("icon-base")) || "?").join(" / ")}），没有复制数/评论数图标`
+  );
+  if (ctx) {
+    ctx.set("caseDetailTitle", info.title);
+    ctx.set("caseDetailCommentTitle", "全部评论");
+  }
+  return fg;
+}
+
+/* ============================================================================
+ * 介绍长图页（点案例库首页那张介绍 banner 进去）
+ * ============================================================================
+ * 实测（2026/10/12）：点 banner 后落到 `.cases-ct-intro-page`，
+ * 整页就是**一张超长图** `cases-ct-intro-bg`（实测 347x3790，比屏幕高 5 倍多），
+ * 页面文字只有 7 个字（「玩转仿真案例库」）—— 这正是需求说的「介绍长图详情页」。
+ *
+ * 需求原文：「案例库列表在分类上方展示介绍 banner，**点击后进入介绍长图详情页**」
+ *          「首页 banner 图，为**单张图片**，点击后跳转到案例库模块介绍长图页面」
+ *          （owner 2026/10/12 澄清：这里的"首页"指**设计中心/案例库的首页**，不是小程序首页）
+ */
+
+async function isOnIntro(page) {
+  const fg = await base.foreground(page);
+  return (await base.countOf(fg, SEL.introPage)) > 0;
+}
+
+/** 点案例库首页那张介绍 banner，进介绍长图页 */
+async function openIntro(page, { timeout = 15000 } = {}) {
+  if (await isOnIntro(page)) {
+    console.log("已在介绍长图页，跳过导航（幂等）");
+    return base.foreground(page);
+  }
+  page = await ensureOn(page);
+  const fg = await base.foreground(page);
+  await base.tapSelector(fg, SEL.topBanner, "案例库首页的介绍 banner");
+  const ok = await base.waitUntil(async () => (await base.countOf(await base.foreground(page), SEL.introPage)) > 0, {
+    timeout,
+  });
+  if (!ok) {
+    const now = await base.foreground(page);
+    throw new Error(
+      `点了介绍 banner 但没有进入介绍长图页（未出现 ${SEL.introPage}）。\n` +
+        `  当前页面前 120 字: ${JSON.stringify((await base.pageText(now)).slice(0, 120))}`
+    );
+  }
+  console.log("已进入介绍长图页");
+  return base.foreground(page);
+}
+
+/**
+ * 校验介绍长图页是否符合需求（**只读**）：
+ *   1. 整页是**单张图片**（就是那张介绍长图），不是一堆文字/列表
+ *   2. 这张图是**长图**：高度远大于屏高（实测 3790 : 屏高 673 ≈ 5.6 倍）
+ */
+async function assertIntroRules(page, kwargs, ctx) {
+  const fg = (await base.foreground(page)) || (await base.foreground(page));
+  const problems = [];
+  const info = await fg.evaluate(
+    (sel) => {
+      const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+      const img = document.querySelector(sel.introImage);
+      const r = img ? img.getBoundingClientRect() : null;
+      const all = Array.from(document.querySelectorAll("wx-image")).filter((el) => {
+        const b = el.getBoundingClientRect();
+        return b.width > 100 && b.height > 100;
+      });
+      return {
+        hasImage: !!img,
+        imgRect: r ? [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] : null,
+        imgCount: all.length,
+        vh: Math.round(window.innerHeight),
+        text: norm(document.body.innerText).slice(0, 60),
+      };
+    },
+    { introImage: SEL.introImage }
+  );
+
+  if (!info.hasImage) {
+    problems.push(`找不到介绍长图（${SEL.introImage}）—— 需求要求这一页是"单张图片"的长图`);
+  } else {
+    const [, , w, h] = info.imgRect;
+    if (h <= info.vh) {
+      problems.push(`介绍图不算"长图"：图高 ${h}px，屏高约 ${info.vh}px（长图应当明显高于屏幕）`);
+    }
+    if (info.imgCount > 1) {
+      problems.push(`页面上不止一张大图（${info.imgCount} 张）—— 需求说是"单张图片"`);
+    }
+    if (w < 200) problems.push(`介绍图太窄（宽 ${w}px），不像铺满屏宽的介绍长图`);
+  }
+
+  if (problems.length) {
+    throw new Error(
+      "案例库介绍长图页不符合需求（713381608）：\n  - " +
+        problems.join("\n  - ") +
+        `\n  实测: ${JSON.stringify(info)}`
+    );
+  }
+  console.log(
+    `断言通过: 介绍长图页是单张大图（${info.imgRect[2]}x${info.imgRect[3]}，屏高约 ${info.vh}），点击案例库首页 banner 确实跳到这一页`
+  );
+  if (ctx) ctx.set("caseIntroImageSize", `${info.imgRect[2]}x${info.imgRect[3]}`);
+  return fg;
+}
+
+/* ============================================================================
+ * 复制案例（**会写数据**：复制记录 +1、案例复制数 +1；付费案例还会扣积分）
+ * ============================================================================
+ * 需求原文：「案例复制完成后，弹出提示复制成功，提示
+ *   『使用手机号登录智铸超云，即可查看案例详情』」「免费和付费案例都提示」
+ *
+ * 2026/10/12 真机实测（案例 60「凝固应力」，免费）：
+ *   点详情页的「复制案例」→ 约 1.4 秒后页面出现「复制成功 / 使用手机号登录智铸超云，即可查看案例详情」，
+ *   同时库里 `simulation_copy_record` +1、`simulation_case.copy_count` +1（免费案例不扣积分）。
+ *
+ * ⚠️ 时间顺序注意：提示**不是立刻出现**的（第 1 次采样还没看到，1.4 秒后才出现），
+ *    所以这里必须"等 + 轮询"，不能点完立刻断言。
+ */
+
+/** 点当前详情页的「复制案例」，并断言弹出需求里那句提示（**会写数据**） */
+async function copyCurrentCase(page, { timeout = 10000, ctx = null } = {}) {
+  const fg = await base.foreground(page);
+  if ((await base.countOf(fg, SEL.detailPage)) === 0) {
+    throw new Error(`「复制案例」要在案例详情页上执行（当前页没有 ${SEL.detailPage}）`);
+  }
+  const before = await base.pageText(fg);
+  if (!before.includes(SEL.copyButtonText)) {
+    throw new Error(`详情页上找不到「${SEL.copyButtonText}」按钮`);
+  }
+
+  await base.tapText(fg, SEL.copyButtonText, `「${SEL.copyButtonText}」按钮`);
+
+  const ok = await base.waitUntil(
+    async () => {
+      const text = await base.pageText(await base.foreground(page));
+      return COPY_TOAST.every((w) => text.includes(w));
+    },
+    { timeout, interval: 400 }
+  );
+  if (!ok) {
+    const now = await base.pageText(await base.foreground(page));
+    const missing = COPY_TOAST.filter((w) => !now.includes(w));
+    throw new Error(
+      `点了「${SEL.copyButtonText}」但没有出现需求要求的提示，缺：${JSON.stringify(missing)}。\n` +
+        `  当前页面前 200 字: ${JSON.stringify(now.slice(0, 200))}`
+    );
+  }
+  console.log(`断言通过: 复制后弹出提示「${COPY_TOAST.join(" / ")}」（与需求原文逐字一致）`);
+  if (ctx) ctx.set("caseCopyToastVerified", true);
+  return base.foreground(page);
+}
+
 module.exports = {
   SEL,
   TAB_TEXT,
   TOP_TABS,
   SORT_TAGS,
+  COPY_TOAST,
   isOn,
   findCasePage,
   ensureOn,
   readList,
   assertListRules,
+  isOnDetail,
+  findDetailPage,
+  openFirstCase,
+  assertDetailRules,
+  isOnIntro,
+  openIntro,
+  assertIntroRules,
+  copyCurrentCase,
 };
