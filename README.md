@@ -218,6 +218,20 @@ device.shell("input tap x y")        // 4. 通过 adb 让系统真实点一下
 |---|---|---|
 | `resolveForegroundPage(page)` | 谁是前台？**看谁还在产生动画帧** | 首选，通用；一次兜住"已销毁"和"已降级为后台页"两种失效 |
 | `findPageWith(page, selector)` | 谁含有目标选择器，谁就是目标页 | 已知目标页有独特元素时（在 `android.js`） |
+| `findPageContaining(page, {selector/text/texts})` | 跨候选页找"含这个元素/文字"的那一页 | **定位**：我只想知道"哪个页里有我要的东西"（`common/app_common.js`） |
+| `pagesContaining` / `waitForPageContaining` | 同上，返回全部命中页 / 反复等到出现 | 点完等新页出现（例：点搜索栏后等 `wx-input.search-input`；可排除点击前的旧页） |
+
+**⚠️ 2026/10/10 补的一条硬规则：「候选页里存在某一页」≠「屏幕上显示的就是它」**
+
+- **定位**（找东西、找页）→ 用跨页查找，别猜前台页。
+  例：`openSearch` 点完搜索栏后直接在候选页里找含 `wx-input.search-input` 的那页并锚定它；
+  `检查答题页符合需求`、`检查活动入口` 这类**结构/需求检查**也锚定到识别出来的页。
+- **幂等/到达判断**（"我是不是已经在用户中心"）→ 必须看**前台页**。
+  实证：把跨页查找用在幂等判断上 —— 「切到用户中心」0.55 秒就报成功、**页面压根没切**，
+  紧接着的断言在前台（首页）上跑，得到一条假失败。
+- 多候选时的挑法也换了：**最近才开始出帧的那个优先**（= 刚跳过去的页面），
+  不再按"元素数最多"（那会挑中被盖住的旧页）。纯函数 `pickForegroundCandidate`，
+  自检：`node test_case/diagnostic/selftest_pick_page.js`、`selftest_anchor.js`。
 
 `resolveForegroundPage` 的判据很巧妙：
 
