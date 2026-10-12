@@ -39,6 +39,7 @@ const learnCenter = pages.learnCenter;
 const quizPage = pages.quizPage;
 const userCenter = pages.userCenter;
 const pointsMall = pages.pointsMall;
+const postDetail = pages.postDetail;
 
 const TABLE_JSON = path.join(__dirname, "..", "..", "cases", "用例表.json");
 const TABLE_XLSX = path.join(__dirname, "..", "..", "cases", "用例表.xlsx");
@@ -84,6 +85,10 @@ const HANDLERS = {
   打开搜索页: { run: (page) => qaPage.openSearch(page) },
 
   点第一个热门话题: { run: (page) => qaPage.openFirstHotTopic(page) },
+
+  打开第一个帖子: { run: (page) => postDetail.openFirstFromFeed(page) },
+
+  点主页按钮: { run: (page) => postDetail.tapHome(page) },
 
   执行搜索: {
     run: async (page) => {
