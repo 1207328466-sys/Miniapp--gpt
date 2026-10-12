@@ -798,13 +798,19 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
       const count = await still[0].locator("*").count().catch(() => 0);
       picked = { page: still[0], count };
     } else {
-      // 多候选：按 pickForegroundCandidate 的三条规则挑（详见该函数的注释）
-      const chosen = pickForegroundCandidate(alive, {
-        callerPage: page,
-        sinceOf: (p) => rafAliveSince.get(p) || 0,
-      });
-      picked = { page: chosen.page, count: chosen.count };
-      if (still.length > 1) {
+      // 【先问"输入送给谁"】多页同时出帧时，DOM 层看不出谁在显示（见 pickByInputOwnership 的说明）。
+      // 输入只会到显示中的那一页，所以先发一次 ESC 探一下 —— 探不出来才退回原来的挑法。
+      const byInput = await pickByInputOwnership(still);
+      if (byInput) {
+        const count = await byInput.locator("*").count().catch(() => 0);
+        picked = { page: byInput, count };
+      } else {
+        // 多候选且输入归属也定不下来：按 pickForegroundCandidate 的三条规则挑（详见该函数注释）
+        const chosen = pickForegroundCandidate(alive, {
+          callerPage: page,
+          sinceOf: (p) => rafAliveSince.get(p) || 0,
+        });
+        picked = { page: chosen.page, count: chosen.count };
         log.debug(`前台页判定仍有 ${still.length} 个候选（疑似页面过渡中），挑法：${chosen.why}`);
         // 把候选页身份打出来（限流，一次运行里只打第一次）—— 这种事靠猜没有意义
         await logAmbiguity(still, picked.page);
@@ -816,6 +822,87 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
     log.debug(`前台页解析: 候选=${candidates.length} 活跃=${alive.length} 元素数=${picked.count}`);
   }
   return picked.page;
+}
+
+/* ============================================================================
+ * 输入归属探测：**多页同时出帧时，谁才是屏幕上显示的那一页**
+ * ============================================================================
+ * 【为什么需要它 —— 2026/10/12 一次全量 22 条全红】
+ *   框架原来的前台页判据是「还在出帧 + 最近开始出帧的优先」。可**多个页面会同时以 60fps 出帧**
+ *   （实测案例库页就一直在动画），于是判据认错了页：屏幕上明明已经切回首页（截图为证），
+ *   框架却还盯着案例库页 —— 接下来每一步的"校验"都在错的页上做，整轮测试全红。
+ *
+ * 【试过、但不行的信号（都实测过，别再走一遍）】
+ *   · document.visibilityState / document.hidden —— 所有页都是 visible/false
+ *   · document.hasFocus() —— 所有页都 true
+ *   · body 的 display / visibility / opacity / 尺寸 / elementFromPoint —— 全都一样
+ *   · 出帧节奏（连续 8 个 120ms 窗口）—— 显示页与后台页都是 8/8/8/8…，分辨不出来
+ *
+ * 【能行的信号：输入只会送到显示中的那一页】
+ *   给每个候选页装一个 keydown 监听，然后发一次 `keyevent 111`（ESC）——
+ *   实测**只有显示中的那一页**收到了 keydown；而且 ESC 只收输入法、不改界面（零副作用）。
+ */
+const inputProbeReady = new WeakSet();
+
+/** 给一页装"输入到达"监听（每页只装一次） */
+async function installInputProbe(p) {
+  if (inputProbeReady.has(p)) return true;
+  try {
+    await p.evaluate(() => {
+      if (window.__uitestInputProbeInstalled) return;
+      window.__uitestInputProbeInstalled = true;
+      window.__uitestInputSeen = 0;
+      document.addEventListener("keydown", () => {
+        window.__uitestInputSeen = Date.now();
+      }, true);
+    });
+    inputProbeReady.add(p);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * 用"输入归属"挑出前台页。
+ * @param {Array<import('playwright').Page>} candidates 都还在出帧的候选页
+ * @returns {Promise<import('playwright').Page|null>} 恰好一页收到输入就返回它；否则 null（交给原判据）
+ */
+async function pickByInputOwnership(candidates) {
+  const installed = await Promise.all(candidates.map(installInputProbe));
+  if (!installed.some(Boolean)) return null;
+
+  let device = null;
+  try {
+    // 延迟 require：本文件与 android.js 互相引用（同文件里其它地方也是这么做的）
+    device = await require("../app_sub_function/suprecast_app/android").getDevice();
+  } catch (e) {
+    return null;
+  }
+
+  const sentAt = Date.now();
+  try {
+    await device.shell("input keyevent 111"); // ESC：只收输入法，不改界面
+  } catch (e) {
+    return null;
+  }
+  await new Promise((r) => setTimeout(r, 250));
+
+  const seen = [];
+  for (const p of candidates) {
+    try {
+      const ts = await p.evaluate(() => window.__uitestInputSeen || 0);
+      if (ts >= sentAt) seen.push(p);
+    } catch (e) {
+      // 页面不可用，跳过
+    }
+  }
+  if (seen.length === 1) {
+    log.debug("前台页输入归属判定：只有一页收到输入（ESC）");
+    return seen[0];
+  }
+  log.debug(`前台页输入归属判定：${seen.length} 页收到输入（无法据此定论）`);
+  return null;
 }
 
 /**

@@ -61,7 +61,22 @@ const SEL = {
   introPage: ".cases-ct-intro-page",
   introImage: '[class*="cases-ct-intro-bg"]',
   copyButtonText: "复制案例",
+  /*
+   * 付费案例点「复制案例」会先弹一个确认框（实测结构 2026/10/12）：
+   *   .nut-dialog-outer.exchange-dialog
+   *     .nut-dialog-header   「确认复制案例？」
+   *     .nut-dialog-content  「花费积分：5 / 兑换成功后，不支持撤回兑换」
+   *     .nut-dialog-footer
+   *       .nut-button-default  「取消」
+   *       .nut-button-primary  「确定」   ← 点它才真的复制（扣积分）
+   */
+  dialogFooter: ".nut-dialog-footer",
+  dialogConfirm: ".nut-dialog-footer .nut-button-primary",
+  dialogCancel: ".nut-dialog-footer .nut-button-default",
 };
+
+/** 付费案例复制确认框里的标志文案（用它判断"到底弹没弹确认框"） */
+const COPY_CONFIRM_MARK = "确认复制案例";
 
 /** 复制成功后的提示文案（**逐字取自需求 713381608 原文**） */
 const COPY_TOAST = ["复制成功", "使用手机号登录智铸超云，即可查看案例详情"];
@@ -278,6 +293,58 @@ async function openFirstCase(page, { timeout = 15000 } = {}) {
 }
 
 /**
+ * 按**名字**点开某个案例（付费案例的复制链路要用它挑样本）。
+ *
+ * 做法：直接按文字点；点不到就往下滚几屏再找（列表是瀑布流，目标可能不在首屏）。
+ * 找到之后等 `.case-detail-page` 出现才算到达 —— 与 openFirstCase 同一套判据。
+ */
+async function openByName(page, name, { timeout = 15000, maxScrolls = 6 } = {}) {
+  const wanted = String(name || "").trim();
+  if (!wanted) throw new Error("「打开案例」需要填案例名（参数1），例如 填充任务1");
+
+  page = await ensureOn(page);
+  if (await isOnDetail(page)) {
+    const cur = await base.textOf(await base.foreground(page), SEL.detailTitle);
+    if (String(cur || "").trim() === wanted) {
+      console.log(`已在案例详情页「${cur}」，跳过导航（幂等）`);
+      return base.foreground(page);
+    }
+  }
+
+  const { swipeUp } = require("../android");
+  for (let attempt = 0; attempt <= maxScrolls; attempt++) {
+    const fg = await base.foreground(page);
+    if ((await base.countOfText(fg, wanted)) > 0) {
+      await base.tapText(fg, wanted, `案例「${wanted}」`);
+      const ok = await base.waitUntil(async () => (await base.countOf(await base.foreground(page), SEL.detailPage)) > 0, {
+        timeout,
+      });
+      if (!ok) {
+        const now = await base.foreground(page);
+        throw new Error(
+          `点了案例「${wanted}」但没有进入详情页（未出现 ${SEL.detailPage}）。\n` +
+            `  当前页面前 120 字: ${JSON.stringify((await base.pageText(now)).slice(0, 120))}`
+        );
+      }
+      console.log(`已进入案例详情页（点了「${wanted}」，第 ${attempt + 1} 屏）`);
+      return base.foreground(page);
+    }
+    if (attempt < maxScrolls) {
+      console.log(`  第 ${attempt + 1} 屏没看到「${wanted}」，往下滚一屏再找`);
+      page = await swipeUp(page);
+      await base.sleep(900);
+    }
+  }
+
+  const list = await readList(page);
+  throw new Error(
+    `往下滚了 ${maxScrolls} 屏也没找到案例「${wanted}」。\n` +
+      `  当前列表里读到 ${list.length} 张卡片，例如：${JSON.stringify(list.slice(0, 6).map((c) => c.title))}\n` +
+      `  （案例名要跟列表上一字不差；也可能是这个案例没发布/被删了）`
+  );
+}
+
+/**
  * 校验案例详情页是否符合需求（**只读**，断言取自需求 713381608 原文）：
  *   1. 「评论区标题『全部回答』改为『全部评论』」—— 断言：有「全部评论」、**没有**「全部回答」
  *   2. 「案例详情页取消显示底部的复制数图标、评论数图标」—— 断言：底部操作条里的图标
@@ -462,6 +529,31 @@ async function copyCurrentCase(page, { timeout = 10000, ctx = null } = {}) {
 
   await base.tapText(fg, SEL.copyButtonText, `「${SEL.copyButtonText}」按钮`);
 
+  /*
+   * 付费案例会**先弹确认框**（「确认复制案例？ 花费积分：N / 兑换成功后，不支持撤回兑换」），
+   * 只有点「确定」才真的复制（扣积分）。免费案例没有这一步，所以这里要"有就点、没有就跳过"。
+   * 实测（2026/10/12）：不加这一步，付费案例点完复制什么都不发生 —— 用例会报
+   * 「点了复制案例但没有出现提示」，看着像产品坏了，其实是流程上少点了一次确认。
+   */
+  // 免费案例直接出提示、付费案例先弹确认框 —— 所以这里等"两者之一先出现"，
+  // 而不是死等确认框（免费案例根本没有它，死等会白花几秒）
+  await base.waitUntil(
+    async () => {
+      const t = await base.pageText(await base.foreground(page));
+      return t.includes(COPY_CONFIRM_MARK) || COPY_TOAST.every((w) => t.includes(w));
+    },
+    { timeout: 8000, interval: 300 }
+  );
+  if ((await base.pageText(await base.foreground(page))).includes(COPY_CONFIRM_MARK)) {
+    const dialogText = await base.pageText(await base.foreground(page));
+    const feeMatch = dialogText.match(/花费积分\s*[:：]?\s*(\d+)/);
+    console.log(
+      `  [提示] 这是付费案例：弹出确认框「${COPY_CONFIRM_MARK}？花费积分：${feeMatch ? feeMatch[1] : "?"}」` +
+        ` —— 点「确定」继续（**这一步会真的扣积分**，积分在中台记账，本动作不复位积分）`
+    );
+    await base.tapSelector(await base.foreground(page), SEL.dialogConfirm, "确认框的「确定」");
+  }
+
   const ok = await base.waitUntil(
     async () => {
       const text = await base.pageText(await base.foreground(page));
@@ -488,6 +580,7 @@ module.exports = {
   TOP_TABS,
   SORT_TAGS,
   COPY_TOAST,
+  COPY_CONFIRM_MARK,
   isOn,
   findCasePage,
   ensureOn,
@@ -496,6 +589,7 @@ module.exports = {
   isOnDetail,
   findDetailPage,
   openFirstCase,
+  openByName,
   assertDetailRules,
   isOnIntro,
   openIntro,

@@ -46,6 +46,8 @@ function readState(title) {
     copyCount: Number(kv.copy_count),
     records: Number(kv.records),
     maxRecordId: Number(kv.max_record_id),
+    // 付费案例会扣积分（记在中台）—— 复位工具**不复位积分**，所以要把这件事显式带出来
+    points: kv.points === "free" || kv.points === undefined ? null : Number(kv.points),
   };
 }
 
@@ -104,6 +106,12 @@ async function runCopyChain(page, { ctx = null } = {}) {
   console.log(
     `  复制前：copy_count=${baseline.copyCount}、记录 ${baseline.records} 条、水位 id=${baseline.maxRecordId}`
   );
+  if (baseline.points !== null && baseline.points > 0) {
+    console.log(
+      `  ⚠️ 这是**付费案例**（${baseline.points} 积分）：复制会扣积分，而积分记在中台 —— ` +
+        `本动作**不复位积分**（owner 2026/10/12 已同意接受扣分）。记录与复制数照常复位。`
+    );
+  }
   if (ctx) ctx.set("copyCaseTitle", title);
 
   let ok = false;

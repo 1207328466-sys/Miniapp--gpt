@@ -127,7 +127,11 @@ def main(argv=None):
         print("\n=== 案例 %s「%s」===" % (cid, title))
         print("  积分：%s ｜ copy_count：%s" % ("免费" if points in (None, 0) else points, copy_count))
         print("  复制记录：%s 条（最大记录 id = %s，这就是复位用的水位）" % (st["records"], st["max_record_id"]))
-        print("[COPY] mode=report case=%s copy_count=%s records=%s max_record_id=%s" % (cid, copy_count, st["records"], st["max_record_id"]))
+        # points 也带上：付费案例复制会扣积分（记在中台），用例侧要能据此提醒"这一步扣了分"
+        print(
+            "[COPY] mode=report case=%s copy_count=%s records=%s max_record_id=%s points=%s"
+            % (cid, copy_count, st["records"], st["max_record_id"], points if points is not None else "free")
+        )
 
         if args.expect_records is not None:
             ok = st["records"] == args.expect_records

@@ -351,6 +351,10 @@ const HANDLERS = {
     run: (page) => caseLibrary.openFirstCase(page),
   },
 
+  打开案例: {
+    run: (page, caseName) => caseLibrary.openByName(page, caseName),
+  },
+
   检查案例详情页符合需求: {
     run: (page, _p1, _p2, ctx) => caseLibrary.assertDetailRules(page, {}, ctx),
   },
