@@ -752,11 +752,12 @@ miniapp_test_case/
 │   ├── build_requirements_kb.py     # 从超云生态平台导出生成 knowledge/ 清单
 │   ├── export_cases.py              # ★ 把 cases/用例表.xlsx 导出成用例读的 json
 │   ├── import_db_config.py          # 从 miniapp-flow/.env 生成本地数据库配置（不入库）
-│   └── quiz_data_report.py          # ★ 答题数据体检（只读）：有哪些记录、清理会涉及多少行
+│   ├── quiz_data_report.py          # ★ 答题数据体检（只读）：有哪些记录、清理会涉及多少行
+│   └── calibrate_android_doc.py     # 校准「逐行详解」里的行号引用（--check 接进离线闸门）
 ├── docs/
 │   ├── 使用手册-零基础.md            # ★ 没写过代码的人看这份：怎么跑、怎么看结果、怎么填表写用例
 │   ├── 框架导读.md                   # 深度导读（设计原理、执行链路、自测题）
-│   ├── android-js-逐行详解.md        # android.js 700 行逐段讲解
+│   ├── android-js-逐行详解.md        # android.js（939 行）逐段讲解。行号已校准，正文部分为**历史实现**，只当设计思路读
 │   ├── 框架能力与问题账本.md          # 实测能力清单 + 7 个根因的定位与修复证据
 │   ├── 踩坑记录.md                   # 实战踩坑记录
 │   └── 交接文档.md                   # ★ 接手必读：现在做到哪、下一步、不能丢的约定
