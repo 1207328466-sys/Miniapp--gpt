@@ -743,6 +743,7 @@ miniapp_test_case/
 │   └── 迭代与模块汇总.md              #   计数（机器生成）
 ├── scripts/
 │   ├── check-docs.py                # 文档防腐检查：反引号路径是否真实存在
+│   ├── check-safety.py              # 数据/凭据安全不变式（离线）：写操作词、安全阀、密钥不入库
 │   └── selftest-export-cases.py     # 用例表规则自检（不需要手机）：校验 + 体检规则 14 项
 ├── tools/
 │   ├── build_requirements_kb.py     # 从超云生态平台导出生成 knowledge/ 清单

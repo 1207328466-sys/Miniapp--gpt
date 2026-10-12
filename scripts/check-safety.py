@@ -1,0 +1,120 @@
+# -*- coding: utf-8 -*-
+"""数据 / 凭据安全不变式检查（**离线**，不需要手机）。
+
+为什么要有它：这个仓库里最容易「静默变坏」的两件事，都不会报错 ——
+
+  1. **表格动作里混进"会改数据"的操作**：测试环境用的是 owner 的**真实账号**，
+     一次误提交/误兑换就是真实数据被改（见 README §十 数据安全）。
+  2. **凭据进版本库**：数据库密码、SSH 私钥一旦提交出去，删掉文件也收不回来。
+
+所以把这两件事写成机器检查：改完代码跑一遍，绿了再提交。
+
+用法：python scripts/check-safety.py
+退出码：0 = 全部通过；1 = 有违反（会逐条列出）
+"""
+
+import os
+import re
+import subprocess
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(REPO, "tools"))
+
+import export_cases as m  # noqa: E402
+
+# 「会改数据」的词：表格里不许出现带这些词的动作，也不许「点文字」点它们
+WRITE_WORDS = (
+    "提交", "兑换", "签到", "下单", "支付", "付款", "购买", "领取",
+    "抽奖", "报名", "删除", "退款", "取消订单",
+)
+
+failures = []
+passed = 0
+
+
+def check(name, ok, detail=""):
+    global passed
+    if ok:
+        passed += 1
+        print("OK   %s" % name)
+    else:
+        failures.append("%s（%s）" % (name, detail))
+        print("FAIL %s（%s）" % (name, detail))
+
+
+def read(rel):
+    with open(os.path.join(REPO, rel), encoding="utf-8") as f:
+        return f.read()
+
+
+def tracked_files():
+    out = subprocess.run(
+        ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, encoding="utf-8"
+    )
+    return out.stdout.splitlines()
+
+
+# ---------- 1) 表格动作里不许有"会改数据"的动作 ----------
+hit = [a["name"] for a in m.ACTIONS if any(w in a["name"] for w in WRITE_WORDS)]
+check("表格动作里没有「会改数据」的动作", not hit, "发现：%s" % "、".join(hit))
+
+# ---------- 2) 「点文字」的安全阀还在（且词表没被缩小）----------
+table_js = read("test_case/suprecast_app/test_from_table.js")
+m_block = re.search(r"const BLOCKED_TEXT = \[(.*?)\];", table_js, re.S)
+blocked = re.findall(r'"([^"]+)"', m_block.group(1)) if m_block else []
+check("点文字的安全阀 BLOCKED_TEXT 还在", bool(blocked), "没找到 BLOCKED_TEXT")
+missing = [w for w in WRITE_WORDS if w not in blocked]
+check("安全阀词表没被缩小", not missing, "少了：%s" % "、".join(missing))
+check(
+    "点文字的实现里真的用了安全阀",
+    "BLOCKED_TEXT.find" in table_js or "BLOCKED_TEXT.includes" in table_js,
+    "看起来没调用 BLOCKED_TEXT",
+)
+
+# ---------- 3) 默认关闭的"写"开关没有被打开 ----------
+quiz_case = read("test_case/suprecast_app/test_quiz_activity.js")
+check(
+    "test_quiz_activity.js 的 ALLOW_SUBMIT 仍是 false",
+    re.search(r"const ALLOW_SUBMIT = false;", quiz_case) is not None,
+    "被改成 true 了？提交会写真实数据",
+)
+quiz_page = read("app_sub_function/suprecast_app/pages/quiz_activity_page.js")
+check(
+    "submitIfAllowed 默认仍不提交",
+    re.search(r"async function submitIfAllowed\(page, \{ allowSubmit = false \} = \{\}\)", quiz_page)
+    is not None,
+    "默认值被改了",
+)
+check(
+    "selectFirstOption 默认仍不点选项",
+    re.search(r"async function selectFirstOption\(page, \{ allowInteract = false \} = \{\}, ctx = null\)", quiz_page)
+    is not None,
+    "默认值被改了",
+)
+
+# ---------- 4) 凭据 / 密钥不许进版本库 ----------
+tracked = tracked_files()
+leaked = [
+    f
+    for f in tracked
+    if f.endswith((".pem", ".key", ".ppk"))
+    or re.search(r"(^|/)id_(rsa|ed25519|ecdsa)", f)
+    or f.endswith(".local.yaml")
+    or f.endswith("/.env")
+    or f == ".env"
+]
+check("没有凭据/密钥文件被 git 跟踪", not leaked, "跟踪了：%s" % "、".join(leaked))
+
+gitignore = read(".gitignore")
+need = ["config/db.local.yaml", "config/*.local.yaml", ".env", "id_ed25519", "*.pem"]
+missing_rules = [n for n in need if n not in gitignore]
+check(".gitignore 的安全规则还在", not missing_rules, "少了：%s" % "、".join(missing_rules))
+
+print()
+if failures:
+    print("有 %d 项不通过：" % len(failures))
+    for f in failures:
+        print("  · %s" % f)
+    sys.exit(1)
+print("全部通过（%d 项）" % passed)
