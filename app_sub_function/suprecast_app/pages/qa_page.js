@@ -436,7 +436,8 @@ async function ensureOnHomeFeed(page, { maxAttempts = 3 } = {}) {
       // 到了信息流还不算完：小程序会记住上次选中的是哪个筛选 tab
       //（上一次跑「检查活动入口」会把 tab 停在「我的关注」），所以顺手归位到默认 tab ——
       // 这样表格里的「回到首页」才真的是"标准起点"。owner 2026/10/10 反馈的就是这个。
-      return await switchToFeedTab(feed);
+      const switched = await switchToFeedTab(feed);
+      return await scrollFeedToTop(switched);
     }
     console.log(
       `  [自愈] 已在「有问必答」tab 但看不到信息流筛选 tab（多半停在搜索页/搜索结果页），点返回退出（第 ${attempt}/${maxAttempts} 次）`
@@ -448,6 +449,43 @@ async function ensureOnHomeFeed(page, { maxAttempts = 3 } = {}) {
     `尝试 ${maxAttempts} 次退出搜索视图后，仍然看不到首页的筛选 tab` +
       `（${FEED_TABS.join(" / ")}）。`
   );
+}
+
+/**
+ * 把首页信息流滚回顶部 —— **「起点摆正」的另一半**。
+ *
+ * 【为什么要它】2026/10/12 实测发现：上一条用例把信息流滚下去之后，「回到首页」只把
+ * 筛选 tab 归位，**滚动位置是留着的**。于是下一条用例的起点其实不在顶部：
+ *   · 搜索栏被滚出屏幕 —— 点它会落到别处（坑 25 的那次偶发红就是这么来的）；
+ *   · 「打开第一个帖子」点到的会是**另一篇帖子**。
+ * 第二种最难查：用例没错、框架也没错，错的是"上一条留下的痕迹"，
+ * 而失败信息看起来像产品问题。这跟"筛选 tab 会记住上次那个"（坑 18）是同一类问题，
+ * 修法也一样：**谁弄脏谁负责**，回首页就回标准起点。
+ *
+ * 实现：找页面上"最长的那个可滚动容器"（小程序的列表是 wx-scroll-view/div 自己在滚，
+ * 不是 window 滚动），把它的 scrollTop 归零。前后各读一次，有变化才打日志（不刷屏）。
+ */
+async function scrollFeedToTop(page) {
+  const fg = await base.foreground(page);
+  const info = await fg
+    .evaluate(() => {
+      let best = null;
+      for (const el of document.querySelectorAll("div, wx-view, wx-scroll-view")) {
+        const over = el.scrollHeight - el.clientHeight;
+        if (over > 20 && (!best || over > best.scrollHeight - best.clientHeight)) best = el;
+      }
+      const before = best ? best.scrollTop : window.scrollY || 0;
+      if (best) best.scrollTop = 0;
+      if (window.scrollY) window.scrollTo(0, 0);
+      const after = best ? best.scrollTop : window.scrollY || 0;
+      return { found: !!best, before: Math.round(before), after: Math.round(after) };
+    })
+    .catch(() => null);
+
+  if (info && info.before > 0) {
+    console.log(`  信息流原本停在 ${info.before}px 处 -> 已滚回顶部（起点摆正）`);
+  }
+  return fg;
 }
 
 /**
