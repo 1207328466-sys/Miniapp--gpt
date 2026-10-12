@@ -87,6 +87,52 @@ const SEL_Q = {
   head: ".quiz-card__head",
 };
 
+/**
+ * **纯函数**：按题判「选项 2~6 个且互不相同」（需求 713594985 原文口径）。
+ *
+ * 为什么要单独抽出来：这条规则**原本在多题活动上没法验**（整页数选项数，数出 52 个，只能整体跳过）。
+ * 抽成纯函数之后，即使线上此刻没有多题活动，也能用离线自检把它正反两面都钉住 ——
+ * 「该红时会红」不能靠"等下次线上出现多题活动"来碰运气。
+ *
+ * @param {Array<{head?:string, options:Array<{text:string}>}>} questions 一道题一项
+ * @returns {string[]} 问题清单（空数组 = 全部符合）
+ */
+function checkQuestionOptions(questions) {
+  /*
+   * 选项显示出来的文本带序号前缀（「A 正确」「B 错误」…），所以判"文字重复"时必须
+   * **先剥掉序号再比内容** —— 否则 "A 甲" 和 "B 甲" 会被当成两个不同的选项，
+   * 这条规则等于永远不生效（离线自检的反例当场抓到了这一点）。
+   */
+  const contentOf = (s) =>
+    String(s || "")
+      .trim()
+      .replace(/^[A-Fa-f][\s．.、:：)）]*/, "")
+      .trim();
+  const problems = [];
+  (questions || []).forEach((q, i) => {
+    const options = (q && q.options) || [];
+    const n = options.length;
+    if (n < 2 || n > 6) {
+      problems.push(
+        `第 ${i + 1} 题的选项应在 2~6 个，实际 ${n} 个（题目：${JSON.stringify((q && q.head) || "")}）`
+      );
+    }
+    const contents = options.map((o) => contentOf(o && o.text));
+    contents.forEach((c, j) => {
+      if (!c) {
+        // 只看得到序号、看不到内容（「A」这种）—— 多半是选项文字没渲染出来，不是"内容为空"这么简单
+        problems.push(`第 ${i + 1} 题选项[${j}] 只有序号、没有内容（原文：${JSON.stringify((options[j] || {}).text)}）`);
+      }
+    });
+    // 内容都为空时不比重复 —— 那种情况上面已经报过"没有内容"，再报一条只会把人绕晕
+    const nonEmpty = contents.filter((c) => c);
+    if (nonEmpty.length === contents.length && new Set(contents).size !== contents.length) {
+      problems.push(`第 ${i + 1} 题的选项文字有重复：${JSON.stringify(contents)}（需求要求互不相同）`);
+    }
+  });
+  return problems;
+}
+
 const HOME_TAB_TEXT = "有问必答";
 const CARD_TAG_QUIZ = "答题";
 
@@ -322,26 +368,35 @@ async function assertQuizPageRules(page, kwargs, ctx) {
   const st = await state(fg);
   const text = await base.pageText(fg);
   const problems = [];
-  // 多选题库活动下，整页数到的选项数不能拿来判「选项 2~6 个」（见下面那处说明）
-  let multiQuestionOptionSkew = null;
-
+  // 多选题库活动（一页渲染好几道题）还是单题活动？—— 决定下面按题判还是按整页判
+  const multi = st.total !== null && st.total > 1;
   if (!text.includes("答对最多可赢积分")) {
     problems.push("吸顶栏缺少文案「答对最多可赢积分」");
   }
   if (!/已[选答]\s*[:：]?\s*\d+\s*\/\s*\d+/.test(text)) {
     problems.push("吸顶栏缺少进度「已选/已答 N/总数」");
   }
-  if (st.options.length < 2 || st.options.length > 6) {
-    // 【多题活动要单独说清】2026/10/10 真机回归踩到：当时线上跑的是开发造的
-    // 15 题测试活动（「Z-题干图验证」），页面把**所有题目**的选项都渲染在 DOM 里，
-    // 于是整页数出 52 个选项行。需求里的「选项 2~6 个」是**按每道题**说的，
-    // 而当前实现只能数整页 —— 这一条结论不可靠，标记出来交给下面统一处理。
-    if (st.total !== null && st.total > 1) multiQuestionOptionSkew = st.total;
-    problems.push(`选项数应在 2~6，实际 ${st.options.length}`);
+  /*
+   * 【选项数要按"每道题"判】需求原文是「选项 2~6 个且互不相同」—— **按题**说的。
+   *
+   * 2026/10/10 踩过：线上多题活动把 15 道题的选项全渲染在一页里，整页数出 52 个，
+   * 这条断言不成立，只能整体记跳过（坑 16）。
+   * 2026/10/12 拿到题目边界（一题 = 一个 `.quiz-card`）之后改成**逐题判**：
+   *   · 多选题库活动 -> 按 .quiz-card 分组，每题单独数选项、查空文本、查文字重复
+   *   · 单题活动 -> 沿用"整页就是这一题"的老判据（同样的规则，写法更直接）
+   */
+  if (multi) {
+    const questions = await readQuestions(fg);
+    if (questions.length !== st.total) {
+      problems.push(
+        `吸顶进度说共 ${st.total} 题，但 DOM 里读到 ${questions.length} 个题目容器（${SEL_Q.card}）—— 两边的"题数"对不上`
+      );
+    }
+    problems.push(...checkQuestionOptions(questions));
+  } else {
+    // 单题活动：整页就是这一题（用同一套规则，只是题数固定为 1）
+    problems.push(...checkQuestionOptions([{ head: st.title, options: st.options }]));
   }
-  st.options.forEach((o, i) => {
-    if (!o.text) problems.push(`选项[${i}] 文本为空`);
-  });
   if (!/(未答|已选|已答|答对|答错)/.test(text)) {
     problems.push("找不到题目状态词（未答/已选/答对/答错）");
   }
@@ -355,19 +410,6 @@ async function assertQuizPageRules(page, kwargs, ctx) {
     );
   }
 
-  // 多选题库活动：若"除了整页选项数"之外其它都符合需求，说明小程序没毛病，
-  // 只是这条断言还没能力按题判断 —— 记「跳过」并说清原因，而不是报一条假失败。
-  const otherProblems = problems.filter((p) => !p.startsWith("选项数应在") && !p.startsWith("选项["));
-  if (multiQuestionOptionSkew !== null && otherProblems.length === 0) {
-    throw preconditionError(
-      `这次打开的是多选题库活动（共 ${multiQuestionOptionSkew} 题）：页面把全部题目的选项都渲染在 DOM 里` +
-        `（整页数到 ${st.options.length} 个选项行）。需求里的「选项 2~6 个」是按**每道题**算的，` +
-        `当前断言只能数整页 —— 在补上「只看当前这道题」的能力之前，这条断言测不了多题活动。\n` +
-        `  其它检查项（吸顶文案 / 进度 / 状态词 / 提交按钮一致性）都是通过的，` +
-        `所以这里记「跳过」：不是通过，也不是失败。`
-    );
-  }
-
   if (problems.length) {
     throw new Error(
       "答题页不符合需求（713594985）：\n  - " +
@@ -376,6 +418,7 @@ async function assertQuizPageRules(page, kwargs, ctx) {
         JSON.stringify({
           progressText: st.progressText,
           optionCount: st.options.length,
+          questionCount: multi ? st.total : 1,
           submitText: st.submitText,
           submitDisabled: st.submitDisabled,
           pageText: text.slice(0, 160),
@@ -383,11 +426,29 @@ async function assertQuizPageRules(page, kwargs, ctx) {
     );
   }
   console.log(
-    `断言通过: 答题页符合需求口径（吸顶文案齐全 / 选项数=${st.options.length} / ` +
+    `断言通过: 答题页符合需求口径（吸顶文案齐全 / ${multi ? `共 ${st.total} 题，逐题选项都在 2~6 且不重复` : `选项数=${st.options.length}`} / ` +
       `按钮禁用=${st.submitDisabled} 与已选 ${st.answered}/${st.total} 一致 / 状态词齐全）`
   );
   if (ctx) ctx.set("quizRulesChecked", true);
   return fg;
+}
+
+/**
+ * 逐题打印题目信息（**只读**）：多选题库活动时，报告里能看清"一共几题、每题几个选项"。
+ * 单题活动也会打一行（就一题）。
+ */
+async function logQuestions(page, kwargs, ctx) {
+  const questions = await readQuestions(page);
+  if (!questions.length) {
+    console.log("  这个答题页上没有题目容器（.quiz-card）—— 页面可能还没渲染完，或活动用的是另一种写法");
+    return page;
+  }
+  console.log(`  共读到 ${questions.length} 道题：`);
+  questions.forEach((q, i) => {
+    console.log(`    第 ${i + 1} 题：${JSON.stringify(q.head)}，选项 ${q.options.length} 个`);
+  });
+  if (ctx) ctx.set("quizQuestionCountDetail", questions.length);
+  return page;
 }
 
 /** 打印答题页状态（只读），并把进度存进用例上下文 */
@@ -708,6 +769,7 @@ async function submitAnswers(page, { allowSubmit = false, ctx = null } = {}) {
 module.exports = {
   SEL,
   SEL_Q,
+  checkQuestionOptions,
   HOME_TAB_TEXT,
   CARD_TAG_QUIZ,
   isOn,
@@ -719,6 +781,7 @@ module.exports = {
   openQuizCard,
   ensureOn,
   assertQuizPageRules,
+  logQuestions,
   logState,
   selectFirstOption,
   submitIfAllowed,
