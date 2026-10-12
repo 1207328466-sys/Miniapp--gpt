@@ -127,12 +127,72 @@ def export_case_table(argv):
     return False
 
 
+def parse_adb_devices(text):
+    """把 `adb devices` 的输出解析成 (可用设备号列表, 原始行列表) —— **纯函数**，便于离线自检。
+
+    为什么要单独抽出来：这段判断一旦写松（比如把 `unauthorized` / `offline` 也算可用），
+    后面就是"以为有设备、结果一路失败"。纯函数 + 自检能把它钉住（见 scripts/selftest-run-preflight.py）。
+    """
+    raw = [l.strip() for l in str(text or "").splitlines() if l.strip()]
+    body = [l for l in raw if not l.startswith("List of devices attached") and not l.startswith("*")]
+    # 只有"设备号 + 状态"两列、且状态正好是 device 的才算可用
+    ready = [l.split()[0] for l in body if len(l.split()) >= 2 and l.split()[1] == "device"]
+    return ready, body
+
+
+def preflight_device(argv):
+    """开跑前先确认**手机上连着设备** —— 否则 20 多条用例会一条条失败，白等十几分钟。
+
+    真实场景（2026/10/12 实际发生）：owner 把数据线拔了，此时跑 `python run.py`，
+    每条用例都会以「adb 没有识别到任何设备」失败 —— 报告里 25 条红，
+    但真正的原因只有一句。所以这里**先查一次 adb**，没设备就当场说清怎么处理。
+
+    只在"真的要跑用例"时才拦：`--collect-only` / `--help` 这类不需要手机的运行放行。
+    """
+    if any(a in ("--collect-only", "--co", "-h", "--help", "--version") for a in argv):
+        return True
+
+    adb = shutil.which("adb")
+    if adb is None:
+        print("\n[!] 找不到 adb 命令 —— 框架测试小程序要靠它。")
+        print("    装法：装 Android SDK Platform-Tools，并把它的目录加进 PATH；")
+        print("    装完重开一个 PowerShell 再试（`adb version` 能看到版本号就对了）。")
+        return False
+
+    try:
+        out = subprocess.run([adb, "devices"], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except Exception as e:
+        print(f"\n[!] 执行 `adb devices` 失败：{e}")
+        return False
+
+    ready, lines = parse_adb_devices(out.stdout)
+    if ready:
+        print(f"设备检查：找到 {len(ready)} 台可用的设备（{ '、'.join(ready) }）")
+        return True
+
+    print("\n[!] 没有可用设备，已停下（不然接下来 20 多条用例会一条条失败，白等十几分钟）。")
+    print("    现在 `adb devices` 里看到的是：")
+    for l in lines or ["    （空的，一台都没有）"]:
+        print(f"      {l}")
+    print("    按这三步看：")
+    print("      1) 手机上打开「开发者选项 → USB 调试」；")
+    print("      2) 换一根**能传数据**的线（有些线只能充电）；")
+    print("      3) 插上后手机若有「允许 USB 调试」弹窗，点允许。")
+    print("    好了再跑：adb devices   —— 看到一行 xxx device 就行。")
+    print("    （只想收集用例、不跑真机：python run.py --collect-only）")
+    return False
+
+
 def main(argv):
     if not TEST_CASE.is_dir():
         print(f"找不到用例目录：{TEST_CASE}")
         return 2
 
     if not preflight():
+        return 2
+
+    # 手机没连上就当场停下（细节见函数里的说明）
+    if not preflight_device(argv):
         return 2
 
     # 表格用例：开跑前先导出一次（表格有错会在这里停下来，见函数内说明）

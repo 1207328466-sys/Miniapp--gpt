@@ -10,9 +10,10 @@
   5. `scripts/selftest-quiz-cleanup.py` 复位工具的安全闸门（15 项：该拦的必须拦、该放的必须放）
   6. `test_case/diagnostic/selftest_quiz_question_options.js` 答题"选项 2~6 且互不相同"规则（10 项，纯函数，正反都验）
   7. `test_case/diagnostic/selftest_course_zero_lesson_match.js` 课程"0 课时对账"的匹配规则（12 项，含前缀误报边界）
-  8. `scripts/check-safety.py`          数据/凭据安全不变式（14 项）
-  9. `scripts/check-invariants.py`      框架自身完整性（7 项：动作↔实现、中文名、退出码兜底、安全阀、文档数字）
-  10. `tools/calibrate_android_doc.py --check`  android.js 逐行详解里的行号引用是否漂移
+  8. `scripts/selftest-run-preflight.py` run.py 开跑前"设备预检"的解析规则（11 项，含 unauthorized/offline 反例）
+  9. `scripts/check-safety.py`          数据/凭据安全不变式（14 项）
+  10. `scripts/check-invariants.py`     框架自身完整性（7 项：动作↔实现、中文名、退出码兜底、安全阀、文档数字）
+  11. `tools/calibrate_android_doc.py --check`  android.js 逐行详解里的行号引用是否漂移
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -96,6 +97,7 @@ def main():
         "selftest-course-zero-lesson（课程 0 课时对账规则）",
         ["node", os.path.join("test_case", "diagnostic", "selftest_course_zero_lesson_match.js")],
     )
+    run("selftest-run-preflight（设备预检解析）", [sys.executable, os.path.join("scripts", "selftest-run-preflight.py")])
     run("check-safety（安全不变式）", [sys.executable, os.path.join("scripts", "check-safety.py")])
     run("check-invariants（框架不变式）", [sys.executable, os.path.join("scripts", "check-invariants.py")])
     run(
