@@ -14,8 +14,8 @@
  *   需要拿到完整 DOM（写进文件，不截断）才能定位。
  *
  * 运行方式：
- *   cd C:\Users\admin\Desktop\miniapp_test_case
- *   node test_case/dump_page.js
+ *   cd C:\Users\admin\Desktop\小程序自动化框架
+ *   node test_case/diagnostic/dump_page.js
  *
  * 产出：
  *   report/diagnostic/page1.html     点击前：前端页面实时 DOM（完整）

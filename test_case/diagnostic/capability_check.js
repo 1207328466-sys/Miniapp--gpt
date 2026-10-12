@@ -4,12 +4,14 @@
  *
  * 能力探测脚本（不是用例，pytest 不会收集）
  *
- * 目的：系统验证 android.js 导出的 15 个函数，哪些真正可用、哪些不能用、边界在哪。
+ * 目的：系统验证 android.js 里那些关键字函数，哪些真正可用、哪些不能用、边界在哪。
+ *   （写于 2026/10/10，当时是 15 个 —— 函数数量后来变过，别把 15 当准数。
+ *     跑之前先扫一眼正文：它探测的某些函数后来被重写或下沉到页面对象了。）
  * 输出：report/diagnostic/capability.log（完整日志）
  *
  * 运行：
- *   cd C:\Users\admin\Desktop\miniapp_test_case
- *   node test_case/capability_check.js
+ *   cd C:\Users\admin\Desktop\小程序自动化框架
+ *   node test_case/diagnostic/capability_check.js
  *
  * 前置：小程序停在首页（底部有 tab 栏的页面）
  *
