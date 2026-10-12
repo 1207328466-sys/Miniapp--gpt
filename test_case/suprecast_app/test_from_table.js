@@ -78,6 +78,28 @@ const HANDLERS = {
     },
   },
 
+  执行搜索: {
+    run: async (page) => {
+      // 为什么要单独一个动作：`打开搜索并输入` 只是把字打进输入框 —— 不执行搜索的话
+      // 页面停在「搜索历史」面板，结果页（以及"零结果空态"）根本不会出现。
+      const { getDevice } = require("../../app_sub_function/suprecast_app/android");
+      const search = await qaPage.findSearchPage(page);
+      if (!search) {
+        throw new Error(
+          "「执行搜索」需要在搜索页上执行（候选页里都没有 wx-input.search-input）——" +
+            "先把关键词打进去，或者检查上一步的「打开搜索并输入」是否成功"
+        );
+      }
+      const device = await getDevice();
+      // 回车（keyevent 66）把搜索跑起来。与 android.js 里 focusSearchInput 的做法一致；
+      // 只读：只是查一次，不改任何数据。
+      await device.shell("input keyevent 66");
+      await base.sleep(1500); // 给结果页/空态一点渲染时间
+      console.log("已执行搜索");
+      return search;
+    },
+  },
+
   打开答题活动: { run: (page) => quizPage.ensureOn(page) },
 
   点文字: {
