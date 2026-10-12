@@ -358,10 +358,27 @@ function resolveWebviewOptions(options = {}) {
   };
 }
 
+/**
+ * 默认**不打 DEBUG**。
+ *
+ * 那些 DEBUG 行是"框架内部怎么解析前台页、每步耗时多少"的细节，一次全量跑能刷几百行 ——
+ * 对看结果的人（尤其零基础的同事）来说，真正的信号（哪条失败、为什么、截图在哪）会被埋掉。
+ * 需要诊断时开一下就行（run.py / pytest / node 都会继承环境变量）：
+ *
+ *     PowerShell:  $env:UITEST_DEBUG = "1"; python run.py -k 用例编号
+ *     跑完清掉:    Remove-Item Env:\UITEST_DEBUG
+ *
+ * ⚠️ 注意：这只影响 DEBUG。失败信息、步骤明细、截图路径、[提示]/[自愈] 这些**照旧会打** ——
+ * 它们才是"出事时要看的东西"，不能因为"太吵"就藏起来。
+ */
+const DEBUG_ON = /^(1|true|yes|on)$/i.test(String(process.env.UITEST_DEBUG || ""));
+
 const log = {
   info: (msg) => console.log(`[INFO] ${msg}`),
   error: (msg) => console.error(`[ERROR] ${msg}`),
-  debug: (msg) => console.log(`[DEBUG] ${msg}`),
+  debug: (msg) => {
+    if (DEBUG_ON) console.log(`[DEBUG] ${msg}`);
+  },
 };
 
 /**
