@@ -21,4 +21,5 @@ module.exports = {
   userCenter: require("./user_center_page"),
   qaPage: require("./qa_page"),
   quizPage: require("./quiz_activity_page"),
+  pointsMall: require("./points_mall_page"),
 };

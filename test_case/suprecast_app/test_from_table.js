@@ -38,6 +38,7 @@ const qaPage = pages.qaPage;
 const learnCenter = pages.learnCenter;
 const quizPage = pages.quizPage;
 const userCenter = pages.userCenter;
+const pointsMall = pages.pointsMall;
 
 const TABLE_JSON = path.join(__dirname, "..", "..", "cases", "用例表.json");
 const TABLE_XLSX = path.join(__dirname, "..", "..", "cases", "用例表.xlsx");
@@ -63,6 +64,8 @@ const HANDLERS = {
   },
 
   切到用户中心: { run: (page) => userCenter.switchTo(page) },
+
+  打开积分商城: { run: (page) => pointsMall.ensureOn(page) },
 
   打开学习中心专栏: {
     run: async (page) => {
@@ -140,6 +143,8 @@ const HANDLERS = {
   检查答题页符合需求: { run: (page, _p1, _p2, ctx) => quizPage.assertQuizPageRules(page, {}, ctx) },
 
   检查活动入口: { run: (page) => qaPage.assertActivityBlockInAllFeedTabs(page) },
+
+  检查回到顶部按钮: { run: (page) => pointsMall.assertBackTopRules(page) },
 
   /* ---------- 2026/10/10 追加的动作（「能做的都做上」）---------- */
 

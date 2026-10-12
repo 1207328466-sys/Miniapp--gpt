@@ -55,6 +55,12 @@ ACTIONS = [
         "desc": "自导航到「有问必答」首页（幂等；当前在二级页时会自动点返回）。用例第一步建议都用它",
     },
     {"name": "切到用户中心", "p1": "", "p2": "", "desc": "点底部 tab「我的」，进入用户中心"},
+    {
+        "name": "打开积分商城",
+        "p1": "",
+        "p2": "",
+        "desc": "从用户中心点「积分商城」进商城首页（已在则原地不动）。积分商城是二级页，没有底部 tab 栏",
+    },
     {"name": "打开学习中心专栏", "p1": "", "p2": "", "desc": "进学习中心，并切到「专栏」列表"},
     {
         "name": "打开搜索并输入",
@@ -113,6 +119,12 @@ ACTIONS = [
         "p1": "",
         "p2": "",
         "desc": "按需求 713594979 校验首页活动入口在 最新提问/推荐/精选问答/我的关注 4 个 tab 下都显示",
+    },
+    {
+        "name": "检查回到顶部按钮",
+        "p1": "",
+        "p2": "",
+        "desc": "按需求 713582097 校验积分商城的「回到顶部」按钮：未滚动隐藏 / 滚过阈值出现 / 点击后回顶部并隐藏",
     },
     # ---------- 下面这一批是 2026/10/10 追加的「能做的都做上」----------
     # 判据：只读 / 不改数据、零基础能填、失败信息足够定位。登录、提交、选选项**故意不加**（见 README）。
@@ -535,6 +547,9 @@ def validate(rows):
 # 「检查类」动作：名字以「检查」开头的就是（以后加检查动作不用改这里）
 CHECK_ACTIONS = tuple(a["name"] for a in ACTIONS if a["name"].startswith("检查"))
 
+# `--dropdown` 走完导出之后要不要"摸"一下 json 的时间戳（见 main 里的说明）
+_touch_json_after_export = False
+
 # 这些动作跑完，手机多半会停在二级页（搜索页 / 答题页 / 专栏详情页）——
 # 表里的用例共用同一部手机，停在二级页会让下一条报「找不到底部 tab」（坑 15 / 坑 17）
 LEAVES_SECOND_LEVEL_PAGE = ("打开搜索并输入", "打开答题活动", "点第一张专栏")
@@ -661,7 +676,12 @@ def main(argv=None):
         print("  · 动作列（D）下拉框已重建，选项来自「动作清单」")
         print("  · 步骤序号列（C）只接受 1、2、3… 这样的正整数")
         print("  · 你已经填好的内容一行都没动")
-        return 0
+        print("\n顺带重新导出一遍（刷完表格不导出的话，json 会比 xlsx 旧，"
+              "真机跑起来会提示「本次跑的是 json 里的内容」——那是个假警报）")
+        # 故意**不 return**：接着往下走正常导出流程；并且把 json 的时间戳刷新到最新，
+        # 免得"只是刷了下拉框、用例内容没变"也触发上面那条提示
+        global _touch_json_after_export
+        _touch_json_after_export = True
 
     if not xlsx.exists():
         build_template(xlsx)
@@ -698,6 +718,10 @@ def main(argv=None):
         "cases": cases,
     }
     changed = write_json_if_changed(payload, json_path)
+    if _touch_json_after_export and not changed:
+        # 内容没变 -> 文件没被重写，但它的时间戳比 xlsx 旧，会让真机那边弹"本次跑的是 json 里的内容"。
+        # 这里只更新时间戳（内容不动，git 也不会看到改动）。
+        json_path.touch()
 
     total_steps = sum(len(c["steps"]) for c in cases)
     print("用例表导出成功：%s" % json_path)
