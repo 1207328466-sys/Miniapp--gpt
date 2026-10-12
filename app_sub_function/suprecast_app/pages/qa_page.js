@@ -266,6 +266,63 @@ async function activeFeedTab(page) {
   return info.selected || "";
 }
 
+/**
+ * 需求 713341876 规定的筛选 tab 顺序：「最新提问和推荐互换顺序，最新提问为打开首页的默认展示内容」。
+ * 实测（2026/10/12，用坐标核对过）：最新提问(130) → 推荐(343) → 精选问答(557) → 我的关注(816)。
+ */
+const EXPECTED_FEED_TAB_ORDER = ["最新提问", "推荐", "精选问答", "我的关注"];
+
+/** 读首页那排筛选 tab 的**实际先后顺序**（按 DOM 里的顺序，不是按我们常量里的顺序） */
+async function feedTabOrder(page) {
+  const fg = await base.foreground(page);
+  return fg.evaluate((tabs) => {
+    const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+    const all = Array.from(document.querySelectorAll("*"));
+    const bars = all.filter((el) => tabs.every((t) => norm(el.innerText).includes(t)));
+    const bar = bars.length ? bars[bars.length - 1] : null; // 最内层的那个 = tab 栏
+    if (!bar) return [];
+    const order = [];
+    for (const el of Array.from(bar.querySelectorAll("*"))) {
+      const t = norm(el.innerText);
+      if (tabs.includes(t) && !order.includes(t)) order.push(t);
+    }
+    return order;
+  }, FEED_TABS);
+}
+
+/**
+ * 按需求 713341876 校验首页信息流的筛选 tab：
+ *   ① 顺序必须是「最新提问 → 推荐 → 精选问答 → 我的关注」（需求：最新提问和推荐互换顺序）
+ *   ② 打开首页默认选中的必须是「最新提问」（需求：最新提问为打开首页的默认展示内容）
+ */
+async function assertFeedTabOrder(page, { expected = EXPECTED_FEED_TAB_ORDER } = {}) {
+  const order = await feedTabOrder(page);
+  if (order.length !== expected.length) {
+    const fg = await base.foreground(page);
+    throw new Error(
+      `首页筛选 tab 只读到 ${order.length} 个（期望 ${expected.length} 个）：${JSON.stringify(order)}\n` +
+        `  当前页面前 160 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 160))}`
+    );
+  }
+  const same = order.every((t, i) => t === expected[i]);
+  if (!same) {
+    throw new Error(
+      `需求 713341876 要求顺序是 ${JSON.stringify(expected)}，实际是 ${JSON.stringify(order)}\n` +
+        `  （这条需求做的就是"最新提问和推荐互换顺序"，顺序变了就是回归）`
+    );
+  }
+  console.log(`  ① 顺序正确：${order.join(" → ")} ✓`);
+
+  const selected = await activeFeedTab(page);
+  if (selected !== expected[0]) {
+    throw new Error(
+      `需求 713341876 要求打开首页默认展示「${expected[0]}」，实测当前选中的是 ${JSON.stringify(selected)}`
+    );
+  }
+  console.log(`  ② 默认选中正确：「${selected}」 ✓`);
+  return base.foreground(page);
+}
+
 /** 把四个 tab 的实测值拼成一行，用于日志与报错（判据失效时一眼看到真相） */
 function describeFeedTabs(info) {
   if (!info.found) return "找不到首页的 tab 栏（当前页可能不在首页信息流上）";
@@ -572,6 +629,8 @@ module.exports = {
   findSearchPage,
   readFeedTabs,
   activeFeedTab,
+  feedTabOrder,
+  assertFeedTabOrder,
   switchToFeedTab,
   isOnSearchPage,
   ensureOn,

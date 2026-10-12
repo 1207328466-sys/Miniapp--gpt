@@ -153,6 +153,8 @@ const HANDLERS = {
 
   检查活动入口: { run: (page) => qaPage.assertActivityBlockInAllFeedTabs(page) },
 
+  检查首页tab顺序: { run: (page) => qaPage.assertFeedTabOrder(page) },
+
   检查回到顶部按钮: { run: (page) => pointsMall.assertBackTopRules(page) },
 
   /* ---------- 2026/10/10 追加的动作（「能做的都做上」）---------- */
