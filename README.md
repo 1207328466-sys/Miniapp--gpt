@@ -311,7 +311,7 @@ const myStep = async (page) => { ... }          // ⚠️ name 可能是 "myStep
 
 | 路线 | 适合谁 | 怎么做 |
 |---|---|---|
-| **填表**（不用写代码） | 只描述「先点这个、再检查那个」的用例 | 打开 `cases/用例表.xlsx`，按「动作清单」一行一步地填，然后 `python run.py`。规则与 31 个动作见 [使用手册-零基础.md](docs/使用手册-零基础.md) |
+| **填表**（不用写代码） | 只描述「先点这个、再检查那个」的用例 | 打开 `cases/用例表.xlsx`，按「动作清单」一行一步地填，然后 `python run.py`。规则与 35 个动作见 [使用手册-零基础.md](docs/使用手册-零基础.md) |
 | 写 .js 用例 | 流程复杂、要判断条件、要读页面数据 | 往下看本节 |
 
 表格里的「动作」不够用时，正确的做法是**先把新动作加到动作清单与页面对象**，
@@ -749,13 +749,15 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │   ├── check-docs.py                # 文档防腐检查：反引号路径是否真实存在
 │   ├── check-safety.py              # 数据/凭据安全不变式（离线）：写操作词、安全阀、密钥不入库
 │   ├── check-invariants.py          # 框架完整性（离线）：动作↔实现、中文名、退出码兜底、appid 安全阀
-│   ├── selftest-export-cases.py     # 用例表规则自检（不需要手机）：校验 + 体检规则 14 项
-│   └── verify-all.py                # ★ 一键跑完所有离线检查（语法/收集/三闸门），提交前跑它
+│   ├── selftest-export-cases.py     # 用例表规则自检（不需要手机）：17 项，含「一条填错只红它自己」
+│   ├── selftest-quiz-cleanup.py     # 复位工具的安全闸门自检（不需要手机/连库）：15 项，含反例
+│   └── verify-all.py                # ★ 一键跑完所有离线检查（语法/收集/各闸门），提交前跑它
 ├── tools/
 │   ├── build_requirements_kb.py     # 从超云生态平台导出生成 knowledge/ 清单
 │   ├── export_cases.py              # ★ 把 cases/用例表.xlsx 导出成用例读的 json
 │   ├── import_db_config.py          # 从 miniapp-flow/.env 生成本地数据库配置（不入库）
 │   ├── quiz_data_report.py          # ★ 答题数据体检（只读）：有哪些记录、清理会涉及多少行
+│   ├── quiz_data_cleanup.py         # ★ 答题数据复位（**会删数据**：默认只预览，--yes 才删，三道闸）
 │   └── calibrate_android_doc.py     # 校准「逐行详解」里的行号引用（--check 接进离线闸门）
 ├── docs/
 │   ├── 使用手册-零基础.md            # ★ 没写过代码的人看这份：怎么跑、怎么看结果、怎么填表写用例
@@ -769,6 +771,7 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 ├── common/
 │   ├── __init__.py                  # Python 侧导出（只导出确实存在的模块）
 │   ├── app_common.js                # ★ 驱动层核心：连设备、抓 WebView、跑步骤、上下文、截图
+│   ├── db_tool.js                   # 调 Python 的数据库工具 + 写操作开关（UITEST_ALLOW_SUBMIT）
 │   ├── step_log.js                  # ★ 结构化步骤日志（JSONL），供 pytest 侧还原成报告
 │   └── share/
 │       ├── base_config.py           # 配置基础类（单例 + 懒加载 + 热重载）
@@ -795,6 +798,12 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │   │   ├── set_feed_tab.js          # 把首页筛选 tab 切到指定那个（准备现场 / 验收用）
 │   │   ├── probe_pages.js           # 每个页面的身份/可见性信号（--timeline 采样跳转过程）
 │   │   ├── selftest_pick_page.js    # 不需要手机：验证"多候选时挑前台页"的三条规则
+│   │   ├── probe_case_banner_rotation.js  # 首页那张「教你玩转 仿真案例库」是不是轮播（结论：不在首屏）
+│   │   ├── probe_case_banner_img.js # 首页信息流的图片元素清单（认清"图片卡"是哪个）
+│   │   ├── probe_quiz_page.js       # 看答题页是单题还是多题 + **题目边界**（一题 = .quiz-card）
+│   │   ├── probe_quiz_answer_all.js # 逐题作答演练（**不提交**，选择不会保存）
+│   │   ├── probe_search_bar_covered.js  # 首页滚动后搜索栏的位置与"命中测试"（坑 25 的证据）
+│   │   ├── probe_tap_guard.js       # **反向验证**：盖住目标后点击必须被拦下（坑 25 的护栏）
 │   │   └── run_case.py              # 跑单个用例并把输出按正确编码落盘
 │   └── suprecast_app/
 │       ├── conftest.py              # ★ 桥接层：让 pytest 能执行 .js；表格用例按编号拆成多条
@@ -804,6 +813,7 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │       ├── test_learn_center_column.js     # 学习中心 -> 专栏 -> 第一张（含 ctx 断言）
 │       ├── test_login_and_navigation.js    # 切用户中心 + 打印页面结构（**故意留下的反例**）
 │       ├── test_quiz_activity.js    # 首页活动卡 -> 答题页（**默认不提交**，见文件头）
+│       ├── test_quiz_submit.js      # ★ 答题**写链路**：复位→逐题作答→提交→界面断言→库里校验→再复位
 │       └── test_switch_to_user_center.js   # 切用户中心（带真实验证）
 └── report/                          # 测试产物（已 gitignore）
     ├── photo_app/                   # 用例截图
