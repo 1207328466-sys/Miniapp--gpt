@@ -438,4 +438,5 @@ def pytest_sessionfinish(session, exitstatus):
     if not failed and not skipped:
         emit("  全绿：没有失败，也没有跳过。")
     emit(f"中文摘要（可以直接发给同事）：report/结果摘要.md")
+    emit("单条复跑（改了用例/想再确认一次时用）：python run.py -k 用例名里的几个字")
     emit(bar)
