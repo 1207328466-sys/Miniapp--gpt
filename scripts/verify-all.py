@@ -8,6 +8,7 @@
   3. `scripts/check-docs.py`            文档死链
   4. `scripts/selftest-export-cases.py` 表格校验与体检规则（14 项）
   5. `scripts/check-safety.py`          数据/凭据安全不变式（9 项）
+  6. `scripts/check-invariants.py`      框架自身完整性（7 项：动作↔实现、中文名、退出码兜底、安全阀、文档数字）
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -83,6 +84,7 @@ def main():
     run("check-docs（文档死链）", [sys.executable, os.path.join("scripts", "check-docs.py")])
     run("selftest-export-cases（表格规则）", [sys.executable, os.path.join("scripts", "selftest-export-cases.py")])
     run("check-safety（安全不变式）", [sys.executable, os.path.join("scripts", "check-safety.py")])
+    run("check-invariants（框架不变式）", [sys.executable, os.path.join("scripts", "check-invariants.py")])
 
     print("\n" + "=" * 60)
     if failures:

@@ -745,6 +745,7 @@ miniapp_test_case/
 ├── scripts/
 │   ├── check-docs.py                # 文档防腐检查：反引号路径是否真实存在
 │   ├── check-safety.py              # 数据/凭据安全不变式（离线）：写操作词、安全阀、密钥不入库
+│   ├── check-invariants.py          # 框架完整性（离线）：动作↔实现、中文名、退出码兜底、appid 安全阀
 │   ├── selftest-export-cases.py     # 用例表规则自检（不需要手机）：校验 + 体检规则 14 项
 │   └── verify-all.py                # ★ 一键跑完所有离线检查（语法/收集/三闸门），提交前跑它
 ├── tools/
