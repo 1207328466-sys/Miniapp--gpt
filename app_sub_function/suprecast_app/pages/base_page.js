@@ -197,6 +197,40 @@ async function withBottomTabBar(page) {
 }
 
 /**
+ * 点底部 tab 并**验证真的切过去了**（没切过去就再点一次，最多 retries 次）。
+ *
+ * 【为什么要有它】几处页面对象各写了一遍「点 tab + 等到达」，重试策略还不一样。
+ * 更要紧的是：**偶发的一次点击不生效** —— 2026/10/12 全量跑里 `案例库_002` 就栽在这上面：
+ * 失败截图显示底部 tab 栏好好的、有问必答 tab 还选中着，说明那一下点击**没有任何反应**，
+ * 而单次实现里没有第二次机会（这条用例单独跑是过的，典型的偶发红）。
+ *
+ * 统一到这里之后：
+ *   · 重试是**带验证的**（每次都重新问「目标页到了没」），不是闭眼再点一下；
+ *   · 每次重试都打日志（不是静默重试）—— 报告里能看到「第二次才成」这种信号。
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} tabText 底部 tab 的文案（按文字定位：各页面 tab 栏的 class 前缀不一样）
+ * @param {{isTarget: () => Promise<boolean>, timeout?: number, retries?: number}} opts
+ *   isTarget：目标页到了吗（由调用方定义「到了」的判据）
+ */
+async function switchToBottomTab(page, tabText, { isTarget, timeout = 15000, retries = 2 } = {}) {
+  if (typeof isTarget !== "function") throw new Error("switchToBottomTab 需要 isTarget（判据函数）");
+  for (let i = 1; i <= retries; i++) {
+    const fg = await foreground(page);
+    await tapText(fg, tabText, `底部 tab「${tabText}」`);
+    if (await waitUntil(isTarget, { timeout })) return await foreground(page);
+    if (i < retries) {
+      console.log(`  [自愈] 点了「${tabText}」但目标页没到（第 ${i}/${retries} 次）—— 再点一次`);
+    }
+  }
+  const now = await foreground(page);
+  throw new Error(
+    `点了 ${retries} 次底部 tab「${tabText}」，目标页始终没出现。\n` +
+      `  当前页面前 120 字: ${JSON.stringify((await pageText(now)).slice(0, 120))}`
+  );
+}
+
+/**
  * 确保停在"有底部 tab 栏的一级页面"上。
  *
  * 【为什么需要它 —— 这条是真机验证时踩出来的】
@@ -274,5 +308,6 @@ module.exports = {
   BOTTOM_TAB_TEXTS,
   withBottomTabBar,
   ensureOnTabPage,
+  switchToBottomTab,
   inputValue,
 };

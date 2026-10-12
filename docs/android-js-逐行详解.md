@@ -24,24 +24,24 @@
 >
 > | 行号 | 函数 | 相对上一版 | 相对原版 |
 > |---|---|---|---|
-> | 31 | `getDevice` | 未变 | 未变 |
+> | 30 | `getDevice` | 未变 | 未变 |
 > | **57** | **`findClickableAncestor`** | 未变 | **新增**（配合 `tapElement`） |
-> | 192 | `tapElement` | +7 | **已重构** |
+> | 191 | `tapElement` | +7 | **已重构** |
 > | 309 | `findPageWith` | +7 | 未变 |
-> | 333 | `switchToUserCenter` | +7 | **已重构**（第三轮：改用 `resolveForegroundPage`） |
-> | 352 | `getForegroundPage` | +7 | **已重构**（第三轮：改为薄封装） |
+> | 318 | `switchToUserCenter` | +7 | **已重构**（第三轮：改用 `resolveForegroundPage`） |
+> | 337 | `getForegroundPage` | +7 | **已重构**（第三轮：改为薄封装） |
 > | 371 | `login` | **-7** | **已重构**（改真实 tap） |
-> | 411 | `waitImeShown` | -7 | 未变 |
-> | 438 | `focusSearchInput` | -7 | **已重构**（改真实 tap） |
+> | 360 | `waitImeShown` | -7 | 未变 |
+> | 387 | `focusSearchInput` | -7 | **已重构**（改真实 tap） |
 > | 461 | `clickElementById` | -7 | **已重构**（属性选择器 + 真实 tap） |
 > | 496 | `clickElementByText` | -7 | **已重构**（改真实 tap） |
 > | 517 | `inputText` | -7 | **已重构**（真实 tap + 读回校验） |
 > | 569 | `assertElementExists` | -7 | **已重构**（属性选择器） |
-> | 762 | `swipeUp` | -7 | **已重构**（adb input swipe + 位移校验） |
-> | 850 | `goBack` | -7 | 未变（仍不可用，待修） |
+> | 590 | `swipeUp` | -7 | **已重构**（adb input swipe + 位移校验） |
+> | 678 | `goBack` | -7 | 未变（仍不可用，待修） |
 > | 929 | `switchToWxWebview` | -7 | 未变 |
 > | 962 | `clickWxText` | -7 | **已重构**（改真实 tap） |
-> | 984 | `dumpElements` | -7 | 未变 |
+> | 760 | `dumpElements` | -7 | 未变 |
 > | 677-694 | `module.exports` | 已增补 `tapElement` | 同左 |
 >
 > ⚠️ **正文里逐行引用的行号（形如 `137: page = ...`）停留在上一版，没有逐条重新同步。**
@@ -52,6 +52,12 @@
 > 不代表当前代码。
 
 ---
+
+> **2026/10/12 精简**：android.js 里 8 个**没人调用**的历史关键字被删掉了
+> （
+indPageWith / login / clickElementById / clickElementByText / inputText /
+> ssertElementExists / switchToWxWebview / clickWxText；其中后两个实现与其他函数重复），
+> 本文对应章节与速查表行也一并移除 —— 留下的都是现在真在用的。
 
 ## 第 0 节：先建立整体认知
 
@@ -96,7 +102,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 1 节：文件头与依赖（1-30 行）
+## 第 1 节：文件头与依赖（1-29 行）
 
 ```js
 1: /*
@@ -160,7 +166,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 2 节：设备懒加载（31-63 行：`getDevice`）
+## 第 2 节：设备懒加载（30-62 行：`getDevice`）
 
 ```js
 24: /**
@@ -197,7 +203,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 3 节：真实 adb 点击（64-308 行：`findClickableAncestor` + `tapElement`）★核心原理【已重构】
+## 第 3 节：真实 adb 点击（63-317 行：`findClickableAncestor` + `tapElement`）★核心原理【已重构】
 
 ```js
 38: /**
@@ -253,32 +259,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 4 节：按选择器找页面（309-332 行：`findPageWith`）
-
-```js
-63: async function findPageWith(page, selector) {
-64:   for (const p of page.context().pages()) {
-65:     const count = await p.locator(selector).count().catch(() => 0);
-66:     if (count > 0) return p;
-67:   }
-68:   return null;
-69: }
-```
-
-- 56-62 行：注释说明背景——**小程序同一个 context 下并存多个 tab 页**，传进来的 `page` 未必是你要的那个
-- 64 行：`page.context().pages()` 拿到**同一浏览器上下文里的所有页面**，`for...of` 逐个遍历
-  - `context` 可以理解为"一个浏览器会话"，同一小程序的所有页面都在里面
-- 65 行：数一数这个页面上有几个匹配 `selector` 的元素
-  - `.catch(() => 0)` 是**错误兜底**：如果这个页面已经不可用了（比如预加载页崩溃），`count()` 会抛错，这里把它转成 `0`，相当于"这个页面没有目标元素"，继续看下一个
-  - 不写 `.catch` 的话，一个坏页面会让整个查找中断
-- 66 行：找到就立即 `return`（结束循环），返回**那个页面**
-- 68 行：全都没有，返回 `null`。调用方必须判空
-
-**设计取舍**：这个思路的前提是"**目标页有独特的选择器**"。如果多个页面都有同一个元素，它会返回**第一个**匹配的，可能不是你想要的。
-
----
-
-## 第 5 节：切换到用户中心（333-351 行：`switchToUserCenter`）【已重构】
+## 第 5 节：切换到用户中心（318-336 行：`switchToUserCenter`）【已重构】
 
 ```js
 75: async function switchToUserCenter(page) {
@@ -319,7 +300,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 6 节：前台页面探测（352-370 行：`getForegroundPage`）★核心原理
+## 第 6 节：前台页面探测（337-359 行：`getForegroundPage`）★核心原理
 
 ```js
 101: async function getForegroundPage(page, { timeout = 500 } = {}) {
@@ -381,41 +362,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 7 节：登录（371-410 行：`login`）【已重构】
-
-```js
-134: async function login(page) {
-135:   try {
-136:     // 切换 tab 后当前页面会变成新的 webview，操作前先定位前台页面
-137:     page = await getForegroundPage(page);
-138:     await page.getByText("我的").first().click({ timeout: 10000 });
-139:     await page.waitForTimeout(1000);
-140:     page = await getForegroundPage(page);
-141:     await page.getByText("登录/注册").first().click({ timeout: 10000 });
-142:     page = await getForegroundPage(page);
-143:     await page.getByText("同意协议并继续").first().click({ timeout: 10000 });
-144:     await page.getByText("4148").first().click({ timeout: 10000 });
-145:     console.log("已登录");
-```
-
-- 137 行：**先切换 page 引用**。这是前面反复强调的"**页面会变**"问题的解法：
-  ```
-  page = await getForegroundPage(page)
-  ↑ 把新找到的前台页重新赋给 page      ↑ 用当前的 page 去找
-  ```
-  每次点击后，小程序的页面可能变了，所以**下一次操作前都要重新定位**
-- 138 行：`.first()` 表示**匹配到多个时取第一个**。这里加了，而 `switchToUserCenter` 里没加——两处写法不一致，是个潜在的不稳定点
-- 139 行：点击后等 1 秒，让界面反应
-- 140 行：**再重新定位一次**，因为切换 tab 后原来的 page 已经变后台了
-- 141-143 行：依次点「登录/注册」→「同意协议并继续」
-- 144 行：点 `"4148"` —— **这显然是硬编码的测试数据**（很可能是手机号后四位，用于选择某个测试账号）
-  - ⚠️ **问题**：账号被写死在代码里。换测试账号、换环境就得改代码
-  - 正确做法是放进配置文件，通过参数传入
-- 这套流程每一步都**强依赖界面上的具体文案**（"我的"、"登录/注册"、"同意协议并继续"）。**小程序一改文案，这个函数立刻失效**
-
----
-
-## 第 8 节：等软键盘（411-437 行：`waitImeShown`）★核心原理
+## 第 8 节：等软键盘（360-386 行：`waitImeShown`）★核心原理
 
 ```js
 161: async function waitImeShown(device, page, timeout = 5000) {
@@ -456,7 +403,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 9 节：打开搜索页（438-460 行：`focusSearchInput`）★历史实现，见下面说明
+## 第 9 节：打开搜索页（387-433 行：`focusSearchInput`）★历史实现，见下面说明
 
 > **⚠️ 本节下面的代码片段是历史实现**（当时"打开搜索"整条逻辑写在本文件里）。
 > 现在 `focusSearchInput` 只剩十几行：**转调** `pages/qa_page.js` 的 `openSearch` + `typeKeyword`。
@@ -563,74 +510,11 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 10 节：通用操作与断言（461-849 行：`clickElementById` 起、`swipeUp` 止）【均已重构】
+## 第 10 节：通用操作与断言（590-677 行：`clickElementById` 起、`swipeUp` 止）【均已重构】
 
 这五个函数结构高度相似，掌握了规律就能快速看懂。
 
-### `clickElementById`（461-495 行）按 id 点击【已重构】
-
-```js
-223: async function clickElementById(page, { elementId, timeout = 10000 } = {}) {
-224:   try {
-225:     const el = page.locator(`#${elementId}`);
-226:     await el.waitFor({ state: "visible", timeout });
-227:     await el.click({ timeout });
-228:     await page.waitForTimeout(500);
-```
-
-- 225 行：`` `#${elementId}` `` —— `#` 在 CSS 选择器里表示"按 id 查找"。传 `elementId: "submit"` 就变成 `#submit`
-- 226 行：等元素**可见**（不只是存在）
-- 227 行：点击。**这里用的是 Playwright 原生点击，不是 `tapElement`**
-  - ⚠️ 如果是 `wx-view` 类元素，这里会点了没反应——**函数没有告诉使用者这个限制**
-- 228 行：点完等 500 毫秒让界面反应
-
-### `clickElementByText`（496-516 行）按文本点击【已重构】
-
-```js
-245:     const el = page.getByText(text, { exact: false }).first();
-246:     await el.waitFor({ state: "visible", timeout });
-247:     await el.click({ timeout });
-```
-
-- 245 行：三个要点
-  - `getByText(text)` 按**可见文本**定位
-  - `{ exact: false }` **模糊匹配**——传 "我的" 也能匹配到 "我的页面"。灵活但**可能误匹配**（要精确匹配就传 `true`）
-  - `.first()` 取第一个。**必须有**，否则匹配多个时会报错
-  - 注意这一行**没有 `await`**，因为它只是"创建一个定位器描述"，还没真正去查。真正的异步操作在下一行的 `waitFor`
-
-### `inputText`（517-568 行）输入文本【已重构】
-
-```js
-265:     const el = page.locator(`#${elementId}`);
-266:     await el.waitFor({ state: "attached", timeout });
-267:     await el.click();
-268:     await el.fill(text);
-```
-
-- 266 行：这里等的是 **`attached`（存在于 DOM）而不是 `visible`**
-  - 区别：元素只需要"存在于页面结构里"，不需要"显示在屏幕上"
-  - 对输入框来说，有时它不可见但仍能填内容，所以判断更宽松
-- 267-268 行：**先点一下，再填内容**
-  - 先 `click()` 是为了让输入框**拿到焦点**（还记得 `waitImeShown` 强调的焦点问题吗）
-  - `fill()` 是 Playwright 的方法，会**先清空再填入**，比逐字模拟输入快得多
-  - ⚠️ **没有用 `waitImeShown`**：`fill()` 走的是浏览器层面的输入，不依赖软键盘，所以不需要等键盘。但如果这个输入框是 `wx-input` 特殊组件，`fill()` 可能无效，那时就得像 `focusSearchInput` 那样改用 adb
-- ⚠️ 267 行的 `click()` 和 268 行的 `fill()` **都没有传 `timeout`**，用的是 Playwright 默认的 30 秒
-
-### `assertElementExists`（569-605 行）断言元素存在【已重构】
-
-```js
-286:     await page.locator(`#${elementId}`).waitFor({ state: "attached", timeout });
-287:     console.log(`元素存在校验通过: ${elementId}`);
-```
-
-- 这是**唯一的"断言"函数**，但它的实现方式很取巧：**靠 `waitFor` 超时报错来充当断言失败**
-- 问题：
-  1. **失败信息很差**。超时报的是 `Timeout 5000ms exceeded`，你看不出"我是想验证 xxx 元素存在"
-  2. **只能断言"元素存在"**，没法断言"文本内容等于 xxx"、"页面跳转到了 xxx"
-  3. **默认等 `attached`**，元素存在但被隐藏也算通过——很多时候你其实想验证"用户能看到它"
-- ⚠️ **命名与返回值不自洽**：叫 `assert...`（断言），却和其他操作函数一样 `return page`。断言本该没有返回值
-
-### `swipeUp`（762-849 行）向上滑动【已重构】
+### `swipeUp`（590-677 行）向上滑动【已重构】
 
 ```js
 303:     const size = page.viewportSize() || { width: 0, height: 0 };
@@ -656,7 +540,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 11 节：返回上一页（850-928 行：`goBack`）
+## 第 11 节：返回上一页（678-759 行：`goBack`）
 
 ```js
 326: async function goBack(page) {
@@ -670,66 +554,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 12 节：切换 WebView 上下文（929-961 行：`switchToWxWebview`）
-
-```js
-344: async function switchToWxWebview(device, { timeout = 20000 } = {}) {
-346:     const webview = await device.webView({ pkg: WX_WEBVIEW_PKG }, { timeout });
-347:     const page = await webview.page();
-348:     await page.waitForLoadState("domcontentloaded");
-350:     let targetPage = page;
-351:     let maxCount = -1;
-352:     for (const p of page.context().pages()) {
-353:       const count = await p.locator("*").count();
-354:       if (count > maxCount) {
-355:         targetPage = p;
-356:         maxCount = count;
-357:       }
-358:     }
-```
-
-这是**另一个"找目标页面"的思路**，和 `getForegroundPage` 的"看动画帧"形成对比。
-
-- 344 行：**第一个参数是 `device` 而不是 `page`** —— 因为这一步还没拿到页面，需要从设备层面找
-- 346 行：`device.webView({ pkg: WX_WEBVIEW_PKG })` 按**进程包名**找 WebView
-  - 这就是第 1 节那个 `WX_WEBVIEW_PKG` 唯一的用处
-- 347 行：`webview.page()` 把 WebView 转成可操作的 `page`
-- 348 行：等 DOM 加载完成（`domcontentloaded` 是网页加载的一个阶段）
-- 350-358 行：**"元素最多者胜"策略**——遍历所有页面，数每个页面上有多少个元素，选**最多的那个**
-  - 351 行：`maxCount = -1` 的用意：保证**第一次比较必定成立**（任何实际数量都 ≥ 0 > -1）
-  - 353 行：`locator("*")` 匹配所有元素，`.count()` 数个数
-  - 354-357 行：比当前最大值大就更新
-- 设计意图（见 349 行注释）：**避免落在空白页上**。空白页元素少，内容页元素多
-
-**三种"找页面"思路对比**（这是理解本文件的关键）：
-
-| 函数 | 判定依据 | 优点 | 风险 |
-|---|---|---|---|
-| `findPageWith` | 含指定选择器 | 精确，知道要找什么 | 多个页面都有该元素时可能选错 |
-| `getForegroundPage` | 是否还在产生动画帧 | 直接判断"谁在前台" | 慢（最坏遍历×500ms） |
-| `switchToWxWebview` | 谁的元素最多 | 无需知道具体元素 | 内容是长列表时可能误判 |
-
-⚠️ 第 352-357 行**没有错误处理**：如果某个页面已失效，`.count()` 会抛错导致整个函数失败（对比 `findPageWith` 里加了 `.catch(() => 0)`）
-
----
-
-## 第 13 节：小程序内按文本点击（962-983 行：`clickWxText`）【已重构】
-
-```js
-373: async function clickWxText(page, { text, timeout = 10000 } = {}) {
-375:     const el = page.getByText(text, { exact: false }).first();
-376:     await el.waitFor({ state: "visible", timeout });
-377:     await el.click({ timeout });
-378:     await page.waitForTimeout(500);
-```
-
-- **这个函数和 `clickElementByText`（第 10 节）的实现逐行几乎完全一样**
-- 唯一区别是日志文案："已点击小程序文本" vs "已点击文本"
-- ⚠️ **这是一个"重复函数"**，属于该被合并的技术债。保留两个名字可能是为了让调用方语义更清楚，但实现完全重叠，维护时改一个忘一个就会产生不一致
-
----
-
-## 第 14 节：输出页面结构（984-1019 行：`dumpElements`）★调试利器
+## 第 14 节：输出页面结构（760-795 行：`dumpElements`）★调试利器
 
 ```js
 394: async function dumpElements(page, { tag } = {}) {
@@ -811,7 +636,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 15 节：导出清单（1020-1044 行：`module.exports`）
+## 第 15 节：导出清单（796-811 行：`module.exports`）
 
 ```js
 430: module.exports = {
@@ -864,31 +689,23 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 | 行号 | 函数 | 参数 | 用途 | 导出 |
 |---|---|---|---|---|
-| 31 | `getDevice` | 无 | 懒加载设备（取第一个） | ❌ |
-| **64** | **`findClickableAncestor`** | locator | **向上找可点击祖先容器**（新增） | ❌ |
-| 192 | `tapElement` | device, page, locator | **真实 adb 点击**【已重构】 | ✅ |
-| 309 | `findPageWith` | page, selector | 按选择器找页面 | ❌ |
-| 333 | `switchToUserCenter` | page, {timeout,retries} | 切到「我的」【幂等+重试】 | ✅ |
-| 352 | `getForegroundPage` | page, {timeout} | **探测前台页面** | ✅ |
-| 371 | `login` | page | 登录流程【改真实 tap】 | ✅ |
-| 411 | `waitImeShown` | device, page, timeout | **等软键盘弹出** | ❌ |
-| 438 | `focusSearchInput` | page, {timeout} | 转调 `pages/qa_page.js` 的 openSearch + typeKeyword，再提交 | ✅ |
-| 461 | `clickElementById` | page, {elementId, timeout} | 按 id 点击【属性选择器】 | ✅ |
-| 496 | `clickElementByText` | page, {text, timeout} | 按文本点击【真实 tap】 | ✅ |
-| 517 | `inputText` | page, {elementId, text, timeout} | 输入文本【含读回校验】 | ✅ |
-| 569 | `assertElementExists` | page, {elementId, timeout} | 断言元素存在【属性选择器】 | ✅ |
-| 606 | `readForegroundText` | page | 读"当前前台页 + 它的可见文字"（断言层的公用件） | ❌ |
-| 615 | `describeCurrentPage` | page, text | 把当前页面文字拼进报错里（失败时能看到现场） | ❌ |
-| 632 | `assertTextVisible` | page, {text, timeout} | **断言页面出现某段文字**【轮询等待】 | ✅ |
-| 659 | `assertTextNotVisible` | page, {text, timeout} | **断言页面不再出现某段文字** | ✅ |
-| 688 | `assertSelectorExists` | page, {selector, timeout} | **断言选择器至少命中 1 个** | ✅ |
-| 721 | `assertSelectorCount` | page, {selector, expected, timeout} | **断言选择器命中个数恰好等于期望** | ✅ |
-| 762 | `swipeUp` | page, {duration,startRatio,endRatio,timeout} | 向上滑动【adb swipe + 位移校验】 | ✅ |
-| 850 | `goBack` | page, {timeout, selectors} | **点返回按钮 + 校验页面确实变了**；找不到按钮退回安卓返回键【已修，见坑 20】 | ✅ |
-| 929 | `switchToWxWebview` | device, {timeout} | 按包名切 WebView | ✅ |
-| 858 | `clickWxText` | page, {text, timeout} | 按文本点击（与 392 的 `clickElementByText` 功能重叠） | ✅ |
-| 984 | `dumpElements` | page, {tag} | **打印页面 HTML（调试点）** | ✅ |
-| 1020 | `module.exports` | — | 导出清单 | — |
+| 30 | `getDevice` | 无 | 懒加载设备（取第一个） | ❌ |
+| **63** | **`findClickableAncestor`** | locator | **向上找可点击祖先容器**（新增） | ❌ |
+| 191 | `tapElement` | device, page, locator | **真实 adb 点击**【已重构】 | ✅ |
+| 318 | `switchToUserCenter` | page, {timeout,retries} | 切到「我的」【幂等+重试】 | ✅ |
+| 337 | `getForegroundPage` | page, {timeout} | **探测前台页面** | ✅ |
+| 360 | `waitImeShown` | device, page, timeout | **等软键盘弹出** | ❌ |
+| 387 | `focusSearchInput` | page, {timeout} | 转调 `pages/qa_page.js` 的 openSearch + typeKeyword，再提交 | ✅ |
+| 434 | `readForegroundText` | page | 读"当前前台页 + 它的可见文字"（断言层的公用件） | ❌ |
+| 443 | `describeCurrentPage` | page, text | 把当前页面文字拼进报错里（失败时能看到现场） | ❌ |
+| 460 | `assertTextVisible` | page, {text, timeout} | **断言页面出现某段文字**【轮询等待】 | ✅ |
+| 487 | `assertTextNotVisible` | page, {text, timeout} | **断言页面不再出现某段文字** | ✅ |
+| 516 | `assertSelectorExists` | page, {selector, timeout} | **断言选择器至少命中 1 个** | ✅ |
+| 549 | `assertSelectorCount` | page, {selector, expected, timeout} | **断言选择器命中个数恰好等于期望** | ✅ |
+| 590 | `swipeUp` | page, {duration,startRatio,endRatio,timeout} | 向上滑动【adb swipe + 位移校验】 | ✅ |
+| 678 | `goBack` | page, {timeout, selectors} | **点返回按钮 + 校验页面确实变了**；找不到按钮退回安卓返回键【已修，见坑 20】 | ✅ |
+| 760 | `dumpElements` | page, {tag} | **打印页面 HTML（调试点）** | ✅ |
+| 796 | `module.exports` | — | 导出清单 | — |
 
 ---
 

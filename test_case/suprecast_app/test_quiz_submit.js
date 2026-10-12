@@ -30,7 +30,7 @@
 
 const path = require("path");
 const { appTest } = require("../../common/app_common");
-const { runDbTool } = require("../../common/db_tool");
+const { runDbTool, makeWriteSwitchStep } = require("../../common/db_tool");
 const { assertSelectorExists } = require("../../app_sub_function/suprecast_app/android");
 const pages = require("../../app_sub_function/suprecast_app/pages");
 
@@ -41,29 +41,12 @@ const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
 
 const ALLOW_SUBMIT = process.env.UITEST_ALLOW_SUBMIT === "1";
 
+/** 第一道闸：没打开写开关就记「跳过」（实现与文案在 common/db_tool.js，只有一份） */
+const requireSubmitSwitch = makeWriteSwitchStep("答题写链路");
+
 // 这次用例打开的是哪个活动（复位时要按它定位）。由第 2 步填上。
 let activityTitle = "";
 
-/**
- * 前置条件：没有打开开关就**记跳过**（退出码 3 -> pytest 报 SKIPPED 并带上原因）。
- *
- * 不报 FAILED 的理由：这条用例"该不该跑"是人决定的（跑它要写数据），
- * 没打开开关就报红，会在每次全量跑里长期躺着一条假失败 —— 那正是「报告说谎」。
- */
-async function requireSubmitSwitch(page) {
-  if (!ALLOW_SUBMIT) {
-    const e = new Error(
-      "这条用例会**真的提交答卷**（写数据到测试库），默认不执行。\n" +
-        "  要跑它：先设环境变量 UITEST_ALLOW_SUBMIT=1。PowerShell 里这样写：\n" +
-        '    $env:UITEST_ALLOW_SUBMIT="1"; python run.py -k 答题写链路\n' +
-        "  跑之前它会先把该活动的答题记录复位，跑完再复位一次（见文件头说明）。"
-    );
-    e.preconditionNotMet = true;
-    throw e;
-  }
-  console.log("  写链路开关已打开（UITEST_ALLOW_SUBMIT=1），继续");
-  return page;
-}
 
 /** 记住这次打开的是哪个活动 —— 后面的复位/校验全靠它定位 */
 async function rememberActivity(page, _kwargs, ctx) {

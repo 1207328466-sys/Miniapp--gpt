@@ -12,7 +12,6 @@
  * 只有需要设备级能力的 switchToWxWebview 以 device 作为第一个参数。
  */
 
-const WX_WEBVIEW_PKG = "com.tencent.mm:appbrand0";
 const { getWxWebviewPage } = require("../../common/app_common");
 const { _android: android } = require("playwright");
 
@@ -300,20 +299,6 @@ async function tapElement(device, page, locator) {
 }
 
 /**
- * 在 context 的所有 page 中找出包含指定选择器的 page。
- * 小程序同一 context 下会并存多个 tab 页，传进来的 page 未必是目标页。
- * @param {import('playwright').Page} page
- * @param {string} selector
- * @returns {Promise<import('playwright').Page|null>}
- */
-async function findPageWith(page, selector) {
-  for (const p of page.context().pages()) {
-    const count = await p.locator(selector).count().catch(() => 0);
-    if (count > 0) return p;
-  }
-  return null;
-}
-/**
  * 切换到用户中心。
  *
  * 【实现已迁移到页面对象】
@@ -363,42 +348,6 @@ async function getForegroundPage(page, { timeout = 500 } = {}) {
 }
 
 
-/**
- * 登录小程序
- * @param {import('playwright').Page} page 小程序 webview 页面
- * @returns {Promise<import('playwright').Page>} page
- */
-async function login(page) {
-  try {
-    const device = await getDevice();
-    // 内部小工具：按文本真实 tap，并等待页面切换
-    const tapByText = async (text) => {
-      const el = page.getByText(text).first();
-      await el.waitFor({ state: "attached", timeout: 10000 });
-      await tapElement(device, page, el);
-    };
-
-    // 切换 tab 后当前页面会变成新的 webview，操作前先定位前台页面
-    page = await getForegroundPage(page);
-    await tapByText("我的");
-    await page.waitForTimeout(1000);
-
-    page = await getForegroundPage(page);
-    await tapByText("登录/注册");
-
-    page = await getForegroundPage(page);
-    await tapByText("同意协议并继续");
-
-    // ⚠️ 硬编码测试账号，换账号/换环境必须改代码，待抽到配置
-    await tapByText("4148");
-
-    console.log("已登录");
-    return page;
-  } catch (e) {
-    console.error(`登录失败: ${e.message}`);
-    throw e;
-  }
-}
 
 /**
  * 等待软键盘弹出（mInputShown=true），说明输入框已真正拿到焦点。
@@ -452,130 +401,9 @@ async function focusSearchInput(page, { timeout = 10000 } = {}) {
   return fg;
 }
 
-/**
- * 通过元素 id 点击元素
- * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{elementId: string, timeout?: number}} params elementId: 元素 id；timeout: 等待超时（毫秒）
- * @returns {Promise<import('playwright').Page>} page
- */
-async function clickElementById(page, { elementId, timeout = 10000 } = {}) {
-  try {
-    const el = page.locator(`[id="${elementId}"]`);
-    // 用 attached 而不是 visible：小程序大量元素是零宽度的文字节点，
-    // visible 判断会直接超时；实际点击交给 tapElement 向上找可点击容器。
-    await el.waitFor({ state: "attached", timeout });
-    const device = await getDevice();
-    await tapElement(device, page, el);
-    await page.waitForTimeout(500);
-    console.log(`已点击元素: ${elementId}`);
-    return page;
-  } catch (e) {
-    console.error(`点击元素失败 [${elementId}]: ${e.message}`);
-    throw e;
-  }
-}
 
-/**
- * 通过文本内容点击元素（真实 adb tap）
- *
- * 【为什么不用 Playwright 的 .click()】
- * 实测对照结果：
- *   底部 tab 栏「我的」 .click()  → Timeout 8000ms，页面无变化（彻底失败）
- *   同一目标           tapElement → 成功切换页面
- *   顶部筛选栏「推荐」  .click()  → 同样 Timeout，但内容其实变了（误报失败）
- *
- * 根因：Playwright 的 .click() 会等元素 "visible, enabled and stable"，
- * 其中 stable 要求元素连续两帧位置不变。而小程序页面持续重绘，
- * 元素永远不稳定，于是 .click() 要么超时抛错、要么误报失败。
- * 真实 adb tap 不经过这些检查，直接发系统触摸事件，可靠得多。
- *
- * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{text: string, timeout?: number}} params text: 元素文本；timeout: 等待超时（毫秒）
- * @returns {Promise<import('playwright').Page>} page
- */
-async function clickElementByText(page, { text, timeout = 10000 } = {}) {
-  try {
-    const el = page.getByText(text, { exact: false }).first();
-    await el.waitFor({ state: "attached", timeout });
-    const device = await getDevice();
-    await tapElement(device, page, el);
-    await page.waitForTimeout(500);
-    console.log(`已点击文本: ${text}`);
-    return page;
-  } catch (e) {
-    console.error(`点击文本失败 [${text}]: ${e.message}`);
-    throw e;
-  }
-}
 
-/**
- * 向指定元素输入文本
- * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{elementId: string, text: string, timeout?: number}} params elementId: 元素 id；text: 要输入的文本；timeout: 等待超时（毫秒）
- * @returns {Promise<import('playwright').Page>} page
- */
-async function inputText(page, { elementId, text, timeout = 10000 } = {}) {
-  try {
-    const el = page.locator(`[id="${elementId}"]`);
-    await el.waitFor({ state: "attached", timeout });
 
-    // 先用真实 tap 让输入框拿到焦点。
-    // 不能用 el.click()：小程序上会因页面持续重绘触发 stability 超时。
-    const device = await getDevice();
-    await tapElement(device, page, el);
-
-    // fill() 走浏览器层面直接赋值，不依赖软键盘，速度最快。
-    await el.fill(text, { timeout });
-    await page.waitForTimeout(300);
-
-    // ⚠️ 关键校验：小程序的自定义输入组件（wx-input / wx-textarea）可能
-    // 不接受浏览器层面的赋值，此时 fill() 不报错但内容为空 —— 典型的假通过。
-    // 这里主动读回校验，避免静默失败。
-    //
-    // 【读法的坑，本轮实测修正】值放在 **value 属性**上：
-    //   el.value                          -> undefined（自定义元素没有这个 property）
-    //   el.querySelector("input").value   -> ""（内层是 style="visibility:hidden" disabled 的占位 input）
-    //   el.getAttribute("value")          -> 真实内容 ✅
-    // 原来的实现用的是第二种读法，于是**必然误报** "fill() 未真正写入"。
-    // 这是一个真 bug：读不到 ≠ 没输进去（见账本第十六节）。
-    const actual = await el.evaluate((node) => {
-      const attr = node.getAttribute ? node.getAttribute("value") : null;
-      if (attr !== null) return String(attr);
-      if ("value" in node && node.value != null) return String(node.value);
-      const inner = node.querySelector ? node.querySelector("input, textarea") : null;
-      return inner && inner.value != null ? String(inner.value) : "";
-    });
-    if (actual !== text) {
-      throw new Error(
-        `fill() 未真正写入（期望 "${text}"，实际 "${actual}"）。` +
-          `该元素很可能是小程序自定义输入组件，不接受浏览器层面赋值，需改用 adb input text。`
-      );
-    }
-
-    console.log(`已输入文本到 [${elementId}]: ${text}`);
-    return page;
-  } catch (e) {
-    console.error(`输入文本失败 [${elementId}]: ${e.message}`);
-    throw e;
-  }
-}
-
-/**
- * 断言指定元素存在
- * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{elementId: string, timeout?: number}} params elementId: 元素 id；timeout: 等待超时（毫秒）
- * @returns {Promise<import('playwright').Page>} page
- */
-async function assertElementExists(page, { elementId, timeout = 5000 } = {}) {
-  try {
-    await page.locator(`[id="${elementId}"]`).waitFor({ state: "attached", timeout });
-    console.log(`元素存在校验通过: ${elementId}`);
-    return page;
-  } catch (e) {
-    console.error(`元素不存在 [${elementId}]: ${e.message}`);
-    throw e;
-  }
-}
 
 // ============================================================
 // 断言层（wait + assert 合体）
@@ -920,59 +748,7 @@ async function goBack(page, { timeout = 10000, selectors = BACK_BUTTON_SELECTORS
   }
 }
 
-/**
- * 切换到微信小程序 webview 上下文，并选中内容最多的窗口
- * @param {import('playwright').AndroidDevice} device 安卓设备
- * @param {{timeout?: number}} params timeout: 等待 webview 出现的超时时间（毫秒）
- * @returns {Promise<import('playwright').Page>} 小程序 webview 的 Page
- */
-async function switchToWxWebview(device, { timeout = 20000 } = {}) {
-  try {
-    const webview = await device.webView({ pkg: WX_WEBVIEW_PKG }, { timeout });
-    const page = await webview.page();
-    await page.waitForLoadState("domcontentloaded");
-    // 小程序 webview 存在多个窗口，选择元素最多的那个（避免落在空白页）
-    let targetPage = page;
-    let maxCount = -1;
-    for (const p of page.context().pages()) {
-      const count = await p.locator("*").count();
-      if (count > maxCount) {
-        targetPage = p;
-        maxCount = count;
-      }
-    }
-    console.log(`已切换到小程序webview上下文: pid=${webview.pid()}`);
-    return targetPage;
-  } catch (e) {
-    console.error(`切换小程序webview上下文失败: ${e.message}`);
-    throw e;
-  }
-}
 
-/**
- * 在微信小程序 webview 中按文本点击元素（真实 adb tap）
- *
- * ⚠️ 本函数与 clickElementByText 实现完全相同，仅日志文案不同。
- * 保留两个名字只是照顾历史调用方，后续应合并成一个。
- *
- * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{text: string, timeout?: number}} params text: 元素文本；timeout: 等待超时（毫秒）
- * @returns {Promise<import('playwright').Page>} page
- */
-async function clickWxText(page, { text, timeout = 10000 } = {}) {
-  try {
-    const el = page.getByText(text, { exact: false }).first();
-    await el.waitFor({ state: "attached", timeout });
-    const device = await getDevice();
-    await tapElement(device, page, el);
-    await page.waitForTimeout(500);
-    console.log(`已点击小程序文本: ${text}`);
-    return page;
-  } catch (e) {
-    console.error(`点击小程序文本失败 [${text}]: ${e.message}`);
-    throw e;
-  }
-}
 
 /**
  * 输出当前页面的 HTML 结构（调试用，便于确认该用哪个定位器）。
@@ -1018,24 +794,15 @@ async function dumpElements(page, { tag } = {}) {
 }
 
 module.exports = {
-  WX_WEBVIEW_PKG,
   getDevice,
   getForegroundPage,
-  findPageWith,
   waitImeShown,
-  login,
-  clickElementById,
-  clickElementByText,
-  inputText,
-  assertElementExists,
   assertTextVisible,
   assertTextNotVisible,
   assertSelectorExists,
   assertSelectorCount,
   swipeUp,
   goBack,
-  switchToWxWebview,
-  clickWxText,
   switchToUserCenter,
   focusSearchInput,
   dumpElements,

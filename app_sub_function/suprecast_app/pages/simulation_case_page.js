@@ -111,19 +111,13 @@ async function ensureOn(page, { timeout = 15000 } = {}) {
     return base.foreground(page);
   }
   page = await base.ensureOnTabPage(page);
-  await base.tapText(page, TAB_TEXT, `底部 tab「${TAB_TEXT}」`);
-  const ok = await base.waitUntil(async () => (await base.countOf(await base.foreground(page), SEL.page)) > 0, {
+  // 点 tab + 验证 + **带验证的重试**统一在 switchToBottomTab 里（偶发的一次点击不生效就再点一次）
+  page = await base.switchToBottomTab(page, TAB_TEXT, {
+    isTarget: async () => (await base.countOf(await base.foreground(page), SEL.page)) > 0,
     timeout,
   });
-  if (!ok) {
-    const now = await base.foreground(page);
-    throw new Error(
-      `点底部 tab「${TAB_TEXT}」后没有进入案例库（未出现 ${SEL.page}）。\n` +
-        `  当前页面前 120 字: ${JSON.stringify((await base.pageText(now)).slice(0, 120))}`
-    );
-  }
   console.log("已到达案例库列表页");
-  return base.foreground(page);
+  return page;
 }
 
 /**

@@ -393,20 +393,15 @@ async function ensureOn(page, { timeout = 10000 } = {}) {
   page = await base.ensureOnTabPage(page);
   if (await isOn(page)) return await base.foreground(page);
 
-  await base.tapText(page, BOTTOM_TAB_TEXT, `底部 tab「${BOTTOM_TAB_TEXT}」`);
-
-  // 点击后**重新解析前台页**再看结果：切 tab 会新建 page，旧 page 内容会冻结
-  //（账本根因 4 / 8），在旧 page 上等只会白等。
-  const ok = await base.waitUntil(async () => isOn(page), { timeout });
-  if (!ok) {
-    const now = await base.foreground(page);
-    throw new Error(
-      `点击底部 tab「${BOTTOM_TAB_TEXT}」后没有进入有问必答页（未出现 ${SEL.searchBar}）。` +
-        `当前页面前 120 字: ${JSON.stringify((await base.pageText(now)).slice(0, 120))}`
-    );
-  }
+  // 点 tab + 验证 + **带验证的重试**统一在 switchToBottomTab 里。
+  // 注意判据 isOn 每次都会**重新解析前台页**再看：切 tab 会新建 page，
+  // 旧 page 内容会冻结（账本根因 4 / 8），在旧 page 上等只会白等。
+  page = await base.switchToBottomTab(page, BOTTOM_TAB_TEXT, {
+    isTarget: async () => isOn(page),
+    timeout,
+  });
   console.log("已到达「有问必答」页");
-  return base.foreground(page);
+  return page;
 }
 
 /**

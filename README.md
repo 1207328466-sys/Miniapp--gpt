@@ -795,28 +795,28 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 ├── test_case/                       # 用例层
 │   ├── pytest.ini                   # pytest 配置
 │   ├── diagnostic/                  # 诊断工具（不以 test_ 开头，pytest 不收集）
-│   │   ├── capability_check.js      # 15 个函数的能力矩阵探测
-│   │   ├── dump_page.js             # 抓页面 DOM 到文件 + 各 page 身份判定
-│   │   ├── probe_raf.js             # 校准前台页判据（RAF 信号 vs 截图真值）
-│   │   ├── probe_feed_tabs.js       # 校准首页筛选 tab 的"选中态"判据（--read 只看当前状态）
-│   │   ├── set_feed_tab.js          # 把首页筛选 tab 切到指定那个（准备现场 / 验收用）
-│   │   ├── probe_pages.js           # 每个页面的身份/可见性信号（--timeline 采样跳转过程）
-│   │   ├── selftest_pick_page.js    # 不需要手机：验证"多候选时挑前台页"的三条规则
-│   │   ├── selftest_quiz_question_options.js # 不需要手机：答题"选项 2~6 且互不相同"规则（10 项）
-│   │   ├── probe_case_banner_rotation.js  # 首页那张「教你玩转 仿真案例库」是不是轮播（结论：不在首屏）
-│   │   ├── probe_case_banner_img.js # 首页信息流的图片元素清单（认清"图片卡"是哪个）
-│   │   ├── probe_quiz_page.js       # 看答题页是单题还是多题 + **题目边界**（一题 = .quiz-card）
-│   │   ├── probe_quiz_answer_all.js # 逐题作答演练（**不提交**，选择不会保存）
-│   │   ├── probe_search_bar_covered.js  # 首页滚动后搜索栏的位置与"命中测试"（坑 25 的证据）
-│   │   ├── probe_tap_guard.js       # **反向验证**：盖住目标后点击必须被拦下（坑 25 的护栏）
-│   │   ├── probe_home_feed_scroll_reset.js # 「回到首页」有没有把信息流滚回顶部（三步正反验证）
-│   │   ├── probe_design_zone.js     # 设计专区里有什么 —— 案例库入口就是这么找到的
-│   │   ├── probe_case_library_page.js # 案例库列表页结构（介绍 banner / 复制图标 / 卡片类名）
-│   │   ├── probe_ime_blocks_bottom_tab.js # 软键盘开着时「回到首页」还走不走得通（坑 26）
-│   │   ├── probe_home_feed_foreground.js # 「回到首页」会不会"报成功但屏幕上还停在搜索页"（坑 28）
-│   │   ├── probe_case_detail_page.js # 案例详情页结构（评论区标题 / 底部图标）
-│   │   ├── probe_case_intro_banner.js # 点案例库首页那张 banner 落到哪一页（介绍长图）
-│   │   ├── probe_case_copy.js       # 点「复制案例」会发生什么（写操作，配套复位工具）
+│   │   # 【这个目录的规矩】一次性探测**用完就删**（结论写进 docs/踩坑记录.md 或页面对象注释里）；
+│   │   #   只留三类：换设备/改框架后还会复跑的常备工具、不需要手机的自检、
+│   │   #   以及被文档引用为"当场证据"的探针。2026/10/12 按这条规矩从 44 个瘦到 29 个。
+│   │   ├── dump_page.js             # 常备：抓页面 DOM 到文件 + 各 page 身份判定
+│   │   ├── probe_pages.js           # 常备：每个页面的身份/可见性信号（--timeline 采样跳转过程）
+│   │   ├── probe_raf.js             # 常备：校准前台页判据（RAF 信号 vs 截图真值）
+│   │   ├── probe_feed_tabs.js       # 常备：校准首页筛选 tab 的"选中态"判据（--read 只看当前状态）
+│   │   ├── set_feed_tab.js          # 常备：把首页筛选 tab 切到指定那个（准备现场用）
+│   │   ├── probe_input_ownership.js # 坑 29 的关键证据：输入只送到"显示中的那一页"
+│   │   ├── probe_tap_guard.js       # 反向验证：盖住目标后点击必须被拦下（坑 25 的护栏）
+│   │   ├── probe_search_bar_covered.js / probe_ime_blocks_bottom_tab.js  # 坑 25 / 坑 26 的证据
+│   │   ├── probe_page_visibility_signals.js / probe_pages_after_tab_tap.js # 坑 29 的定位与信号穷举
+│   │   ├── probe_home_feed_scroll_reset.js / probe_home_feed_foreground.js # 「回到首页」的两条护栏
+│   │   ├── probe_case_entry.js / probe_case_from_home.js / probe_case_library_page.js
+│   │   │                            # 案例库入口的排查证据（含两条死路）+ 列表页结构
+│   │   ├── probe_quiz_page.js / probe_unpurchased_assert_reverse.js # 答题题目边界 / 未购买断言的反向验证
+│   │   ├── probe_feed_cards.js probe_hot_topics.js probe_search_empty.js probe_points_mall.js
+│   │   ├── probe_mall_top_button.js probe_post_home_button.js        # 各条需求当时的"取证据"探针
+│   │   ├── selftest_pick_page.js    # 不需要手机：验证"多候选时挑前台页"
+│   │   ├── selftest_quiz_question_options.js / selftest_course_zero_lesson_match.js
+│   │   │                            # 不需要手机：两条断言的规则自检（已接进 verify-all）
+│   │   ├── selftest_anchor.js       # 锚点自检（需要手机）
 │   │   └── run_case.py              # 跑单个用例并把输出按正确编码落盘
 │   └── suprecast_app/
 │       ├── conftest.py              # ★ 桥接层：让 pytest 能执行 .js；表格用例按编号拆成多条

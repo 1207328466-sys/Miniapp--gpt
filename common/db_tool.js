@@ -99,6 +99,26 @@ function writeSwitchOffError(what) {
   return e;
 }
 
+/**
+ * 造一个"检查写开关"的步骤函数 —— 写链路用例的第一道闸。
+ *
+ * 为什么要工厂：两个写链路用例（答题提交 / 案例复制）本来各写了一份 15 行的开关检查，
+ * 消息也各写一份 —— 那种重复的代价是"两个地方的说法会慢慢不一样"，而写数据的用例**最怕说法不一致**。
+ * 现在只有一份实现、一份文案；用例侧一行就够。
+ *
+ * @param {string} label 人话名字（会出现在步骤日志与报错里，例如「案例复制写链路」）
+ * @returns {Function} 步骤函数：开关没开就抛"前置条件不满足"（pytest 记 SKIPPED，不是 FAILED）
+ */
+function makeWriteSwitchStep(label) {
+  const fn = async function requireWriteSwitch(page) {
+    if (!writeSwitchOn()) throw writeSwitchOffError(`「${label}」`);
+    console.log(`  写链路开关已打开（UITEST_ALLOW_SUBMIT=1），继续：${label}`);
+    return page;
+  };
+  Object.defineProperty(fn, "name", { value: `requireWriteSwitch_${label}`, configurable: true });
+  return fn;
+}
+
 module.exports = {
   runTool,
   runDbTool,
@@ -106,6 +126,7 @@ module.exports = {
   writeSwitchOn,
   writeSwitchOffMessage,
   writeSwitchOffError,
+  makeWriteSwitchStep,
   CLEANUP_TOOL,
   TOOLS,
 };

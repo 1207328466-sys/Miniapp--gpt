@@ -30,6 +30,7 @@
 
 const path = require("path");
 const { appTest } = require("../../common/app_common");
+const { makeWriteSwitchStep } = require("../../common/db_tool");
 const caseCopy = require("../../app_sub_function/suprecast_app/case_copy");
 const pages = require("../../app_sub_function/suprecast_app/pages");
 
@@ -38,25 +39,13 @@ const caseLibrary = pages.caseLibrary;
 const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
 const ALLOW_SUBMIT = process.env.UITEST_ALLOW_SUBMIT === "1";
 
+/** 第一道闸：没打开写开关就记「跳过」（实现与文案在 common/db_tool.js，只有一份） */
+const requireSubmitSwitch = makeWriteSwitchStep("案例复制写链路");
+
 // 这次复制的是哪个案例（第 3 步从页面读出来）、复制前的水位（第 4 步记下）
 let caseTitle = "";
 let baseline = null;
 let resetDone = false;
-
-async function requireSubmitSwitch(page) {
-  if (!ALLOW_SUBMIT) {
-    const e = new Error(
-      "这条用例会**真的复制一次案例**（写测试库数据），默认不执行。\n" +
-        "  要跑它：先设环境变量 UITEST_ALLOW_SUBMIT=1，PowerShell 里这样写：\n" +
-        '    $env:UITEST_ALLOW_SUBMIT="1"; python run.py -k 案例复制写链路\n' +
-        "  它跑前会记水位、跑完自动复位（删掉自己造的那条记录并把复制数改回去）。"
-    );
-    e.preconditionNotMet = true;
-    throw e;
-  }
-  console.log("  写链路开关已打开（UITEST_ALLOW_SUBMIT=1），继续");
-  return page;
-}
 
 /** 打开案例库第一张案例（并记下它的标题 —— 复位要靠标题定位） */
 async function openFirstCaseAndRemember(page, _kwargs, ctx) {
