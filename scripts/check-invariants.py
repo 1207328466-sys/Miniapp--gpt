@@ -93,6 +93,37 @@ for rel in docs:
             bad_docs.append('%s 写着 %s 个' % (rel, num))
 check('文档里的动作数量与实际一致（%d 个）' % n, not bad_docs, '；'.join(bad_docs))
 
+# ---------- 5) 写链路的"自证"：有开关就必须有复位 ----------
+# 为什么盯这条：写数据的用例**必须**跑完把自己造的记录清掉。
+# 如果以后有人照抄写链路用例、只留了开关却把复位那步删了，数据就会被留在库里
+# —— 而且用例本身还是"绿的"，没有任何报错。这种"静默把库弄脏"必须由闸门挡住。
+from pathlib import Path as _Path  # noqa: E402
+
+WRITE_CASE_DIR = _Path(REPO) / 'test_case' / 'suprecast_app'
+no_reset = []
+for p in sorted(WRITE_CASE_DIR.glob('test_*.js')):
+    if p.name == TABLE_DRIVER:
+        continue
+    text = read('test_case/suprecast_app/' + p.name)
+    if 'UITEST_ALLOW_SUBMIT' not in text:
+        continue  # 只读用例，不涉及复位
+    # ⚠️ 判据要按**两种复位机制的真实痕迹**来（两次反向验证各抓到一次错）：
+    #   ①「案例复制」用 `--reset` + 水位（case_copy_reset.py）
+    #   ②「答题」用 `--yes` 直接删（quiz_data_cleanup.py，没有 --reset 这种参数）
+    # 所以认"Do 调过数据工具"这件事本身：`--reset` 或 `runDbTool(`。
+    # 最早写成"含「复位」两个字"—— 注释里写「复位」就能骗过它（判据太松，等于没查）。
+    has_reset = ('--reset' in text) or ('runDbTool(' in text) or ('.reset(' in text)
+    if not has_reset:
+        no_reset.append(p.name)
+check('写链路用例都带复位（有开关就必须有复位）', not no_reset, '缺复位：%s' % '、'.join(no_reset))
+
+case_copy = read('app_sub_function/suprecast_app/case_copy.js')
+check(
+    '表格动作「复制当前案例」的一条龙里含复位',
+    '--reset' in case_copy,
+    'case_copy.js 里看不到 --reset —— 复制动作会把数据留在库里',
+)
+
 print()
 if failures:
     print('有 %d 项不通过：' % len(failures))

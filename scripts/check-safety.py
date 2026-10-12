@@ -148,6 +148,31 @@ check(
     "test_quiz_submit.js 的开关判断被改掉或被写死成 true",
 )
 
+# ---------- 3.6) 会写数据的 Python 工具：三道闸一个都不能少 ----------
+# 这两个工具是仓库里仅有的"会删/会改数据"的脚本。它们的护栏是**代码里写死的**，
+# 所以只要有人"顺手"删掉一段，保护就没了、而且不会报错 —— 必须由闸门盯着。
+WRITE_TOOLS = (
+    ("tools/quiz_data_cleanup.py", "--activity", "答题数据复位"),
+    ("tools/case_copy_reset.py", "--case", "案例复制复位"),
+)
+for rel, must_name_target, label in WRITE_TOOLS:
+    src = read(rel)
+    check(
+        "%s：库名闸门还在（只认测试库）" % label,
+        "TEST_DB_MARKERS" in src,
+        "%s 里找不到 TEST_DB_MARKERS —— 「只动测试库」这道闸被删了" % rel,
+    )
+    check(
+        "%s：默认只预览（要 --yes 才真删）" % label,
+        "args.yes" in src,
+        "%s 里看不到 args.yes —— 默认预览这道闸被改掉了" % rel,
+    )
+    check(
+        "%s：必须点名目标（%s）" % (label, must_name_target),
+        must_name_target in src,
+        "%s 里看不到 %s —— 「不许一把梭全删」这道闸被改掉了" % (rel, must_name_target),
+    )
+
 # ---------- 4) 凭据 / 密钥不许进版本库 ----------
 tracked = tracked_files()
 leaked = [
