@@ -39,6 +39,21 @@ failures = []
 passed = 0
 
 
+# 否定前缀：动作名里出现「未购买 / 不删除 / 非支付」这类说法时，描述的是**状态**，不是"要写数据"。
+# 这条修正是被一次误报逼出来的：新动作「检查未购买点课时不改变封面标题」只是**读**页面，
+# 却因为名字里有「购买」被当成写操作挡下 —— 闸门太粗会把真问题淹在噪音里。
+NEGATION_PREFIXES = ("未", "不", "非", "无")
+
+
+def action_looks_like_write(name):
+    """动作名看起来是不是"会改数据"（先把否定说法摘掉再判）"""
+    text = str(name or "")
+    for word in WRITE_WORDS:
+        for prefix in NEGATION_PREFIXES:
+            text = text.replace(prefix + word, "")
+    return any(word in text for word in WRITE_WORDS)
+
+
 def check(name, ok, detail=""):
     global passed
     if ok:
@@ -65,7 +80,7 @@ def tracked_files():
 hit = [
     a["name"]
     for a in m.ACTIONS
-    if any(w in a["name"] for w in WRITE_WORDS) and a["name"] not in APPROVED_WRITE_ACTIONS
+    if action_looks_like_write(a["name"]) and a["name"] not in APPROVED_WRITE_ACTIONS
 ]
 check(
     "表格动作里没有「会改数据」的动作（owner 同意的 %d 个除外）" % len(APPROVED_WRITE_ACTIONS),

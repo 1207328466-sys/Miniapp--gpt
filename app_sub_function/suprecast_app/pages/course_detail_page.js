@@ -63,12 +63,16 @@ async function readState(page) {
         tabs.push({ text: norm(el.innerText), active: /titles-item-active/.test(cls) });
       });
       const active = tabs.find((t) => t.active);
+      // 「封面/视频区」的位置：未购买页上一样要有（需求第 2 条要看它变没变）
+      const coverEl = document.querySelector(sel.videoContainer) || document.querySelector(sel.videoPoster);
+      const cr = coverEl ? coverEl.getBoundingClientRect() : null;
       return {
         name: norm((document.querySelector(sel.name) || {}).innerText || ""),
         tabs,
         activeTab: active ? active.text : "",
         hasVideo: !!document.querySelector(sel.videoContainer),
         hasPoster: !!document.querySelector(sel.videoPoster),
+        coverPreview: cr ? [Math.round(cr.x), Math.round(cr.y), Math.round(cr.width), Math.round(cr.height)] : null,
         text: norm(document.body.innerText).slice(0, 120),
       };
     },
@@ -169,4 +173,129 @@ async function openByName(page, courseName, { timeout = 15000 } = {}) {
   return base.foreground(page);
 }
 
-module.exports = { SEL, TABS, isOn, findCourseDetailPage, readState, logState, assertRules, openByName };
+/* ============================================================================
+ * 需求 713367615 第 2 条：未购买用户点课时，**封面图和标题不该变**（始终显示课程名称）
+ * ============================================================================
+ * 实测（2026/10/12，未购买课程「7.8课程new」，我们账号只买过 717）：
+ *   · 页面上先出现「购买课程后才可以观看哦～ 购买」——未购买态
+ *   · 课程名渲染在 `wx-view.fs-34.text-blacks88.font-medium.break-all`（**不是** `.course-name`，
+ *     后者在未购买页上是空的 —— 所以判"标题"不能只认 `.course-name`）
+ *   · 点第一个课时（第1课）之后：课程名元素与视频/封面区**都没有变化** ✓
+ */
+
+/** 找"文本正好等于课程名"的那个元素（标题判据用它，兼容两种页面写法） */
+async function findTitleElement(page, courseName) {
+  const fg = (await findCourseDetailPage(page)) || (await base.foreground(page));
+  return fg.evaluate((name) => {
+    const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+    for (const el of Array.from(document.querySelectorAll("*"))) {
+      if (norm(el.innerText) !== name) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height < 10) continue;
+      return {
+        cls: String(el.getAttribute("class") || "").slice(0, 60),
+        rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
+        text: norm(el.innerText),
+      };
+    }
+    return null;
+  }, String(courseName || "").trim());
+}
+
+/** 点「课程目录」tab，再点第一个课时（未购买用户点课时按需求"什么都不该发生"） */
+async function clickFirstLesson(page) {
+  const fg = await base.foreground(page);
+  if ((await base.countOfText(fg, "课程目录")) === 0) {
+    throw new Error("这个课程详情页上没有「课程目录」tab —— 没法点课时");
+  }
+  await base.tapText(fg, "课程目录", "tab「课程目录」");
+  await base.sleep(1200);
+
+  const lesson = await base.foreground(page).then((p) =>
+    p.evaluate(() => {
+      const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+      for (const el of Array.from(document.querySelectorAll("*"))) {
+        const t = norm(el.innerText);
+        if (!/^第\s*1\s*课/.test(t) || t.length > 40) continue;
+        const r = el.getBoundingClientRect();
+        if (r.height < 20) continue;
+        return { text: t, rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] };
+      }
+      return null;
+    })
+  );
+  if (!lesson) throw new Error("「课程目录」里找不到「第1课」条目");
+  await base.tapText(await base.foreground(page), "第1课", `第一个课时（${lesson.text}）`);
+  await base.sleep(1800);
+  return lesson;
+}
+
+/**
+ * 校验需求 713367615 第 2 条（**只读**）：未购买用户点课时 -> 封面图和标题都不变、仍显示课程名。
+ * @param {{课程名?: string}} 表格里用「参数1」传课程名（要跟列表上一字不差）
+ */
+async function assertUnpurchasedLessonRules(page, { courseName } = {}, ctx = null) {
+  const name = String(courseName || "").trim();
+  if (!name) throw new Error("「检查未购买点课时不改变封面标题」需要填课程名（参数1），例如 7.8课程new");
+
+  const fg = (await findCourseDetailPage(page)) || (await base.foreground(page));
+  const problems = [];
+
+  // 前置：必须是"未购买"的样子，否则这条断言测的不是这个场景
+  const text = await base.pageText(fg);
+  if (!/购买课程后才可以观看|购买后|去购买/.test(text)) {
+    problems.push(
+      `这个页面看起来**不是未购买态**（没看到「购买课程后才可以观看」这类文案）。` +
+        `请换一门我们账号没买过的课，或用「检查课程详情页符合需求」测已购买的情况`
+    );
+  }
+
+  const beforeTitle = await findTitleElement(fg, name);
+  const beforeState = await readState(fg);
+  if (!beforeTitle) problems.push(`点课时之前，页面上找不到课程名「${name}」（需求要求始终显示课程名称）`);
+  if (problems.length) throw new Error("前置条件不满足：\n  - " + problems.join("\n  - "));
+
+  const lesson = await clickFirstLesson(fg);
+  const afterTitle = await findTitleElement(await base.foreground(page), name);
+  const afterState = await readState(await base.foreground(page));
+
+  if (!afterTitle) {
+    problems.push(`点课时之后，页面上**看不到课程名**「${name}」了 —— 需求要求始终显示课程名称`);
+  } else if (JSON.stringify(afterTitle.rect) !== JSON.stringify(beforeTitle.rect) || afterTitle.text !== beforeTitle.text) {
+    problems.push(
+      `点课时之后标题变了：${JSON.stringify(beforeTitle)} -> ${JSON.stringify(afterTitle)}` +
+        `（需求：未购买用户点课时**不改变标题**，始终显示课程名称）`
+    );
+  }
+  if (JSON.stringify(afterState.coverPreview) !== JSON.stringify(beforeState.coverPreview)) {
+    problems.push(
+      `点课时之后封面/视频区变了：${JSON.stringify(beforeState.coverPreview)} -> ${JSON.stringify(afterState.coverPreview)}`
+    );
+  }
+
+  if (problems.length) {
+    throw new Error("课程详情页不符合需求（713367615 第 2 条）：\n  - " + problems.join("\n  - "));
+  }
+  console.log(
+    `断言通过: 未购买用户点课时「${lesson.text}」之后，标题仍是课程名（元素与位置都没变），封面/视频区也没变`
+  );
+  if (ctx) {
+    ctx.set("unpurchasedCourse", name);
+    ctx.set("unpurchasedLessonClicked", lesson.text);
+  }
+  return base.foreground(page);
+}
+
+module.exports = {
+  SEL,
+  TABS,
+  isOn,
+  findCourseDetailPage,
+  readState,
+  logState,
+  assertRules,
+  openByName,
+  findTitleElement,
+  clickFirstLesson,
+  assertUnpurchasedLessonRules,
+};

@@ -389,6 +389,11 @@ const HANDLERS = {
     run: (page, expectActiveTab, _p2, ctx) => courseDetail.assertRules(page, { expectActiveTab }, ctx),
   },
 
+  检查未购买点课时不改变封面标题: {
+    run: (page, courseName, _p2, ctx) =>
+      courseDetail.assertUnpurchasedLessonRules(page, { courseName }, ctx),
+  },
+
   /**
    * 需求 713367615 第 1 条：「管理后台的课程下的课时数为 0 时，小程序端不显示该课程」。
    *
