@@ -30,7 +30,7 @@
 
 const path = require("path");
 const { appTest } = require("../../common/app_common");
-const { runDbTool, makeWriteSwitchStep } = require("../../common/db_tool");
+const { runDbTool, runTool, makeWriteSwitchStep } = require("../../common/db_tool");
 const { assertSelectorExists } = require("../../app_sub_function/suprecast_app/android");
 const pages = require("../../app_sub_function/suprecast_app/pages");
 
@@ -152,6 +152,129 @@ async function assertDbHasSubmit(page) {
   return page;
 }
 
+/** 提交前快照：记下账号余额（对账时要比"这一笔到底到账多少"） */
+let pointsBefore = null;
+async function snapshotBeforeSubmit(page) {
+  const out = runTool("quizScore", ["--activity-name", activityTitle, "--mode", "points"]);
+  const line = (out.match(/^\[QUIZSCORE\].*$/m) || [""])[0];
+  const m = line.match(/points=(\d+)/);
+  if (!m) {
+    throw new Error(
+      `读不到提交前的账号余额（工具输出里没有 points=…）。\n` +
+        `  这一句很关键：没有它就没法验证"发多少到账多少"和"答错扣没扣分"。\n  拿到的是：${line}`
+    );
+  }
+  pointsBefore = Number(m[1]);
+  console.log(`  提交前快照：账号余额 ${pointsBefore}`);
+  return page;
+}
+
+/**
+ * 跑之前先看一眼：**本机前端是不是还留着上一次提交的状态**。
+ *
+ * 为什么要有这一步（2026/10/13 真踩到）：数据库那边的答卷我们已经复位删掉了，但**小程序前端
+ * 把它记在本地**（跑完会弹「答题完成 +积分」弹窗、底部按钮显示「已参加本次活动」）。
+ * 此时再跑同一条用例，它会进来就停在"已参加"，答不了也提交不了 ——
+ * 那是**环境状态没归零**，不是产品/框架坏了。所以这里明确记「跳过」并说清怎么归零，
+ * 而不是红一条（红一条会让人以为产品又坏了）。
+ */
+async function assertRetakeable(page) {
+  const fg = await base.foreground(page);
+  const text = await base.pageText(fg);
+  const st = await quizPage.state(fg);
+  const alreadyDone = /已参加|已提交/.test(text) || /已参加|已提交/.test(st.submitText || "");
+  if (!alreadyDone) return page;
+
+  const e = new Error(
+    "本次打不开「能答题」的状态：小程序前端还留着上一次提交的痕迹" +
+      "（页面上有「已参加本次活动」或「答题完成」弹窗）。\n" +
+      "  说明：数据库里我们**已经复位**了（答卷记录删掉了），残留的是**小程序本机的状态**。\n" +
+      "  怎么办：把小程序划掉重开（或换一条活动）再跑；刚跑完就立刻重跑同一活动必定撞到这个。\n" +
+      `  当前按钮文本：${JSON.stringify(st.submitText)}；进度：${JSON.stringify(st.progressText)}`
+  );
+  e.preconditionNotMet = true;
+  throw e;
+}
+
+/**
+ * 对账：需求 713594985 里跟"分"有关的规则（2026/10/13 补，owner 当天给了权限）。
+ *
+ * 断言只挑**不依赖"还原产品侧当日计数器"**的不变式 —— 这一点是被现实教会的：
+ *   产品按"今日剩余额度"截断（实测：今天已得 1031，所以一笔应得 1021 的只发了 969），
+ *   但**那个计数器不在我们能读的表里**（`point_change_record` 里没有今天的发放，
+ *   `point_rank_record` 是周/月的排行、隔一段时间才同步）。而且我们的复位会把答卷删掉，
+ *   删掉之后连"照答卷求和"都还原不出产品记的数了。
+ *   → 所以不写"实得 == min(应得, 我算的剩余)"这种断言：那会在正确的产品行为上**假红**。
+ *
+ * 真正能钉死的四条：
+ *   1. **不会多发**：实得 <= 应得；
+ *   2. **到账一致**：提交后余额 − 提交前余额 == 实得（发多少、到账多少）；
+ *   3. **答错不扣分**：答对 0 题时，实得 == 0 且余额**不得减少**；
+ *   4. **截断是看得见的**：实得 < 应得时，明确打出"发生了截断"（这是 C 那条需求的观察点）。
+ */
+async function assertScoreAccounting(page) {
+  const out = runTool("quizScore", ["--activity-name", activityTitle]);
+  const line = (out.match(/^\[QUIZSCORE\].*$/m) || [""])[0];
+  if (!line || line.includes("submits=0")) {
+    throw new Error(`对账失败：库里读不到刚才那次提交（工具输出：${line || "没有 [QUIZSCORE] 行"}）`);
+  }
+  const kv = {};
+  for (const part of line.replace("[QUIZSCORE] ", "").split(/\s+/)) {
+    const i = part.indexOf("=");
+    if (i > 0) kv[part.slice(0, i)] = part.slice(i + 1);
+  }
+  const n = (k) => Number(kv[k]);
+  const problems = [];
+  const pointsAfter = n("points");
+  const gained = pointsAfter - pointsBefore;
+
+  // ① 不会多发
+  if (n("actual") > n("should")) {
+    problems.push(`发放超过了应得：应得 ${kv.should}、实得 ${kv.actual}（应得是上限）`);
+  }
+
+  // ② 到账一致：余额增量必须等于这一笔的实得
+  if (!Number.isFinite(gained) || gained !== n("actual")) {
+    problems.push(
+      `到账对不上：提交前余额 ${pointsBefore}、提交后余额 ${pointsAfter}，增量 ${gained}，` +
+        `但库里这一笔的实得是 ${kv.actual}\n` +
+        `    （若增量比实得多，可能是这期间有别的收益；比实得少或为负，就是这一笔没按实得发放）`
+    );
+  }
+
+  // ③ 答错不扣分
+  if (n("correct") === 0) {
+    if (n("actual") !== 0) {
+      problems.push(`一题没答对却发了 ${kv.actual} 分（需求：答对才得分）`);
+    }
+    if (gained < 0) {
+      problems.push(`答错后余额减少了 ${-gained} 分 —— 需求原文是「答错不扣分」`);
+    }
+  }
+
+  if (problems.length) {
+    throw new Error(
+      "判分/发放对账不通过（需求 713594985）：\n  - " +
+        problems.join("\n  - ") +
+        `\n  原始数据: ${line}`
+    );
+  }
+
+  if (n("actual") < n("should")) {
+    console.log(
+      `  【截断】应得 ${kv.should}、实得 ${kv.actual} —— 产品按「今日剩余额度」少发了 ` +
+        `${n("should") - n("actual")} 分（owner 口径：到上限不再发放）。` +
+        `今日已得参考值 ${kv.today_before}（按报表折算，仅供定位）／上限 ${kv.cap_on === "1" ? kv.cap : "未启用"}`
+    );
+  }
+  console.log(
+    `  断言通过: 答对 ${kv.correct}/${kv.questions} 题，应得 ${kv.should}、实得 ${kv.actual}，` +
+      `余额 ${pointsBefore} → ${pointsAfter}（增量与实得一致）` +
+      `${n("correct") === 0 ? "，且没有扣分" : ""}`
+  );
+  return page;
+}
+
 (async () => {
   const funcList = [
     // 0. 开关没开就跳过（先看开关，别先动手机）
@@ -166,17 +289,21 @@ async function assertDbHasSubmit(page) {
 
     // 3. 跑前复位：把上次留下的记录清掉，这样这次"能答、能提交"
     [cleanupAnswers, null],
+    // 3b. 前端状态残留就记跳过（数据库复位了、小程序本机没归零）
+    [assertRetakeable, null],
 
     // 4. 逐题作答（需求：答完全部题目才能提交）
     [quizPage.answerAllQuestions, { allowInteract: true }],
     [assertReadyToSubmit, null],
 
     // 5. 提交 —— 全程唯一会写数据的一步
+    [snapshotBeforeSubmit, null],
     [quizPage.submitAnswers, { allowSubmit: true }],
     [assertSubmittedState, null],
 
     // 6. 数据库交叉验证 + 复位（把这次跑出来的记录清掉，手机与数据都交还）
     [assertDbHasSubmit, null],
+    [assertScoreAccounting, null],
     [cleanupAnswers, null],
 
     // 7. 回到首页（下一条用例的起点）

@@ -104,7 +104,16 @@ def env_vars_for(prof):
         "UITEST_ENV": prof["name"],
         "UITEST_APP_ID": prof["appid"],
     }
-    out["UITEST_DB_CONFIG"] = prof.get("db_config") or None
+    # 登录账号（可选）：给了就让对账工具默认用它，省得每条命令手工传 --user
+    if prof.get("user_id"):
+        out["UITEST_USER_ID"] = str(prof["user_id"])
+    # ⚠️ 库配置必须是**绝对路径**：用例跑起来时工作目录是 `test_case/`（pytest 会 cd 过去），
+    # 档案里写的 `config/db.local.yaml` 到了那边就是"文件不存在" —— 表现是**每个用库的动作都失败**，
+    # 而错误只说"读配置失败"，很难一眼看出是路径问题（2026/10/13 真踩到）。
+    db = prof.get("db_config") or ""
+    if db and not os.path.isabs(db):
+        db = os.path.join(REPO, db)
+    out["UITEST_DB_CONFIG"] = db or None
     if not prof.get("allow_write"):
         # 生产：把写开关**强制清掉**（不是"提醒一下"，是清掉）
         out["UITEST_ALLOW_SUBMIT"] = None

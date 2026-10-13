@@ -97,10 +97,27 @@ check(
     "UITEST_ALLOW_SUBMIT" not in fake_environ2,
     "environ=%s" % fake_environ2,
 )
+# ---------- 5b) 库配置必须是**绝对路径**（真踩过：相对路径在 test_case/ 下找不到）----------
+# 现象：pytest 会把工作目录切到 test_case/，档案里写 `config/db.local.yaml` 到那边就是"文件不存在"，
+# 于是所有用数据库的动作一起失败，报错只说"读配置失败"，很难看出是路径问题。
+db_path = fake_environ2.get("UITEST_DB_CONFIG") or ""
 check(
-    "可写环境会带上库配置路径",
-    fake_environ2.get("UITEST_DB_CONFIG") == "config/db.local.yaml",
-    "environ=%s" % fake_environ2,
+    "可写环境的库配置被解析成绝对路径（pytest 会把工作目录切到 test_case/）",
+    os.path.isabs(db_path) and db_path.replace("\\", "/").endswith("config/db.local.yaml"),
+    "拿到的是 %r" % db_path,
+)
+check(
+    "解析出来的库配置真的存在",
+    os.path.exists(db_path),
+    "%s 不存在" % db_path,
+)
+_prof_empty, _err_empty = e.resolve(
+    {"envs": {"x": {"label": "没有库配置", "appid": "wx2", "db_config": ""}}}, "x"
+)
+check(
+    "档案不写库配置时：环境变量留空（而不是塞个空串进去）",
+    e.env_vars_for(_prof_empty).get("UITEST_DB_CONFIG") is None,
+    "%s" % e.env_vars_for(_prof_empty),
 )
 
 # ---------- 6) 档案缺字段：报出来，别静默 ----------
