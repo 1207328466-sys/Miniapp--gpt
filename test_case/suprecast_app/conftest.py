@@ -171,8 +171,44 @@ def _print_step_summary(entries):
             emit(f"  上下文: {json.dumps(summary['context'], ensure_ascii=False)}")
 
 
+# Allure 里截图怎么贴（2026/10/13）：默认**每一步都贴一张压缩版**，失败步骤再补一张原图。
+#
+# 为什么不是"干脆每步都贴原图"：一张原图是 1216×2640、中位 467KB，一次全量约 150 张 ≈ 70MB，
+# 报告会膨胀到打不开；而旧版只贴失败步骤 —— 全绿的一次运行里，报告里**一张图都没有**，
+# 想复盘"这一步屏幕上到底是什么样"就没得看（这正是 owner 提的问题）。
+# 折中：压缩到宽 700 的 JPEG（约 60~90KB）每步都贴，失败那步再额外贴原图存细节。
+# 开关用环境变量（跟写开关一个路子，跑的人决定）：
+#     UITEST_ALLURE_SHOTS=all     每步都贴（默认）
+#     UITEST_ALLURE_SHOTS=failed  只贴失败步骤（旧行为，报告最小）
+#     UITEST_ALLURE_SHOTS=none    都不贴
+SHOT_MODE = os.environ.get("UITEST_ALLURE_SHOTS", "all").strip().lower()
+SHOT_MAX_WIDTH = 700
+SHOT_JPEG_QUALITY = 72
+
+
+def _shrink_for_report(shot):
+    """把截图压小一点再进报告。压不了就返回 None（调用方退回贴原图）—— 不影响用例结果。"""
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+    try:
+        import io as _io
+
+        with Image.open(shot) as im:
+            im = im.convert("RGB")
+            if im.width > SHOT_MAX_WIDTH:
+                h = int(im.height * SHOT_MAX_WIDTH / im.width)
+                im = im.resize((SHOT_MAX_WIDTH, h))
+            buf = _io.BytesIO()
+            im.save(buf, format="JPEG", quality=SHOT_JPEG_QUALITY, optimize=True)
+            return buf.getvalue()
+    except Exception:
+        return None
+
+
 def _attach_to_allure(entries, case_name):
-    """把步骤日志还原成 Allure 的层次结构"""
+    """把步骤日志还原成 Allure 的层次结构，并把截图贴进去"""
     if allure is None:
         return
 
@@ -189,13 +225,24 @@ def _attach_to_allure(entries, case_name):
         with allure.step(f"{s.get('num')}. {s.get('name')} ({s.get('duration')}s)"):
             if s.get("error"):
                 allure.attach(str(s["error"]), "错误信息", allure.attachment_type.TEXT)
-            # 只把**失败步骤**的截图塞进报告：每步都塞会让报告膨胀到几十 MB。
-            # 通过的步骤本来就在磁盘上留着截图（report/photo_app/...），不必都进报告。
             shot = s.get("screenshot")
-            if s.get("status") == "failed" and shot and os.path.exists(shot):
+            failed = s.get("status") == "failed"
+            if not shot or not os.path.exists(shot) or SHOT_MODE == "none":
+                continue
+            if SHOT_MODE == "failed" and not failed:
+                continue
+            small = _shrink_for_report(shot)
+            if small is not None:
+                allure.attach(
+                    small,
+                    name="截图（压缩版 %s）" % os.path.basename(shot),
+                    attachment_type=allure.attachment_type.JPG,
+                )
+            # 失败那步再补一张原图：报告里看得清细节，复盘时不用去翻磁盘
+            if failed:
                 allure.attach.file(
                     shot,
-                    name=os.path.basename(shot),
+                    name="截图（原图 %s）" % os.path.basename(shot),
                     attachment_type=allure.attachment_type.PNG,
                 )
 

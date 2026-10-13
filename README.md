@@ -141,7 +141,9 @@ python -m pytest -v
 
 - **截图**：`report/photo_app/{用例文件}_{用例函数}/_{步骤名}_{时间戳}.png`
 - **Allure 报告**：`run.py` 生成 `report/allure-report/index.html`，按
-  `feature -> story -> 步骤` 分层，失败步骤附带错误信息与截图
+  `feature -> story -> 步骤` 分层。**每一步都贴一张压缩截图**（2026/10/13 起），
+  失败步骤**再补一张原图**（看细节用）；不想让报告变大就设 `UITEST_ALLURE_SHOTS=failed`
+  只贴失败步骤（`none` = 都不贴）
 - **日志文件**：`report/log/pytest.log`
 
 ---
@@ -510,6 +512,20 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 `anonymous` 是因为当前示例用的是匿名 IIFE，拿不到有意义的函数名 —— 这正好印证了要点 4。
 
 「调用者」信息由 `getCaller()` 从 `Error().stack`（JS 的调用栈）里取第 4 帧获得，等价于 Python 的 `inspect.stack()[1]`。
+
+### 报告里的截图（2026/10/13 起）
+
+Allure 报告里**每一步都带一张截图**，失败那一步再额外带一张原图。三个档位用环境变量切：
+
+```powershell
+$env:UITEST_ALLURE_SHOTS="all"       # 默认：每步一张压缩图（宽 700 的 JPEG，约 70KB/张）
+$env:UITEST_ALLURE_SHOTS="failed"    # 只贴失败步骤（报告最小；但全绿时会一张图都看不到）
+$env:UITEST_ALLURE_SHOTS="none"      # 都不贴
+```
+
+为什么默认贴压缩版而不是原图：一张原图 1216×2640、中位 467KB，一次全量约 150 张 ≈ **70MB**
+（报告会大到打不开）；压到宽 700 之后只剩 **约 19%**，全量十几 MB，复盘时每步都看得见。
+这条有离线自检盯着（`scripts/selftest-allure-shots.py`），压不动或压出坏图会当场报红。
 
 ### 时间戳格式
 

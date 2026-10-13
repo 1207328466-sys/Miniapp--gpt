@@ -751,41 +751,114 @@ async function goBack(page, { timeout = 10000, selectors = BACK_BUTTON_SELECTORS
 
 
 /**
- * 输出当前页面的 HTML 结构（调试用，便于确认该用哪个定位器）。
- * 为便于阅读只保留 class 属性，并按 DOM 层级缩进；无子元素的节点与其文本合并成一行。
+ * 输出当前页面的 DOM 结构，方便挑锚点（找 id / 找唯一文案）。
+ *
+ * 相比旧版多了 4 件事（2026/10/13 照 webzdh4.7 那版的思路补的）：
+ *   1. **打印 id** —— 定位一般只有 id / class / 文本三个入口，旧版只打 class，等于把一种入口丢了；
+ *   2. **过滤编译器噪声 class** —— Taro 会把每个类名再重复一份 `index--xxx`，
+ *      这些对我们挑锚点毫无用处，却能把输出撑大一倍；
+ *   3. **onlyText** —— 只看"内部有文字的分支"，几百行能压到几十行（挑文案时最好用）；
+ *   4. **控制台限量 + 落盘** —— 控制台最多 300 行（否则一次刷屏上千行，真正要看的东西冲没了），
+ *      完整内容写到 `report/dump_<月日_时分秒>.txt`，可以在编辑器里慢慢搜。
+ *
  * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{tag?: string|string[]}} params tag: 只输出这些元素类型（如 "wx-text"，可传数组）；不传则输出整个 body
+ * @param {{tag?: string|string[], onlyText?: boolean, maxLines?: number, save?: boolean}} params
+ *   tag      只输出这些元素类型（如 "wx-text"，可传数组）；不传则输出整个 body
+ *   onlyText 只保留"内部有文字"的分支（默认 false，跟旧版一样全输出）
+ *   maxLines 控制台最多打印多少行（默认 300；完整内容仍在文件里）
+ *   save     是否落盘到 report/dump_*.txt（默认 true）
  * @returns {Promise<import('playwright').Page>} page
  */
-async function dumpElements(page, { tag } = {}) {
+async function dumpElements(page, { tag, onlyText = false, maxLines = 300, save = true } = {}) {
+  const fs = require("fs");
+  const path = require("path");
   try {
     const selector = !tag ? "body" : (Array.isArray(tag) ? tag : [tag]).join(",");
-    const html = await page.evaluate((sel) => {
-      const lines = [];
-      const walk = (el, depth) => {
-        const pad = "  ".repeat(depth);
-        const name = el.tagName.toLowerCase();
-        const cls = el.getAttribute("class");
-        const open = `<${name}${cls ? ` class="${cls}"` : ""}>`;
-        const kids = Array.from(el.children);
-        const text = Array.from(el.childNodes)
-          .filter((n) => n.nodeType === Node.TEXT_NODE)
-          .map((n) => n.textContent.replace(/\s+/g, " ").trim())
-          .filter(Boolean)
-          .join(" ");
-        if (!kids.length) {
-          lines.push(`${pad}${open}${text}</${name}>`);
-          return;
-        }
-        lines.push(`${pad}${open}`);
-        if (text) lines.push(`${pad}  ${text}`);
-        kids.forEach((k) => walk(k, depth + 1));
-        lines.push(`${pad}</${name}>`);
-      };
-      document.querySelectorAll(sel).forEach((el) => walk(el, 0));
-      return lines.join("\n");
-    }, selector);
-    console.log(html);
+    const result = await page.evaluate(
+      ({ sel, onlyText, maxLines }) => {
+        const lines = [];
+        let pageTotal = 0;
+        let visited = 0;
+
+        const cleanClass = (raw) => {
+          const out = [];
+          (raw || "").split(/\s+/).forEach((c) => {
+            if (!c || c.startsWith("index--")) return; // Taro 的重复类名，挑锚点没用
+            if (!out.includes(c)) out.push(c);
+          });
+          return out.join(" ");
+        };
+
+        const directText = (el) =>
+          Array.from(el.childNodes)
+            .filter((n) => n.nodeType === Node.TEXT_NODE)
+            .map((n) => n.textContent.replace(/\s+/g, " ").trim())
+            .filter(Boolean)
+            .join(" ");
+
+        const hasTextInside = (el) => (directText(el) ? true : Array.from(el.children).some(hasTextInside));
+
+        const walk = (el, depth) => {
+          visited++;
+          if (onlyText && !hasTextInside(el)) return;
+
+          const pad = "  ".repeat(depth);
+          const name = el.tagName.toLowerCase();
+          const id = el.getAttribute("id");
+          const cls = cleanClass(el.getAttribute("class"));
+          const text = directText(el);
+          const kids = Array.from(el.children);
+          const open = `<${name}${id ? ` id="${id}"` : ""}${cls ? ` class="${cls}"` : ""}>`;
+
+          if (!kids.length) {
+            lines.push(`${pad}${open}${text}</${name}>`);
+            return;
+          }
+          lines.push(`${pad}${open}`);
+          if (text) lines.push(`${pad}  ${text}`);
+          kids.forEach((k) => walk(k, depth + 1));
+          lines.push(`${pad}</${name}>`);
+        };
+
+        pageTotal = document.querySelectorAll("*").length;
+        document.querySelectorAll(sel).forEach((el) => walk(el, 0));
+
+        const total = lines.length;
+        return {
+          text: lines.slice(0, maxLines).join("\n"),
+          // 落盘要的是**完整内容**：之前把 text（已经截到 maxLines 的那份）写进文件，
+          // 于是"完整内容见文件"这句话是假的 —— 文件里也只有前 300 行。
+          // 实测：页面上统计说输出 707 行，文件里只有 300 行（2026/10/13 自己踩到并修掉）。
+          full: lines.join("\n"),
+          total,
+          pageTotal,
+          visited,
+          truncated: total > maxLines,
+        };
+      },
+      { sel: selector, onlyText, maxLines }
+    );
+
+    console.log(result.text);
+    console.log(
+      `\n[dumpElements] 本页元素 ${result.pageTotal} 个；本次遍历 ${result.visited} 个，输出 ${result.total} 行` +
+        (result.truncated ? `（控制台只显示前 ${maxLines} 行，完整内容见文件）` : "")
+    );
+
+    if (save) {
+      try {
+        const dir = path.join(__dirname, "..", "..", "report");
+        fs.mkdirSync(dir, { recursive: true });
+        const d = new Date();
+        const p2 = (n) => String(n).padStart(2, "0");
+        const stamp = `${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+        const file = path.join(dir, `dump_${stamp}.txt`);
+        fs.writeFileSync(file, result.full, "utf8");
+        console.log(`[dumpElements] 完整内容已写入 ${file}`);
+      } catch (e) {
+        console.log(`[dumpElements] 落盘失败（不影响本次输出）: ${e.message}`);
+      }
+    }
     return page;
   } catch (e) {
     console.error(`输出HTML失败: ${e.message}`);
