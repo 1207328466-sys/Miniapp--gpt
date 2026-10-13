@@ -751,6 +751,41 @@ async function goBack(page, { timeout = 10000, selectors = BACK_BUTTON_SELECTORS
 
 
 /**
+ * ADBKeyboard：手机上装的那个「只收广播、不显示键盘」的输入法。
+ *
+ * 【为什么需要它】`adb shell input text` **只认 ASCII**（中文发过去不报错也不生效）。
+ * 装上这个输入法之后，文本可以通过**广播**提交给当前焦点输入框 —— 中文、空格、引号都能送，
+ * 而且我们用 **base64** 那一种广播（`ADB_INPUT_B64`），文本里带 `$`/`;`/引号也不会有 shell 注入风险。
+ *
+ * 【一次性准备】换手机 / 重装系统后要重装它（约 17KB 的开源输入法）：
+ *     adb install -r ADBKeyboard.apk
+ *   APK 来源见 knowledge/环境与目标小程序.md 的「中文输入」一节（走 CDN 镜像下载，GitHub 直连会超时）。
+ * 装完**不需要**手动切输入法：框架用的时候自己切过去、用完切回原来的（见 typeKeyword 的中文分支）。
+ */
+const ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME";
+
+/** 当前系统输入法（用于"用完切回"） */
+async function currentIme(device) {
+  return String(await device.shell("settings get secure default_input_method")).trim();
+}
+
+/** 切换系统输入法 */
+async function setIme(device, ime) {
+  await device.shell(`ime set ${ime}`);
+}
+
+/** 用 ADBKeyboard 把文本提交给当前焦点输入框（base64 广播，天然无注入风险） */
+async function adbKeyboardType(device, text) {
+  const b64 = Buffer.from(String(text), "utf8").toString("base64");
+  await device.shell(`am broadcast -a ADB_INPUT_B64 --es msg ${b64}`);
+}
+
+/** 用 ADBKeyboard 清空当前焦点输入框（比连按 20 次 DEL 干净） */
+async function adbKeyboardClear(device) {
+  await device.shell("am broadcast -a ADB_CLEAR_TEXT");
+}
+
+/**
  * 输出当前页面的 DOM 结构，方便挑锚点（找 id / 找唯一文案）。
  *
  * 相比旧版多了 4 件事（2026/10/13 照 webzdh4.7 那版的思路补的）：
@@ -881,4 +916,9 @@ module.exports = {
   dumpElements,
   tapElement,
   hideKeyboardIfShown,
+  ADB_KEYBOARD_IME,
+  currentIme,
+  setIme,
+  adbKeyboardType,
+  adbKeyboardClear,
 };

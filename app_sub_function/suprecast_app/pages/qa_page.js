@@ -634,28 +634,35 @@ async function tapHistoryChip(page, { word, timeout = 10000 } = {}) {
  *
  * @param {import('playwright').Page} page 小程序 webview 页面
  * @param {{keyword: string, clear?: boolean, timeout?: number}} params
- *        keyword: 关键词（仅限 ASCII 可见字符，见下方限制说明）
+ *        keyword: 关键词。**中文、空格、任意符号都可以**（见下方两条路说明）
  *        clear: 是否先清空输入框（默认 true，避免残留上一次的关键词）
  * @returns {Promise<import('playwright').Page>} 输入后的前台页
+ *
+ * 【两条输入路径】（2026/10/13 起）
+ *   · 纯字母/数字/下划线/点/连字符 -> 老路：`adb shell input text`（快）
+ *   · 其它（中文、空格、符号…）  -> 新路：**临时切到 ADBKeyboard 输入法 + base64 广播**，
+ *     用完**自动切回你原来的输入法**（在 finally 里恢复，出错也会恢复）。
+ *     为什么用 base64：广播的文本要经过设备上的 shell，base64 只含 `A-Za-z0-9+/=`，
+ *     文本里带 `$`、`;`、引号也不会有注入风险。
  */
 async function typeKeyword(page, { keyword, clear = true, timeout = 8000 } = {}) {
   if (!keyword) throw new Error("typeKeyword 缺少参数 keyword");
 
-  // 只放行一小撮绝对安全的字符：
-  //   - 非 ASCII（中文）→ adb input text 不支持，传进去不报错但不生效
-  //   - shell 元字符（空格引号 $ & ; 等）→ 命令是发给设备上的 shell 执行的，
-  //     带上它们有注入风险，一律不给过
-  // 与其静默失败/冒险，不如在这里明确拒绝。
-  if (!/^[A-Za-z0-9_.-]+$/.test(keyword)) {
-    throw new Error(
-      `关键词只允许字母/数字/下划线/点/连字符，当前是 ${JSON.stringify(keyword)}。\n` +
-        `  原因：关键词最终通过 \`adb shell input text\` 发送 —— 非 ASCII（中文）不生效且不报错，\n` +
-        `  shell 元字符（空格、引号、$、&、; 等）有注入风险。中文输入的方案见 README「已知限制」。`
-    );
-  }
+  // 纯 ASCII 安全字符走老路（`adb shell input text`）；其它一律走 ADBKeyboard 那条路 ——
+  // 既支持中文，也因为用 base64 而完全没有 shell 注入风险（老路才需要那张字符白名单）。
+  const asciiSafe = /^[A-Za-z0-9_.-]+$/.test(keyword);
 
   // 延迟 require：本文件与 android.js 互相引用
-  const { getDevice, tapElement, waitImeShown } = require("../android");
+  const {
+    getDevice,
+    tapElement,
+    waitImeShown,
+    ADB_KEYBOARD_IME,
+    currentIme,
+    setIme,
+    adbKeyboardType,
+    adbKeyboardClear,
+  } = require("../android");
 
   // 【不猜前台页】直接找含输入框的那一页并锚定到它（找不到才是真的不在搜索页）
   const anchored = await findSearchPage(page);
@@ -670,6 +677,52 @@ async function typeKeyword(page, { keyword, clear = true, timeout = 8000 } = {})
 
   const device = await getDevice();
   const input = fg.locator(SEL.searchInput).first();
+
+  if (!asciiSafe) {
+    // ---- 中文/特殊字符这条路：临时换输入法，用完一定切回来 ----
+    const originalIme = await currentIme(device);
+    try {
+      if (originalIme !== ADB_KEYBOARD_IME) {
+        await setIme(device, ADB_KEYBOARD_IME);
+        await base.sleep(900);
+      }
+      await tapElement(device, fg, input); // 拿焦点。ADBKeyboard 不弹可见键盘，所以这里不查软键盘
+      if (clear) {
+        await adbKeyboardClear(device);
+        await base.sleep(300);
+      }
+      let got = "";
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        if (attempt > 1) {
+          console.warn(`  第 ${attempt} 次重试（上一次读回的是 ${JSON.stringify(got)}）`);
+          await tapElement(device, fg, input);
+          await base.sleep(400);
+        }
+        await adbKeyboardType(device, keyword);
+        got = await base.waitUntil(
+          async () => (await base.inputValue(input)) === keyword,
+          { timeout: Math.min(timeout, 3000), interval: 250 }
+        )
+          ? keyword
+          : await base.inputValue(input);
+        if (got === keyword) break;
+      }
+      if (got !== keyword) {
+        throw new Error(
+          `用 ADBKeyboard 送「${keyword}」没成功（读回 ${JSON.stringify(got)}）。\n` +
+            `  先确认手机上装着它：adb shell ime list -a -s | findstr adbkeyboard\n` +
+            `  没装的话：下载 ADBKeyboard.apk 后 adb install -r ADBKeyboard.apk` +
+            `（来源见 knowledge/环境与目标小程序.md 的「中文输入」一节）`
+        );
+      }
+      console.log(`已输入关键词「${keyword}」（中文/特殊字符：临时用 ADBKeyboard 送进去，读回校验通过）`);
+      return base.foreground(page);
+    } finally {
+      if (originalIme && originalIme !== ADB_KEYBOARD_IME) {
+        await setIme(device, originalIme); // 一定切回原来的输入法，别让 owner 打字时发现键盘变了
+      }
+    }
+  }
 
   // 1) 先点一下让输入框拿到焦点，**并确认软键盘真的弹出来**。
   //    没聚焦就发按键，事件会被丢弃（要点 3）。
