@@ -95,6 +95,13 @@ const HANDLERS = {
 
   打开搜索页: { run: (page) => qaPage.openSearch(page) },
 
+  输入搜索关键词: {
+    // 「打开搜索并输入」= 进搜索页 + 输入（一条龙）；这一条**只管输入**：
+    // 适合「打开搜索页 -> 输入搜索关键词 -> 执行搜索」这种三步写法 ——
+    // 想看清单步在干什么、想先把搜索页看清楚再输入时用（中文走 ADBKeyboard，见 typeKeyword）
+    run: (page, keyword) => qaPage.typeKeyword(page, { keyword }),
+  },
+
   点搜索历史里的词: {
     // 中文搜索的走法：框架自己敲不了中文（adb input text 只认 ASCII），
     // 但往 search_history 插一行中文、再点那个词条，就能触发一次真正的中文搜索。
