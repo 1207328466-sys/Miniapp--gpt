@@ -188,6 +188,12 @@ const HANDLERS = {
     },
   },
 
+  打印页面结构: {
+    // 调"该用哪个选择器"时的利器：结构打进日志 + 完整内容落 report/dump_*.txt
+    // （逻辑只有一份，在 android.js 的 dumpElements；命令行版见 test_case/diagnostic/dump_page.js）
+    run: (page, scope) => android.dumpElements(page, { onlyText: String(scope || "").includes("只看有文字") }),
+  },
+
   点选择器: {
     run: async (page, selector) => {
       const fg = await base.foreground(page);
