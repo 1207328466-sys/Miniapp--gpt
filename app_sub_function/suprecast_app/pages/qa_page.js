@@ -34,6 +34,10 @@ const SEL = {
   //   .hot-topics .inline-flex   每个条目（序号 1..5 + 话题名），实测正好 5 个
   hotTopics: ".hot-topics",
   hotTopicItem: ".hot-topics .inline-flex",
+  // 搜索页「搜索历史」里的每一个词条：Taro 把圆角写成 rounded-_54px_，这个 class 只用在词条上。
+  // ⚠️ 别用"按文字点"（`点文字`）来找词条：搜索结果页的搜索栏里**也有同一个词**，
+  //    两边都命中时按位置取第 1 个，点在哪儿就不一定了（这正是要收窄到词条容器的原因）。
+  historyChip: '[class*="rounded-_54px_"]',
   // 首页内容流首块的「活动卡」（答题/图文/跳转链接三种类型共用）。
   // ⚠️ `quiz_activity_page.js` 用同一选择器点进答题活动 —— 两处引用同一个 class，
   // 小程序改版时这两个地方要一起改。
@@ -552,6 +556,77 @@ async function openFirstHotTopic(page) {
 }
 
 /**
+ * 点「搜索历史」里的某个词 —— **中文关键词搜索就是这么跑的**（2026/10/13 打通）。
+ *
+ * 【为什么需要它】框架往输入框里送字靠 `adb shell input text`，它只认 ASCII：
+ * 中文发过去不报错也不生效。另外两条路实测都不通（CDP insertText 进不去原生输入组件；
+ * JS 注入只改到"镜像属性"，小程序不认）。真正走通的是这条路：
+ *   **往 `search_history` 表插一行中文关键词 → 重新进搜索页就能看到那个词 → 点它直接触发一次中文搜索。**
+ * 造数/复位用 `tools/search_history_tool.py`（默认只预览，要 --yes 才真写）。
+ *
+ * 前置：必须在**搜索页的历史面板**上（页面上看得见「搜索历史」）。不在就明确报错，
+ *      不做"猜它可能在哪一页"的事。
+ * 之后：会等页面**离开历史面板**（= 真的搜起来了）才算成功；点了没反应会报错，不静默放过。
+ *
+ * @param {import('playwright').Page} page 小程序 webview 页面
+ * @param {{word: string, timeout?: number}} params word: 词条上的字（要跟历史里显示的一字不差）
+ * @returns {Promise<import('playwright').Page>} 搜索结果页
+ */
+async function tapHistoryChip(page, { word, timeout = 10000 } = {}) {
+  const text = String(word || "").trim();
+  if (!text) throw new Error("「点搜索历史里的词」需要填词（参数1），例如 压铸");
+
+  const fg = await base.foreground(page);
+  const panelText = await base.pageText(fg);
+  if (!panelText.includes("搜索历史")) {
+    throw new Error(
+      `当前页面上没有「搜索历史」——这一步要在搜索页的历史面板上执行。\n` +
+        `  当前页面前 120 字: ${JSON.stringify(panelText.slice(0, 120))}`
+    );
+  }
+
+  // 只在"词条"里找，而且要求**整条文字完全相等**（避免「压铸」点到「压铸测试」那条上）
+  const chips = fg.locator(SEL.historyChip);
+  const n = await chips.count();
+  let target = null;
+  const seen = [];
+  for (let i = 0; i < n; i++) {
+    const chip = chips.nth(i);
+    const t = (await chip.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+    if (t) seen.push(t);
+    if (t === text) {
+      target = chip;
+      break;
+    }
+  }
+  if (!target) {
+    throw new Error(
+      `搜索历史里没有「${text}」这个词条。\n` +
+        `  现在面板上有：${JSON.stringify(seen.join(" / "))}\n` +
+        `  想加一个？用造数工具（它会写测试库）：\n` +
+        `    python tools/search_history_tool.py --user <账号> --keyword ${text} --add --yes\n` +
+        `  这是"中文搜索"的走法：框架自己敲不了中文（adb 只支持 ASCII），但可以插一行历史再点它。`
+    );
+  }
+
+  await base.tapLocator(fg, target, `搜索历史里的词「${text}」`);
+  // 点了要**等它真的搜起来**：判据是"离开历史面板"（结果页/空态页都不再有「搜索历史」）
+  const moved = await base.waitUntil(
+    async () => !(await base.pageText(await base.foreground(page))).includes("搜索历史"),
+    { timeout, interval: 400 }
+  );
+  const now = await base.foreground(page);
+  if (!moved) {
+    throw new Error(
+      `点了搜索历史里的「${text}」，但页面还停在历史面板上（没有触发搜索）。\n` +
+        `  当前页面前 120 字: ${JSON.stringify((await base.pageText(now)).slice(0, 120))}`
+    );
+  }
+  console.log(`  已用搜索历史里的「${text}」触发搜索（这一点很关键：框架自己敲不了中文）`);
+  return now;
+}
+
+/**
  * 往搜索框输入关键词，并且**读回校验**。
  *
  * 为什么必须硬校验：输入框没拿到焦点时，adb 发过去的按键事件会被系统**静默丢弃**，
@@ -677,6 +752,7 @@ module.exports = {
   openSearch,
   hotTopicCount,
   openFirstHotTopic,
+  tapHistoryChip,
   typeKeyword,
   assertActivityBlockInAllFeedTabs,
 };

@@ -95,6 +95,13 @@ const HANDLERS = {
 
   打开搜索页: { run: (page) => qaPage.openSearch(page) },
 
+  点搜索历史里的词: {
+    // 中文搜索的走法：框架自己敲不了中文（adb input text 只认 ASCII），
+    // 但往 search_history 插一行中文、再点那个词条，就能触发一次真正的中文搜索。
+    // 造数/复位：tools/search_history_tool.py（默认只预览，要 --yes 才真写）
+    run: (page, word) => qaPage.tapHistoryChip(page, { word }),
+  },
+
   打开第一个热门话题: { run: (page) => qaPage.openFirstHotTopic(page) },
 
   打开第一个帖子: { run: (page) => postDetail.openFirstFromFeed(page) },
