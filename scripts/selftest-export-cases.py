@@ -164,7 +164,122 @@ bad_table(
     "表头",
     header=["用例编号", "用例名字", "步骤序号", "动作", "参数1", "参数2", "备注"],
 )
-bad_table("整行没有用例编号", [["", "名字", 1, "回到首页", "", "", ""]], "「用例编号」是空的")
+bad_table("第一行就没编号（上面没得承接）", [["", "名字", 1, "回到首页", "", "", ""]], "「用例编号」是空的")
+
+
+# ---------- 合并单元格（webzdh 式一案一块）----------
+def carry(name, rows, want_cases, want_steps):
+    """编号空着的行必须**并进上一条用例**，不能凭空多出一条用例、也不能丢步骤。
+
+    为什么要有这条：表里同一条用例的编号/名称被并成了一格，读出来只有第一行有值。
+    这里正反两个方向都验：空编号要能承接；表头下面第一行就不能空（没得承接时得报错）。
+    """
+    global passed
+    try:
+        cases = m.validate(m.read_rows(make(rows)))
+    except m.TableError as e:
+        failed.append("%s：本该通过，却整表报错 %s" % (name, e.errors))
+        return
+    got = [[c["id"], len(c["steps"])] for c in cases]
+    want = [[i, n] for i, n in zip(want_cases, want_steps)]
+    if got != want:
+        failed.append("%s：解析成 %s，期望 %s" % (name, got, want))
+        return
+    passed += 1
+    print("OK   合并排版 %s -> %s" % (name, got))
+
+
+carry(
+    "编号只写首行，下面两行空着",
+    [
+        ["D_001", "一案多步", 1, "回到首页", "", "", ""],
+        ["", "", 2, "检查文字显示", "积分商城", "", ""],
+        ["", "", 3, "回到首页", "", "", ""],
+    ],
+    ["D_001"],
+    [3],
+)
+carry(
+    "两块并排，不串味",
+    [
+        ["D_002", "前一条", 1, "回到首页", "", "", ""],
+        ["", "", 2, "检查文字显示", "积分商城", "", ""],
+        ["D_003", "后一条", 1, "回到首页", "", "", ""],
+    ],
+    ["D_002", "D_003"],
+    [2, 1],
+)
+
+
+def actions_sheet_at_top(times):
+    """「动作清单」刷 N 次也必须**一直待在第 1 行**，而且下拉框指的那几行不是空的。
+
+    这是 2026/10/13 真踩到的 bug 的反向验证：以前 append 是往 max_row 后面接，
+    每刷一次清单就往下挪一截（刷 9 次挪到第 436 行），而下拉框还指着 A2:A48 —— 空行，
+    于是下拉框里一个动作都选不出来。
+    """
+    global passed
+    wb = Workbook()
+    ws = wb.active
+    ws.title = m.SHEET_ACTIONS
+    for _ in range(times):
+        m.fill_actions_sheet(ws)
+    name = "动作清单刷 %d 次仍在表头下方" % times
+    if ws.cell(1, 1).value != "动作":
+        failed.append("%s：第 1 行是 %r，不是表头（清单被 append 挤下去了）" % (name, ws.cell(1, 1).value))
+        return
+    got = [ws.cell(r, 1).value for r in range(2, len(m.ACTIONS) + 2)]
+    want = [a["name"] for a in m.ACTIONS]
+    if got != want:
+        failed.append("%s：清单内容对不上（%s…）" % (name, got[:3]))
+        return
+    if ws.cell(len(m.ACTIONS) + 2, 1).value is not None:
+        failed.append("%s：清单下面还留着旧内容（第 %d 行）" % (name, len(m.ACTIONS) + 2))
+        return
+    passed += 1
+    print("OK   动作清单刷 %d 次：%d 个动作都在第 2~%d 行" % (times, len(want), len(want) + 1))
+
+
+actions_sheet_at_top(1)
+actions_sheet_at_top(3)
+actions_sheet_at_top(9)  # 就是踩坑那次刷的次数
+
+
+def merge_keeps_content():
+    """并格**不能改内容**：并格前后导出来的「用例编号 + 用例名称 + 步骤数」必须一模一样。
+
+    这是 2026/10/13 那条真 bug 的反向验证：一开始把「编号/名称」并成了一整块 A:B，
+    而 openpyxl 合并时会把除左上角以外的单元格清空 —— 名字正好在 B 列，被吃掉，
+    导出时用例名静默退化成编号（看着"跑通了"，其实用例名没了）。
+    """
+    global passed
+    from openpyxl import load_workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = m.SHEET_DATA
+    ws.append(m.HEADERS)
+    for row in m.SAMPLE_ROWS:
+        ws.append(row)
+    wb.save(PATH)
+    before = [[c["id"], c["name"], len(c["steps"])] for c in m.validate(m.read_rows(PATH))]
+
+    wb = load_workbook(PATH)
+    m.merge_case_cells(wb[m.SHEET_DATA])
+    wb.save(PATH)
+    after = [[c["id"], c["name"], len(c["steps"])] for c in m.validate(m.read_rows(PATH))]
+
+    if before != after:
+        failed.append("并格改了内容：并之前 %s，并之后 %s" % (before, after))
+        return
+    if any(name == cid for cid, name, _n in after):
+        failed.append("并格之后有用例名退化成了编号：%s" % after)
+        return
+    passed += 1
+    print("OK   并格不改内容（%d 条用例，名字都还在）" % len(after))
+
+
+merge_keeps_content()
 
 # ---------- 体检（lint）反例：只提示，不拦截 ----------
 ok("一条用例没有任何检查", [["C_001", "无检查", 1, "回到首页", "", "", ""], ["C_001", "", 2, "切到用户中心", "", "", ""], ["C_001", "", 3, "回到首页", "", "", ""]], want_warn_count=1)

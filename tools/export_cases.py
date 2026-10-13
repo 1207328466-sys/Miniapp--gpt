@@ -24,7 +24,8 @@
 用法:
     python tools/export_cases.py           # 读 cases/用例表.xlsx，写 cases/用例表.json
     python tools/export_cases.py --init    # 生成模板（表已存在时报错，加 --force 才覆盖）
-    python tools/export_cases.py --dropdown # 给已有表格补「动作」列下拉框（不动已填内容）
+    python tools/export_cases.py --dropdown # 刷新已有表格的排版与下拉框：动作清单 + 下拉框 +
+                                            # 「同一条用例并成一格」（不动已填内容）
 退出码: 0 成功（含「某几条用例自己填错了」——那种错误记在那条用例身上，导出的 json 照常有它，
            真机跑的时候**只有那一条红**，其他用例不受影响）；
         1 表格本身有错（表头被改 / 缺工作表 / 整行没有用例编号 / 一条用例都没有）—— 不导出；
@@ -389,7 +390,9 @@ HELP_LINES = [
     "怎么用这张表（零基础版）",
     "",
     "1. 一行 = 一个步骤。同一个「用例编号」的若干行，按「步骤序号」顺序执行；它们一起算一条用例。",
-    "2. 必填三列：用例编号、步骤序号、动作。「用例名称」只在某条用例的第一行写一次就行。",
+    "2. 一条用例怎么摆：第一行写「用例编号 + 用例名称」，下面几行的这两列**并成一格、空着就行** ——",
+    "   表上看起来就是「一案一块」，一眼数得出有几条用例、每条几步。每行都要填的是「步骤序号」和「动作」。",
+    "   （按这个排版，导出时编号空着的行会自动并到上一条用例；但**第一行数据必须写编号**，否则整表报错。）",
     "3. 「动作」只能填「动作清单」工作表里列出的名字 —— 填别的会在导出时报错，不会静默跳过。",
     "4. 「参数1 / 参数2」按动作需要填，不用就留空。填多了（该动作用不到）也会报错，防手滑。",
     "5. 「备注」随便写，只出现在日志和报告里，不影响执行。",
@@ -400,6 +403,8 @@ HELP_LINES = [
     "   上一条停在二级页上，下一条可能报「找不到底部 tab」—— 开头摆正 + 结尾交还就不受影响。",
     "8. 「动作」列是**下拉框**（点单元格右边的小箭头选），可选项来自「动作清单」工作表；",
     "   「步骤序号」列只接受 1、2、3… 这样的正整数。填错的动作名根本选不出来，省一轮报错。",
+    "8b. 自己新加的行不会自动并格。改完想让它并回去、顺便刷新下拉框，跑一次：",
+    "    python tools/export_cases.py --dropdown    （只动排版，不动你填的内容；Excel 开着这份表时先关掉）",
     "9. 不知道「检查文字显示」该填哪段字？先加一行「打印页面文字」跑一次 ——",
     "   当前屏幕上看得见的文字会打进日志，照着抄就行（挑完把它删掉即可）。",
     "",
@@ -495,6 +500,68 @@ def add_dropdowns(ws, last_row=1000):
     dv_seq.add("C2:C%d" % last_row)
 
 
+def merge_case_cells(ws):
+    """把同一条用例的「用例编号 / 用例名称」两列**纵向并成一格**（webzdh 那种「一案一块」的排版）。
+
+    为什么：一条用例常有 3~5 个步骤，编号重复 5 遍，看久了分不清「哪几行是一起的」。
+    并起来之后，表上一条用例就是一块，一眼能数出「几号用例、几步」。
+
+    刻意做得保守的三点：
+      · 只在**紧挨着**且属于同一条用例的行之间并（中间夹了别的用例绝不并，免得把两块误并成一块）；
+      · 只在「值和首行一样」时清掉下面重复的值 —— 万一有人把名字写岔了，
+        那个不一样的名字**留着**，导出时照样能报「同一个用例编号只能有一个名字」；
+      · 先拆 A/B 两列上旧的合并再重并（重复执行不叠加）。
+
+    并了之后下面那些行的编号是空的 —— 导出时按「接着上一条用例」处理（见 validate 的承接逻辑），
+    所以**合并只是排版，不改用例内容**。
+
+    @returns 并了几块（给打印/自检用）
+    """
+    # 1) 拆掉 A/B 两列上旧的合并（别动用户自己在别的列上做的合并）
+    for rng in list(ws.merged_cells.ranges):
+        if rng.min_col == rng.max_col <= 2:
+            ws.unmerge_cells(str(rng))
+
+    # 2) 先看每一行归哪条用例：编号非空 = 新用例开始；编号空 = 接着上一条
+    owner = {}
+    cur = None
+    for r in range(2, ws.max_row + 1):
+        cid = cell_text(ws.cell(r, 1).value)
+        row_blank = all(cell_text(ws.cell(r, c).value) == "" for c in range(1, len(HEADERS) + 1))
+        if row_blank:
+            continue  # 表格尾部的空行不参与（中间的空行会断开合并，这也是我们要的）
+        if cid:
+            cur = cid
+        owner[r] = cur
+
+    # 3) 把「连着的一串同编号行」收成段
+    runs = []
+    for r in sorted(owner):
+        cid = owner[r]
+        if cid is None:
+            continue  # 第一行就没编号：交给 validate 报错，这里不动它
+        if runs and runs[-1][2] == cid and runs[-1][1] == r - 1:
+            runs[-1][1] = r
+        else:
+            runs.append([r, r, cid])
+
+    merged = 0
+    for r1, r2, _cid in runs:
+        if r2 <= r1:
+            continue  # 只有一步，没什么可并的
+        for c in (1, 2):
+            # **一列一列地并**（A 列自己一块、B 列自己一块）。
+            # 千万别并成 A:B 一整块：openpyxl.merge_cells 会把"除左上角以外"的单元格清空，
+            # 而名字在 B 列 —— 并成 A:B 就直接把名字吃掉了，导出时用例名会退化成编号。
+            # 真踩过（2026/10/13，自检里那条"合并后名字还在吗"就是为它加的）。
+            for r in range(r1 + 1, r2 + 1):
+                if ws.cell(r, c).value == ws.cell(r1, c).value:
+                    ws.cell(r, c).value = None  # 重复的同一个值：清掉（不一样的值留着，好让导出去报错）
+            ws.merge_cells(start_row=r1, start_column=c, end_row=r2, end_column=c)
+        merged += 1
+    return merged
+
+
 def fill_actions_sheet(ws):
     """把「动作清单」工作表写满（表头 + 每条动作一行）；已存在则先清空再重写。
 
@@ -503,9 +570,12 @@ def fill_actions_sheet(ws):
     """
     from openpyxl.styles import Font
 
-    for row in list(ws.iter_rows()):
-        for cell in row:
-            cell.value = None
+    # 先**把旧行删掉**再写。只清空值是不够的：append 是往 max_row 后面接，
+    # 而清空不会让 max_row 变小 —— 于是每刷一次，整块清单就往下挪一截。
+    # 真踩过（2026/10/13）：刷了 9 次之后清单跑到了第 436 行，而下拉框还指着 A2:A48（空行），
+    # 表现就是"动作列的下拉框里一个选项都没有"，还很难看出是脚本自己挪走的。
+    if ws.max_row:
+        ws.delete_rows(1, ws.max_row)
     ws.append(["动作", "参数1", "参数2", "说明"])
     for a in ACTIONS:
         ws.append([a["name"], a["p1"], a["p2"], a["desc"]])
@@ -533,6 +603,7 @@ def build_template(path):
     for col, width in zip("ABCDEFG", (14, 34, 9, 20, 20, 12, 34)):
         ws.column_dimensions[col].width = width
     ws.freeze_panes = "A2"  # 滚动时表头冻结，填表时不会看错列
+    merge_case_cells(ws)  # 同一条用例的编号/名称纵向并成一格（一案一块，一眼看得出几条几步）
     add_dropdowns(ws)  # 动作列下拉 + 步骤序号校验（不改数据，只是让手滑填不进去）
 
     wa = wb.create_sheet(SHEET_ACTIONS)
@@ -596,10 +667,18 @@ def validate(rows):
       · **归不到用例的**（整行没有「用例编号」、表头被改、工作表名不对、一条用例都没有）
         → 整张表报错、不导出。没有编号就不知道该算谁的问题，
           而且这几种情况会让"跑出来的结果"整体不可信（宁可停下来）。
+
+    【编号留空 = 接着上一条用例】（2026/10/13 owner 要的 webzdh 式排版）
+      表里同一条用例的「用例编号 / 用例名称」被并成了一格，读出来只有第一行有值、
+      下面几行是空的。所以空编号不再一律当错：**上面有可承接的用例**就并进去，
+      **上面什么都没有**（表格第一行数据就没编号）才算整表错误。
+      代价说明：以前"漏写编号"会被当场抓出来，现在它会安静地并进上一条用例 ——
+      换来的是排版能一眼看出"一案多步"。两种口径都写在「填写说明」里，填表时看得见。
     """
     table_errors = []  # 表格级：归不到具体某条用例
     cases = []  # 保序：[{"id", "name", "steps": [...]}]
     index = {}  # 用例编号 -> 用例
+    last_id = ""  # 上一个**写了编号**的行属于哪条用例（用来承接合并单元格下方的空编号行）
 
     def case_errors_of(case):
         """取（必要时建）这条用例自己的错误清单"""
@@ -607,8 +686,15 @@ def validate(rows):
 
     for lineno, (cid, cname, cseq, action, p1, p2, note) in rows:
         if not cid:
-            table_errors.append("第 %d 行：「用例编号」是空的。没有编号就不知道该把它并到哪条用例里" % lineno)
-            continue
+            if not last_id:
+                table_errors.append(
+                    "第 %d 行：「用例编号」是空的，而且上面没有能承接的用例 —— "
+                    "这行不知道该算谁的。第一行数据必须写「用例编号」" % lineno
+                )
+                continue
+            cid = last_id  # 空编号 = 还说上面那条用例（合并单元格的下面那些行就是这样）
+        else:
+            last_id = cid
 
         # 先建/找到这条用例，后面所有问题都能挂在它身上（这样才做得到"只让那一条红"）
         case = index.get(cid)
@@ -832,6 +918,7 @@ def main(argv=None):
     parser.add_argument("--force", action="store_true", help="配合 --init：覆盖已存在的用例表")
     parser.add_argument(
         "--dropdown",
+        "--refresh",
         action="store_true",
         help="给现有的用例表补上「动作」列下拉框（不改动你已经填好的内容）",
     )
@@ -877,12 +964,19 @@ def main(argv=None):
         # 先清空旧的校验规则，重复执行不会叠加（叠加会让 Excel 弹两次提示）
         ws.data_validations.dataValidation = []
         add_dropdowns(ws)
-        wb.save(xlsx)
+        merged = merge_case_cells(ws)  # 同一条用例的编号/名称并回一格（新加的行会跟着重新并）
+        try:
+            wb.save(xlsx)
+        except PermissionError:
+            print("存不进去：这份表正被 Excel/WPS 打开着（%s）。" % xlsx)
+            print("  先把表格关掉，再跑一次：python tools/export_cases.py --dropdown")
+            return 1
         print("已刷新用例表：%s" % xlsx)
         print("  · 「动作清单」工作表已更新为最新的 %d 个动作" % len(ACTIONS))
         print("  · 动作列（D）下拉框已重建，选项来自「动作清单」")
         print("  · 步骤序号列（C）只接受 1、2、3… 这样的正整数")
-        print("  · 你已经填好的内容一行都没动")
+        print("  · 同一条用例的「用例编号 / 用例名称」已并成一格（%d 块）" % merged)
+        print("  · 你已经填好的内容一行都没动（只是把重复的编号并起来了）")
         print("\n顺带重新导出一遍（刷完表格不导出的话，json 会比 xlsx 旧，"
               "真机跑起来会提示「本次跑的是 json 里的内容」——那是个假警报）")
         # 故意**不 return**：接着往下走正常导出流程；并且把 json 的时间戳刷新到最新，
