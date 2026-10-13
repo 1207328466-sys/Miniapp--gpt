@@ -340,19 +340,20 @@ const myStep = async (page) => { ... }          // ⚠️ name 可能是 "myStep
 ```js
 const path = require("path");
 const { appTest } = require("../../common/app_common");
-const { login, clickElementByText } = require("../../app_sub_function/suprecast_app/android");
+const pages = require("../../app_sub_function/suprecast_app/pages"); // 页面对象统一入口
 
 (async () => {
   const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
   const funcList = [
-    [login, null],
-    [clickElementByText, { text: "有问必答" }],
+    [pages.qaPage.ensureOnHomeFeed, null],                    // 起点：先回到首页信息流（幂等）
+    [pages.qaPage.switchToFeedTab, { tab: "最新提问" }],       // 换个筛选 tab
+    [pages.qaPage.assertActivityBlockInAllFeedTabs, null],     // 检查：活动入口在每个 tab 下都显示
   ];
   await appTest(funcList, {
     photosPath,
     // ★ 必写：报告和控制台里显示的**中文用例名**就来自这里。
     //   不写的话只能拿英文文件名当名字，看报告的人认不出来哪条是哪条。
-    meta: { feature: "有问必答首页", story: "导航", title: "切到有问必答页" },
+    meta: { feature: "有问必答首页", story: "活动入口", title: "活动入口在各筛选 tab 下都显示" },
   });
   console.log("用例执行完成");
 })().catch((e) => {
@@ -362,10 +363,16 @@ const { login, clickElementByText } = require("../../app_sub_function/suprecast_
 ```
 
 **四个要素**：
-1. `require` 驱动层 + 需要的业务函数
+1. `require` 驱动层 + 页面对象（`pages.<模块>.<函数>` 这种写法；有哪些见
+   `app_sub_function/suprecast_app/pages/` 目录，每个文件末尾的 `module.exports` 就是可用的函数）
 2. `photosPath` 指向 `report/photo_app`
 3. `funcList` 步骤数组
 4. `appTest(...)`（带 `meta` 中文用例名）+ **结尾必须 `.catch(... process.exit(1))`**
+
+> 上面这段是**真的能跑**的（照抄改中间几步即可）。它是 `scripts/check-invariants.py` 盯着的：
+> 里面 require 的函数、调的页面对象函数一旦被删掉/改名，离线闸门立刻报红
+> —— 起因是这骨架曾经指着两个早被删掉的函数（`login`、`clickElementByText`），
+> 照抄的人第一行就报 `login is not a function`。
 
 > 关于 `meta`：`feature`（大模块）/ `story`（小模块）/ `title`（这条用例叫什么）都用中文，
 > 报告里的分组和用例名就是它。`conftest.py` 还会在收集阶段从这一行抠出中文名给 pytest 用 ——
@@ -736,7 +743,9 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 2. ~~修框架根本缺陷~~ ✅ 已完成（第一轮 7 项 + 第二轮 5 项）
 3. ~~补断言层~~ ✅ 已完成（第三轮，4 个断言函数）
 4. ~~修 P0 缺陷~~ ✅ 已完成（第四轮，5 项）
-5. ~~搭页面对象~~ ✅ 已完成（第五轮）。**下一步**：把 `login` 的账号、`focusSearchInput` 的关键词也抽出配置，并按同样形状补 `home_page.js` 等缺失的页面对象
+5. ~~搭页面对象~~ ✅ 已完成（第五轮；现在是 `app_sub_function/suprecast_app/pages/` 统一入口）。
+   **下一步**：把散落在用例里的固定值（搜索关键词、活动名、课程名、案例名）抽到配置文件，
+   并按同样形状补齐还缺的页面对象
 6. **打通 Python 侧**：实现 `sc_config` / `sc_log`，让配置和日志真正驱动 JS 用例
    （第四轮只做到"`import common` 不再报错 + 配置样例就位"，业务类仍未实现）
 7. **抽公共前置步骤**：让用例只写业务差异部分

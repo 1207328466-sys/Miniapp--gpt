@@ -10,6 +10,9 @@
   3. **每个 .js 用例都要有 `process.exit(1)` 兜底**：删了它，用例**永远通过**（假绿）。
   4. **appid 安全阀的硬校验还在**：少了它，两个小程序同时被缓存时可能静默测到生产上。
   5. **文档里写的动作数量与实际一致**：烂掉的数字比没有数字更误导。
+  6. **写链路的 .js 用例都要带复位**：只写不复位，跑一次就把真实数据留在库里。
+  7. **README 里"照抄即可"的代码，引用的函数必须真实存在**：能照抄的代码是文档里
+     最容易过期的一段（2026/10/13 真踩到：骨架指着两个早被删掉的函数）。
 
 用法：python scripts/check-invariants.py
 退出码：0 = 全部通过；1 = 有违反
@@ -122,6 +125,52 @@ check(
     '表格动作「复制当前案例」的一条龙里含复位',
     '--reset' in case_copy,
     'case_copy.js 里看不到 --reset —— 复制动作会把数据留在库里',
+)
+
+
+# ---------- README 里"照抄即可"的骨架：引用的函数必须真实存在 ----------
+# 起因（2026/10/13）：README 的极简骨架写着 login / clickElementByText，而这两个函数
+# 早在"框架瘦身"那轮就被当死代码删掉了 —— 照抄的人第一行就报 `login is not a function`，
+# 还会以为是自己的环境问题。**能照抄的代码，是文档里最容易过期的一段**，所以盯住它。
+def _exported_names(js_text):
+    """抠出 `module.exports = { ... }` 里的名字（按行拆，够用且不引依赖）"""
+    names = set()
+    for blk in re.findall(r'module\.exports\s*=\s*\{(.*?)\n\}', js_text, re.S):
+        flat = blk.replace('\n', ' ')
+        for item in flat.split(','):
+            item = item.strip()
+            if item:
+                names.add(item.split(':')[0].strip())
+    return names
+
+
+readme = read('README.md')
+android_exports = _exported_names(read('app_sub_function/suprecast_app/android.js'))
+
+bad_android = []
+for destructured in re.findall(r'const\s*\{([^}]*)\}\s*=\s*require\([^)]*android[^)]*\)', readme):
+    for name in [n.strip() for n in destructured.split(',') if n.strip()]:
+        if name not in android_exports:
+            bad_android.append(name)
+check(
+    'README 骨架里 require 的 android.js 函数都还在',
+    not bad_android,
+    'android.js 里没有：%s（照抄的人会直接报错）' % '、'.join(bad_android),
+)
+
+pages_index = read('app_sub_function/suprecast_app/pages/index.js')
+page_map = dict(re.findall(r'(\w+)\s*:\s*require\("\./(\w+)"\)', pages_index))
+bad_pages = []
+for key, fn in sorted(set(re.findall(r'pages\.(\w+)\.(\w+)', readme))):
+    if key not in page_map:
+        bad_pages.append('入口里没有 %s' % key)
+        continue
+    if fn not in _exported_names(read('app_sub_function/suprecast_app/pages/%s.js' % page_map[key])):
+        bad_pages.append('%s.js 里没有 %s' % (page_map[key], fn))
+check(
+    'README 骨架里调的页面对象函数都还在',
+    not bad_pages,
+    '；'.join(bad_pages),
 )
 
 print()

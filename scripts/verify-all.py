@@ -14,7 +14,8 @@
   8. `scripts/selftest-run-preflight.py` run.py 开跑前"设备预检"的解析规则（11 项，含 unauthorized/offline 反例）
   9. `scripts/check-doc-index.py`       文档索引不许漂移（目录↔正文、踩坑索引、文档地图登记）
   10. `scripts/check-safety.py`         数据/凭据安全不变式（14 项）
-  11. `scripts/check-invariants.py`     框架自身完整性（7 项：动作↔实现、中文名、退出码兜底、安全阀、文档数字）
+  11. `scripts/check-invariants.py`     框架自身完整性（11 项：动作↔实现、中文名、退出码兜底、安全阀、
+      文档数字、写链路带复位、README 里"照抄即可"的代码引用的函数是否真实存在）
   12. `tools/calibrate_android_doc.py --check`  android.js 逐行详解里的行号引用是否漂移
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
