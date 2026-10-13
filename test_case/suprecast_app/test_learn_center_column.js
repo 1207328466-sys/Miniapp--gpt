@@ -66,7 +66,7 @@ const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
     // —— 写死数量会在别人新增一张专栏时变成假失败。
     [assertSelectorExists, { selector: learnCenter.SEL.columnCard }],
 
-    // 步骤 3：点第一张专栏卡片进详情页（内部会确认真的进去了）
+    // 步骤 3：打开第一张专栏卡片进详情页（内部会确认真的进去了）
     [learnCenter.openFirstColumn, null],
 
     // 断言：确实在详情页 —— 详情页有且只有一个 .col-title，

@@ -236,7 +236,7 @@ async function clickFirstLesson(page) {
  */
 async function assertUnpurchasedLessonRules(page, { courseName } = {}, ctx = null) {
   const name = String(courseName || "").trim();
-  if (!name) throw new Error("「检查未购买点课时不改变封面标题」需要填课程名（参数1），例如 7.8课程new");
+  if (!name) throw new Error("「检查未购买点课时」需要填课程名（参数1），例如 7.8课程new");
 
   const fg = (await findCourseDetailPage(page)) || (await base.foreground(page));
   const problems = [];
@@ -246,7 +246,7 @@ async function assertUnpurchasedLessonRules(page, { courseName } = {}, ctx = nul
   if (!/购买课程后才可以观看|购买后|去购买/.test(text)) {
     problems.push(
       `这个页面看起来**不是未购买态**（没看到「购买课程后才可以观看」这类文案）。` +
-        `请换一门我们账号没买过的课，或用「检查课程详情页符合需求」测已购买的情况`
+        `请换一门我们账号没买过的课，或用「检查课程详情页」测已购买的情况`
     );
   }
 

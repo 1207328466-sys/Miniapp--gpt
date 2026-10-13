@@ -95,7 +95,7 @@ const HANDLERS = {
 
   打开搜索页: { run: (page) => qaPage.openSearch(page) },
 
-  点第一个热门话题: { run: (page) => qaPage.openFirstHotTopic(page) },
+  打开第一个热门话题: { run: (page) => qaPage.openFirstHotTopic(page) },
 
   打开第一个帖子: { run: (page) => postDetail.openFirstFromFeed(page) },
 
@@ -160,11 +160,11 @@ const HANDLERS = {
       android.assertSelectorCount(page, { selector, expected: Number(expected) }),
   },
 
-  检查答题页符合需求: { run: (page, _p1, _p2, ctx) => quizPage.assertQuizPageRules(page, {}, ctx) },
+  检查答题页: { run: (page, _p1, _p2, ctx) => quizPage.assertQuizPageRules(page, {}, ctx) },
 
   检查活动入口: { run: (page) => qaPage.assertActivityBlockInAllFeedTabs(page) },
 
-  检查首页tab顺序: { run: (page) => qaPage.assertFeedTabOrder(page) },
+  检查首页筛选栏顺序: { run: (page) => qaPage.assertFeedTabOrder(page) },
 
   检查回到顶部按钮: { run: (page) => pointsMall.assertBackTopRules(page) },
 
@@ -208,11 +208,11 @@ const HANDLERS = {
     },
   },
 
-  切换筛选tab: {
+  切换首页筛选栏: {
     run: (page, tab) => qaPage.switchToFeedTab(page, { tab, timeout: 10000 }),
   },
 
-  切换学习中心顶部tab: {
+  切换学习中心顶部栏: {
     run: async (page, tab) => {
       // 先自己导航到学习中心（不在就切过去），再切目标 tab —— 这样表格里不用先写一步导航
       page = await learnCenter.ensureOnColumnList(page);
@@ -220,7 +220,7 @@ const HANDLERS = {
     },
   },
 
-  点第一张专栏: {
+  打开第一张专栏: {
     run: (page, _p1, _p2, ctx) => learnCenter.openFirstColumn(page, {}, ctx),
   },
 
@@ -351,7 +351,7 @@ const HANDLERS = {
     run: (page) => caseLibrary.ensureOn(page),
   },
 
-  检查案例库列表符合需求: {
+  检查案例库列表: {
     run: (page, _p1, _p2, ctx) => caseLibrary.assertListRules(page, {}, ctx),
   },
 
@@ -363,7 +363,7 @@ const HANDLERS = {
     run: (page, caseName) => caseLibrary.openByName(page, caseName),
   },
 
-  检查案例详情页符合需求: {
+  检查案例详情页: {
     run: (page, _p1, _p2, ctx) => caseLibrary.assertDetailRules(page, {}, ctx),
   },
 
@@ -371,7 +371,7 @@ const HANDLERS = {
     run: (page) => caseLibrary.openIntro(page),
   },
 
-  检查案例库介绍长图符合需求: {
+  检查案例库介绍长图: {
     run: (page, _p1, _p2, ctx) => caseLibrary.assertIntroRules(page, {}, ctx),
   },
 
@@ -393,11 +393,11 @@ const HANDLERS = {
     run: (page, courseName) => courseDetail.openByName(page, courseName),
   },
 
-  检查课程详情页符合需求: {
+  检查课程详情页: {
     run: (page, expectActiveTab, _p2, ctx) => courseDetail.assertRules(page, { expectActiveTab }, ctx),
   },
 
-  检查未购买点课时不改变封面标题: {
+  检查未购买点课时: {
     run: (page, courseName, _p2, ctx) =>
       courseDetail.assertUnpurchasedLessonRules(page, { courseName }, ctx),
   },
@@ -409,11 +409,11 @@ const HANDLERS = {
    * 得先去库里把"0 课时的课程名单"拿出来，再确认这些名字一个都没出现在小程序课程列表里。
    * 只读（SELECT + 读界面文字），不需要写开关。
    */
-  检查课时数为0的课程不显示: {
+  检查0课时课程不显示: {
     run: async (page, _p1, _p2, ctx) => {
       // 1) 库里的名单（工具会把名单放在 [COURSE] ... names=[...] 这一行）
       const out = runTool("courseList", []);
-      if (dbUnreachable(out)) throw dbUnreachableError("「检查课时数为0的课程不显示」");
+      if (dbUnreachable(out)) throw dbUnreachableError("「检查0课时课程不显示」");
       const m = out.match(/\[COURSE\][^\n]*names=(\[.*\])/);
       if (!m) throw new Error(`读不到"0 课时课程"名单（工具输出里没有 [COURSE] ... names=[]）。\n  输出末尾：${out.trim().slice(-200)}`);
       let dbNames = [];

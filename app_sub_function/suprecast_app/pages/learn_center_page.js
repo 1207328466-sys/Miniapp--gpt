@@ -182,7 +182,7 @@ async function ensureOnColumnList(page, { maxAttempts = 4, waitAfterTab = 2500 }
 }
 
 /**
- * 点第一张专栏卡片进入详情页，并确认真的进去了。
+ * 打开第一张专栏卡片进入详情页，并确认真的进去了。
  * 点击后**必须重新解析前台页**：卡片点击会新建 page，旧 page 会冻结。
  *
  * @param {import('playwright').Page} page

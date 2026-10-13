@@ -96,6 +96,21 @@ for rel in docs:
             bad_docs.append('%s 写着 %s 个' % (rel, num))
 check('文档里的动作数量与实际一致（%d 个）' % n, not bad_docs, '；'.join(bad_docs))
 
+# ---------- 4b) 每个动作都归类了（表格下拉框的顺序 / 动作文档的分组都靠它）----------
+# 为什么盯这条：ACTION_GROUPS 是"给人看的顺序"的唯一来源。漏一个动作不会报错，
+# 只会让它**悄悄掉到下拉框最后**，还标着「（还没归类）」—— 那种东西没人会去看。
+_grouped = [name for _t, _note, names in m.ACTION_GROUPS for name in names]
+_dup = sorted({x for x in _grouped if _grouped.count(x) > 1})
+_declared = {a['name'] for a in m.ACTIONS}
+check(
+    '每个动作都在 ACTION_GROUPS 里（不漏不重）',
+    not _dup and not (_declared - set(_grouped)) and not (set(_grouped) - _declared),
+    '重复：%s；没归类：%s；名字对不上：%s'
+    % ('、'.join(_dup) or '无',
+       '、'.join(sorted(_declared - set(_grouped))) or '无',
+       '、'.join(sorted(set(_grouped) - _declared)) or '无'),
+)
+
 # ---------- 5) 写链路的"自证"：有开关就必须有复位 ----------
 # 为什么盯这条：写数据的用例**必须**跑完把自己造的记录清掉。
 # 如果以后有人照抄写链路用例、只留了开关却把复位那步删了，数据就会被留在库里
