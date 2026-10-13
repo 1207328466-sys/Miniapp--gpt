@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-13 17:16:34",
+  "generated_at": "2026-10-13 17:53:32",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
   "warnings": [
@@ -1363,32 +1363,18 @@
           "num": 1
         },
         {
-          "action": "打开搜索并输入",
-          "param1": "zxz",
+          "action": "点选择器",
+          "param1": ".fs-28 text-blacks28 ml-2",
           "param2": "",
           "note": "",
           "num": 2
-        },
-        {
-          "action": "执行搜索",
-          "param1": "",
-          "param2": "",
-          "note": "",
-          "num": 3
-        },
-        {
-          "action": "打印页面文字",
-          "param1": "",
-          "param2": "",
-          "note": "",
-          "num": 4
         },
         {
           "action": "回到首页",
           "param1": "",
           "param2": "",
           "note": "",
-          "num": 5
+          "num": 3
         }
       ]
     },

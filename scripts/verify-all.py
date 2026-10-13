@@ -24,6 +24,8 @@
   15. `scripts/selftest-quiz-answer-key.py`     判分口径复算（需求 713594985）：
       **多选必须集合完全一致**才算对 —— 少选一个、多选一个都得判错
   16. `scripts/selftest-allure-shots.py`        Allure 截图附件：压缩确实变小、压完还是能打开的图
+  17. `test_case/diagnostic/selftest_selector_hint.js`  选择器没命中时的提示口径：
+      「多个 class 抄成一串」要认出来并给正确写法，合法的「里面的」写法不许乱改
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -124,6 +126,10 @@ def main():
     run(
         "selftest-course-zero-lesson（课程 0 课时对账规则）",
         ["node", os.path.join("test_case", "diagnostic", "selftest_course_zero_lesson_match.js")],
+    )
+    run(
+        "selftest-selector-hint（选择器提示口径）",
+        ["node", os.path.join("test_case", "diagnostic", "selftest_selector_hint.js")],
     )
     run("selftest-run-preflight（设备预检解析）", [sys.executable, os.path.join("scripts", "selftest-run-preflight.py")])
     run("selftest-env-profile（环境档案规则）", [sys.executable, os.path.join("scripts", "selftest-env-profile.py")])

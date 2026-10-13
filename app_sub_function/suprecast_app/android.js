@@ -535,7 +535,8 @@ async function assertSelectorExists(page, { selector, timeout = 8000, interval =
   }
   throw new Error(
     `断言失败: 页面上找不到 ${selector}（等待 ${timeout}ms 超时）\n  ` +
-      (await describeCurrentPage(fg, t))
+      (await describeCurrentPage(fg, t)) +
+      (await require("./pages/base_page").selectorMissHint(fg, selector))
   );
 }
 
@@ -569,7 +570,8 @@ async function assertSelectorCount(page, { selector, expected, timeout = 8000, i
   }
   throw new Error(
     `断言失败: ${selector} 命中 ${count} 个，期望 ${expected}（等待 ${timeout}ms 超时）\n  ` +
-      (await describeCurrentPage(fg, t))
+      (await describeCurrentPage(fg, t)) +
+      (await require("./pages/base_page").selectorMissHint(fg, selector))
   );
 }
 

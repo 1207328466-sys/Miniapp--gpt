@@ -37,11 +37,11 @@
 > | 496 | `clickElementByText` | -7 | **已重构**（改真实 tap） |
 > | 517 | `inputText` | -7 | **已重构**（真实 tap + 读回校验） |
 > | 569 | `assertElementExists` | -7 | **已重构**（属性选择器） |
-> | 590 | `swipeUp` | -7 | **已重构**（adb input swipe + 位移校验） |
-> | 678 | `goBack` | -7 | 未变（仍不可用，待修） |
+> | 592 | `swipeUp` | -7 | **已重构**（adb input swipe + 位移校验） |
+> | 680 | `goBack` | -7 | 未变（仍不可用，待修） |
 > | 929 | `switchToWxWebview` | -7 | 未变 |
 > | 962 | `clickWxText` | -7 | **已重构**（改真实 tap） |
-> | 807 | `dumpElements` | -7 | **已增强**（2026/10/13：id / 过滤噪声 class / onlyText / 落盘+统计） |
+> | 809 | `dumpElements` | -7 | **已增强**（2026/10/13：id / 过滤噪声 class / onlyText / 落盘+统计） |
 > | 677-694 | `module.exports` | 已增补 `tapElement` | 同左 |
 >
 > ⚠️ **正文里逐行引用的行号（形如 `137: page = ...`）停留在上一版，没有逐条重新同步。**
@@ -77,10 +77,10 @@ indPageWith / login / clickElementById / clickElementByText / inputText /
 - 第 6 节：前台页面探测（337-359 行：`getForegroundPage`）★核心原理
 - 第 8 节：等软键盘（360-386 行：`waitImeShown`）★核心原理
 - 第 9 节：打开搜索页（387-433 行：`focusSearchInput`）★历史实现，见下面说明
-- 第 10 节：通用操作与断言（590-677 行：`swipeUp` 等）【均已重构】
-- 第 11 节：返回上一页（678-767 行：`goBack`）
-- 第 14 节：输出页面结构（807-903 行：`dumpElements`）★调试利器
-- 第 15 节：导出清单（904-924 行：`module.exports`）
+- 第 10 节：通用操作与断言（592-679 行：`swipeUp` 等）【均已重构】
+- 第 11 节：返回上一页（680-769 行：`goBack`）
+- 第 14 节：输出页面结构（809-905 行：`dumpElements`）★调试利器
+- 第 15 节：导出清单（906-926 行：`module.exports`）
 - 附：全文 17 个函数速查表（行号按 811 行版本校准）
 - 附：本文件问题清单（状态已更新至 2026/10/10）
 
@@ -535,11 +535,11 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 10 节：通用操作与断言（590-677 行：`swipeUp` 等）【均已重构】
+## 第 10 节：通用操作与断言（592-679 行：`swipeUp` 等）【均已重构】
 
 这五个函数结构高度相似，掌握了规律就能快速看懂。
 
-### `swipeUp`（590-677 行）向上滑动【已重构】
+### `swipeUp`（592-679 行）向上滑动【已重构】
 
 ```js
 303:     const size = page.viewportSize() || { width: 0, height: 0 };
@@ -565,7 +565,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 11 节：返回上一页（678-767 行：`goBack`）
+## 第 11 节：返回上一页（680-769 行：`goBack`）
 
 ```js
 326: async function goBack(page) {
@@ -579,7 +579,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 14 节：输出页面结构（807-903 行：`dumpElements`）★调试利器
+## 第 14 节：输出页面结构（809-905 行：`dumpElements`）★调试利器
 
 > **2026/10/13 增强**（当前实现就在上面写的 772-864 行）：照 webzdh4.7 那版的思路补了 4 件事 ——
 >
@@ -674,7 +674,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 15 节：导出清单（904-924 行：`module.exports`）
+## 第 15 节：导出清单（906-926 行：`module.exports`）
 
 ```js
 430: module.exports = {
@@ -739,11 +739,11 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 | 460 | `assertTextVisible` | page, {text, timeout} | **断言页面出现某段文字**【轮询等待】 | ✅ |
 | 487 | `assertTextNotVisible` | page, {text, timeout} | **断言页面不再出现某段文字** | ✅ |
 | 516 | `assertSelectorExists` | page, {selector, timeout} | **断言选择器至少命中 1 个** | ✅ |
-| 549 | `assertSelectorCount` | page, {selector, expected, timeout} | **断言选择器命中个数恰好等于期望** | ✅ |
-| 590 | `swipeUp` | page, {duration,startRatio,endRatio,timeout} | 向上滑动【adb swipe + 位移校验】 | ✅ |
-| 678 | `goBack` | page, {timeout, selectors} | **点返回按钮 + 校验页面确实变了**；找不到按钮退回安卓返回键【已修，见坑 20】 | ✅ |
-| 807 | `dumpElements` | page, {tag} | **打印页面 HTML（调试点）** | ✅ |
-| 904 | `module.exports` | — | 导出清单 | — |
+| 550 | `assertSelectorCount` | page, {selector, expected, timeout} | **断言选择器命中个数恰好等于期望** | ✅ |
+| 592 | `swipeUp` | page, {duration,startRatio,endRatio,timeout} | 向上滑动【adb swipe + 位移校验】 | ✅ |
+| 680 | `goBack` | page, {timeout, selectors} | **点返回按钮 + 校验页面确实变了**；找不到按钮退回安卓返回键【已修，见坑 20】 | ✅ |
+| 809 | `dumpElements` | page, {tag} | **打印页面 HTML（调试点）** | ✅ |
+| 906 | `module.exports` | — | 导出清单 | — |
 
 ---
 

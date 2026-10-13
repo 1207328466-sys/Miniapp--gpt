@@ -88,10 +88,82 @@ async function countOfText(p, text) {
   }
 }
 
+/**
+ * 把「像是把元素的多个 class 抄成一串」的选择器，改写成 CSS 里真正的写法（`.a.b.c`）。
+ *
+ * 【为什么要有它】真实踩到（2026/10/13 owner 填表）：页面上一个元素的 class 是
+ * `fs-28 text-blacks28 ml-2`（**三个 class，用空格分开**），照抄进「点选择器」就变成
+ * `.fs-28 text-blacks28 ml-2` —— 而 CSS 里**空格是「里面的」**（后代），于是框架去找
+ * 「.fs-28 里面的 <text-blacks28> 里面的 <ml-2>」，必然 0 个命中。
+ * 同一个元素上的多个 class，正确写法是**连着写、不加空格**：`.fs-28.text-blacks28.ml-2`。
+ *
+ * 判断口径（宁可判不出来，也不要乱猜）：必须带空格、第一段是 `.名字` 的样子，
+ * 且**后面每一段都是"没带点号的裸名字"**（照抄 class 列表才会这样），而且看着像 class 名
+ * （含数字或连字符）。两种写法都会被放过：
+ *   · `.hot-topics .inline-flex` —— 后面那半自己带点号，是**合法的"里面的"写法**；
+ *   · `.course-detail div` —— `div` 是纯字母，像真标签。
+ * （第一版就是漏了"后面必须没带点号"这一条，把 `.hot-topics .inline-flex` 也当成抄错串 ——
+ *   自检当场抓到：乱给建议比不给更坏，用户会照着一个同样错的写法去改。）
+ *
+ * @param {string} selector 表里填的选择器
+ * @returns {string|null} 建议的写法（例如 `.a.b.c`）；判断不出来返回 null
+ */
+function suggestJoinedSelector(selector) {
+  const s = String(selector || "").trim();
+  if (!s.includes(" ")) return null;
+  const parts = s.split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return null;
+  if (!parts[0].startsWith(".")) return null;
+  const looksLikeClass = (raw) => /[0-9]/.test(raw) || raw.includes("-");
+  const names = [];
+  names.push(parts[0].slice(1));
+  for (const p of parts.slice(1)) {
+    if (p.startsWith(".") || p.startsWith("#") || p.startsWith("[")) return null; // 自己带符号 = 合法的独立选择器
+    if (!looksLikeClass(p)) return null; // 像真标签（div/span…）
+    names.push(p);
+  }
+  return "." + names.join(".");
+}
+
+/**
+ * 选择器没命中时的「人话提示」：说明**空格是「里面的」**，并把正确写法算出来。
+ *
+ * 只有**实测能命中**才敢给确定建议（"写成 X，命中 N 个"）；命不中就只讲规则、不乱指路 ——
+ * 宁可少说一句，也不要给一个同样错的答案。
+ */
+async function selectorMissHint(page, selector) {
+  const joined = suggestJoinedSelector(selector);
+  if (!joined) return "";
+  let n = 0;
+  try {
+    n = await page.locator(joined).count();
+  } catch (e) {
+    n = 0;
+  }
+  const rule = `  [提示] CSS 里**空格表示「里面的」**（后代），不是「同时满足」。`;
+  if (n > 0) {
+    const first = joined.split(".")[1] ? "." + joined.split(".")[1] : joined;
+    return (
+      `\n${rule}\n` +
+      `    你填的这串看起来是**同一个元素上的多个 class** —— 那样要连着写、不加空格：\n` +
+      `    ${joined}（实测能命中 ${n} 个，可以直接照抄）\n` +
+      `    也可以只留最有辨识度的那一个，例如 ${first}。\n` +
+      `    想确认页面上到底有哪些 class：用表格动作「打印页面结构」，或跑\n` +
+      `    node test_case/diagnostic/dump_page.js --only-text`
+    );
+  }
+  return (
+    `\n${rule}\n` +
+    `    如果这几个名字是**同一个元素上的多个 class**，要连着写：${joined}；\n` +
+    `    如果确实是「里面的」（例如 .hot-topics .inline-flex），那要检查两半分别写对没有。`
+  );
+}
+
 /** 统一的"找不到"错误：只报"找不到元素"没法定位，必须把页面上有什么一起带上 */
-async function notFound(what, page) {
+async function notFound(what, page, selector) {
   return new Error(
-    `找不到${what}。\n  当前页面前 120 字: ${JSON.stringify((await pageText(page)).slice(0, 120))}`
+    `找不到${what}。\n  当前页面前 120 字: ${JSON.stringify((await pageText(page)).slice(0, 120))}` +
+      (selector ? await selectorMissHint(page, selector) : "")
   );
 }
 
@@ -134,7 +206,8 @@ async function tapLocator(page, locator, what) {
  */
 async function tapSelector(page, selector, what) {
   const label = `${what}（选择器 ${selector}）`;
-  if ((await countOf(page, selector)) === 0) throw await notFound(label, page);
+  // 把 selector 一起传进去：没命中时才能给出"空格是「里面的」"那条提示（填表的人最常踩的坑）
+  if ((await countOf(page, selector)) === 0) throw await notFound(label, page, selector);
   await tapLocator(page, page.locator(selector), label);
 }
 
@@ -331,6 +404,8 @@ module.exports = {
   countOf,
   countOfText,
   notFound,
+  suggestJoinedSelector,
+  selectorMissHint,
   waitUntil,
   tapLocator,
   tapSelector,
