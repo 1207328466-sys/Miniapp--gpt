@@ -34,6 +34,7 @@
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +47,15 @@ JSON_PATH = CASES_DIR / "用例表.json"
 SHEET_DATA = "用例"
 SHEET_ACTIONS = "动作清单"
 SHEET_HELP = "填写说明"
+SHEET_CHOICES = "名称候选"
+
+# 这几个动作的参数要填**数据里的名字**（一字不差），候选值列在「名称候选」工作表里
+NAME_PARAM_ACTIONS = ("打开课程详情", "打开案例", "复位答题记录", "检查答题记录数")
+
+
+def plain_text(s):
+    """把说明里的 markdown 记号去掉 —— 这张表是给人在 Excel 里看的，`**` 和反引号只会碍眼。"""
+    return str(s or "").replace("**", "").replace("`", "")
 
 HEADERS = ["用例编号", "用例名称", "步骤序号", "动作", "参数1", "参数2", "备注"]
 
@@ -184,13 +194,13 @@ ACTIONS = [
     },
     {
         "name": "切换首页筛选栏",
-        "p1": "tab名",
+        "p1": "筛选栏名称",
         "p2": "",
         "desc": "切首页信息流那排筛选 tab（切完会验证真的选中了）",
     },
     {
         "name": "切换学习中心顶部栏",
-        "p1": "tab名",
+        "p1": "顶部栏名称",
         "p2": "",
         "desc": "切学习中心顶部那排 tab（切完会验证真的选中了）",
     },
@@ -320,7 +330,7 @@ ACTIONS = [
     },
     {
         "name": "检查课程详情页",
-        "p1": "期望默认选中的tab",
+        "p1": "期望选中的标签",
         "p2": "",
         "desc": "按需求 713367615 校验课程详情页：有「课程介绍 / 课程目录」两个 tab、**默认选中填的那个**"
         "（未开始学习填 课程介绍；已开始学习填 课程目录）、展示课程标题、展示第一课时封面和视频。只读",
@@ -467,6 +477,8 @@ HELP_LINES = [
     "   表上看起来就是「一案一块」，一眼数得出有几条用例、每条几步。每行都要填的是「步骤序号」和「动作」。",
     "   （按这个排版，导出时编号空着的行会自动并到上一条用例；但**第一行数据必须写编号**，否则整表报错。）",
     "3. 「动作」只能填「动作清单」工作表里列出的名字 —— 填别的会在导出时报错，不会静默跳过。",
+    "3b. 有几类参数要填**数据里的名字**（课程名 / 案例名 / 活动名），一字不差才行；",
+    "    候选值在「名称候选」工作表里，直接复制粘贴即可（刷新它：python tools/export_cases.py --dropdown）。",
     "4. 「参数1 / 参数2」按动作需要填，不用就留空。填多了（该动作用不到）也会报错，防手滑。",
     "5. 「备注」随便写，只出现在日志和报告里，不影响执行。",
     "6. 填完执行：python run.py      （它会先自动把本表导出成 json，再跑用例）",
@@ -573,6 +585,86 @@ def add_dropdowns(ws, last_row=1000):
     dv_seq.add("C2:C%d" % last_row)
 
 
+def fetch_name_choices(timeout=30):
+    """跑 tools/table_choices.py 取候选名字（**只读**）。@returns (data|None, 为什么没取到)
+
+    为什么放在 `--dropdown` 里而不是导出路径里：导出（`python run.py`）必须能**离线**跑，
+    不能因为"连不上测试库"就导不出用例表。而 `--dropdown` 是人工手动刷表格的动作，
+    顺手取一次候选值是合理的。
+    """
+    script = str(ROOT / "tools" / "table_choices.py")
+    if not Path(script).exists():
+        return None, "找不到 tools/table_choices.py"
+    try:
+        import json as _json
+        import subprocess
+
+        # 允许用环境变量换一份数据库配置（和 JS 侧 UITEST_DB_CONFIG 同一个名字）：
+        # 验证"连不上库时会不会好好降级"就靠它，不用动真实的 config/db.local.yaml
+        extra = ["--config", os.environ["UITEST_DB_CONFIG"]] if os.environ.get("UITEST_DB_CONFIG") else []
+        r = subprocess.run(
+            [sys.executable, script, "--json"] + extra,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"}, timeout=timeout,
+        )
+        if r.returncode != 0:
+            # stdout 和 stderr 都要看：工具的"连不上测试库"人话提示可能落在任一边
+            out = ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
+            lines = [l for l in out.splitlines() if l.strip()] or ["(没有输出)"]
+            # 挑"最有信息量"的那行：优先带「连不上」的（工具的人话提示），否则用最后一行
+            pick = next((l for l in lines if "连不上" in l), lines[-1])
+            return None, "读候选值时出错：%s" % pick.strip()[:160]
+        return _json.loads(r.stdout.strip().splitlines()[-1]), ""
+    except Exception as e:
+        return None, "读候选值时出错：%s" % str(e)[:120]
+
+
+def fill_choices_sheet(ws, data, reason=""):
+    """写「名称候选」工作表：把"要填名字"的那几个参数的候选值列出来。
+
+    为什么要有它（2026/10/13）：表格里有一类参数是**数据里的名字**（课程名 / 案例名 / 活动名），
+    必须一字不差，填错要等真机跑起来才报"找不到"。对不写代码的人来说那只能靠猜。
+    这里把测试库里的候选值抄一份进来，可以复制粘贴。
+
+    连不上库时**不报错**：写一行原因进去（"这次没连上库"），刷新表格这件事不能被它挡住。
+    """
+    from openpyxl.styles import Font
+
+    if ws.max_row:
+        ws.delete_rows(1, ws.max_row)
+    ws.append(["类型", "名字", "备注"])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+
+    if not data:
+        ws.append(["(没取到)", "", reason or "这次没连上测试库，跳过候选值（连上后重跑 python tools/export_cases.py --dropdown）"])
+        ws.column_dimensions["A"].width = 14
+        ws.column_dimensions["B"].width = 40
+        ws.column_dimensions["C"].width = 80
+        ws.freeze_panes = "A2"
+        return 0
+
+    n = 0
+    for c in data.get("课程", []):
+        note = "买没买=%s；课时数=%s" % (c.get("bought") or "-", c.get("lessons"))
+        ws.append(["课程", c["name"], note])
+        n += 1
+    for a in data.get("答题活动", []):
+        ws.append(["答题活动", a["name"], "id=%s" % a["id"]])
+        n += 1
+    for c in data.get("案例", []):
+        ws.append(["案例", c["name"], ""])
+        n += 1
+    for note in data.get("notes", []):
+        ws.append(["（说明）", "", plain_text(note)])
+
+    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["B"].width = 42
+    ws.column_dimensions["C"].width = 80
+    ws.freeze_panes = "A2"
+    return n
+
+
 def merge_case_cells(ws):
     """把同一条用例的「用例编号 / 用例名称」两列**纵向并成一格**（webzdh 那种「一案一块」的排版）。
 
@@ -653,19 +745,30 @@ def fill_actions_sheet(ws):
     # 顺序 = 按用途分的那 6 类（见 ACTION_GROUPS）：下拉框里连着出现的都是同一类东西
     group_of = {n: t for t, _note, names in ACTION_GROUPS for n in names}
     for a in ordered_actions():
+        desc = plain_text(a["desc"])
+        if a["name"] in NAME_PARAM_ACTIONS and a.get("p1"):
+            desc += "（「%s」填数据里的名字：候选值见「%s」工作表，可直接复制）" % (a["p1"], SHEET_CHOICES)
+        # 参数的可选值直接写在参数列里：填表的人不用再翻别的文档（以前只有下拉框里能看到）
+        choices = ACTION_PARAM_CHOICES.get(a["name"], {})
+        p1 = a["p1"]
+        p2 = a["p2"]
+        if p1 and choices.get("p1"):
+            p1 = "%s（只能填：%s）" % (p1, " / ".join(choices["p1"]))
+        if p2 and choices.get("p2"):
+            p2 = "%s（只能填：%s）" % (p2, " / ".join(choices["p2"]))
         ws.append(
-            [a["name"], a["p1"], a["p2"], a.get("risk", "不会"), a["desc"],
+            [a["name"], p1, p2, plain_text(a.get("risk", "不会")), desc,
              group_of.get(a["name"], "（还没归类）")]
         )
     for cell in ws[1]:
         cell.font = Font(bold=True)
-    for col, width in zip("ABCDEF", (20, 12, 12, 26, 78, 26)):
+    for col, width in zip("ABCDEF", (20, 26, 20, 26, 78, 26)):
         ws.column_dimensions[col].width = width
     ws.freeze_panes = "A2"
 
 
 def build_template(path):
-    """生成模板（3 个工作表：用例 / 动作清单 / 填写说明）"""
+    """生成模板（4 个工作表：用例 / 动作清单 / 填写说明 / 名称候选）"""
     from openpyxl import Workbook
     from openpyxl.styles import Font
 
@@ -687,9 +790,14 @@ def build_template(path):
     wa = wb.create_sheet(SHEET_ACTIONS)
     fill_actions_sheet(wa)
 
+    # 「名称候选」先建一张空壳：真正的候选值要连测试库取（--dropdown 会填）。
+    # 这里刻意**不连库** —— 生成模板这件事必须能离线做。
+    wc = wb.create_sheet(SHEET_CHOICES)
+    fill_choices_sheet(wc, None, "还没取过候选值：连上测试库后跑 python tools/export_cases.py --dropdown")
+
     wh = wb.create_sheet(SHEET_HELP)
     for line in HELP_LINES:
-        wh.append([line])
+        wh.append([plain_text(line)])  # 工作表里不显示 markdown 记号（跟「动作清单」一个处理）
     wh.column_dimensions["A"].width = 100
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1038,6 +1146,11 @@ def main(argv=None):
         if SHEET_ACTIONS not in wb.sheetnames:
             wb.create_sheet(SHEET_ACTIONS)
         fill_actions_sheet(wb[SHEET_ACTIONS])  # 清单跟着最新动作走
+        # 「名称候选」：要填名字的那几个参数，候选值从测试库抄一份进来（连不上库就写清原因）
+        if SHEET_CHOICES not in wb.sheetnames:
+            wb.create_sheet(SHEET_CHOICES)
+        choices, why = fetch_name_choices()
+        n_choices = fill_choices_sheet(wb[SHEET_CHOICES], choices, why)
         ws = wb[SHEET_DATA]
         # 先清空旧的校验规则，重复执行不会叠加（叠加会让 Excel 弹两次提示）
         ws.data_validations.dataValidation = []
@@ -1052,6 +1165,12 @@ def main(argv=None):
         print("已刷新用例表：%s" % xlsx)
         print("  · 「动作清单」工作表已更新为最新的 %d 个动作" % len(ACTIONS))
         print("  · 动作列（D）下拉框已重建，选项来自「动作清单」")
+        if n_choices:
+            print("  · 「%s」工作表已更新：%d 条候选名字（课程 / 答题活动 / 案例，从测试库取的）"
+                  % (SHEET_CHOICES, n_choices))
+        else:
+            print("  · 「%s」工作表：这次没取到候选名字（原因写在工作表里）—— 只影响参考，不影响跑用例"
+                  % SHEET_CHOICES)
         print("  · 步骤序号列（C）只接受 1、2、3… 这样的正整数")
         print("  · 同一条用例的「用例编号 / 用例名称」已并成一格（%d 块）" % merged)
         print("  · 你已经填好的内容一行都没动（只是把重复的编号并起来了）")
