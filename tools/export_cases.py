@@ -688,6 +688,29 @@ def add_dropdowns(ws, last_row=1000):
     dv_seq.add("C2:C%d" % last_row)
 
 
+def refresh_signature(wb):
+    """把「刷新表格」会写到的东西，压成一个可比对的字符串。
+
+    为什么要它：`--dropdown` 每次都 `wb.save()` 重写整个 xlsx —— 哪怕内容一点没变，
+    文件字节也会变（openpyxl 重新序列化 + zip 时间戳），于是 git 里多出一堆"没有实际改动"的二进制 diff。
+    真踩到（2026/10/13）：只是想确认下拉框刷没刷，结果工作区又脏了一次。
+    现在先记下"该写的东西"长什么样，写完再比一次：一样就不动文件。
+    """
+    parts = []
+    for name in (SHEET_ACTIONS, SHEET_CHOICES):
+        if name in wb.sheetnames:
+            ws = wb[name]
+            parts.append("== %s ==" % name)
+            for row in ws.iter_rows(values_only=True):
+                parts.append("|".join("" if v is None else str(v) for v in row))
+    ws = wb[SHEET_DATA]
+    parts.append("== %s merges ==" % SHEET_DATA)
+    parts.extend(sorted(str(r) for r in ws.merged_cells.ranges))
+    parts.append("== %s validations ==" % SHEET_DATA)
+    parts.extend(sorted("%s %s %s" % (d.sqref, d.type, d.formula1) for d in ws.data_validations.dataValidation))
+    return "\n".join(parts)
+
+
 def fetch_name_choices(timeout=30):
     """跑 tools/table_choices.py 取候选名字（**只读**）。@returns (data|None, 为什么没取到)
 
@@ -1249,6 +1272,8 @@ def main(argv=None):
             return 1
         if SHEET_ACTIONS not in wb.sheetnames:
             wb.create_sheet(SHEET_ACTIONS)
+        # 记下"刷新前"的样子：如果刷完发现什么都没变，就不重写文件（免得 git 多出无意义的二进制 diff）
+        before = refresh_signature(wb)
         fill_actions_sheet(wb[SHEET_ACTIONS])  # 清单跟着最新动作走
         # 「名称候选」：要填名字的那几个参数，候选值从测试库抄一份进来（连不上库就写清原因）
         if SHEET_CHOICES not in wb.sheetnames:
@@ -1260,13 +1285,17 @@ def main(argv=None):
         ws.data_validations.dataValidation = []
         add_dropdowns(ws)
         merged = merge_case_cells(ws)  # 同一条用例的编号/名称并回一格（新加的行会跟着重新并）
-        try:
-            wb.save(xlsx)
-        except PermissionError:
-            print("存不进去：这份表正被 Excel/WPS 打开着（%s）。" % xlsx)
-            print("  先把表格关掉，再跑一次：python tools/export_cases.py --dropdown")
-            return 1
+        changed = refresh_signature(wb) != before
+        if changed:
+            try:
+                wb.save(xlsx)
+            except PermissionError:
+                print("存不进去：这份表正被 Excel/WPS 打开着（%s）。" % xlsx)
+                print("  先把表格关掉，再跑一次：python tools/export_cases.py --dropdown")
+                return 1
         print("已刷新用例表：%s" % xlsx)
+        if not changed:
+            print("  · 这次其实**没有任何变化**，所以没有重写文件（不至于让 git 多出一个空 diff）")
         print("  · 「动作清单」工作表已更新为最新的 %d 个动作" % len(ACTIONS))
         print("  · 动作列（D）下拉框已重建，选项来自「动作清单」")
         if n_choices:

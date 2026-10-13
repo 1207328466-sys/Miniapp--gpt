@@ -288,6 +288,46 @@ def examples_are_copyable():
 examples_are_copyable()
 
 
+def refresh_is_idempotent():
+    """刷新两次：**第二次不许改文件**。
+
+    为什么盯它：`--dropdown` 每次都 `wb.save()` 重写整个 xlsx，哪怕内容一点没变 ——
+    文件字节也会变，于是 git 里不停冒出"没有实际改动"的二进制 diff（真踩到：想确认下拉框刷没刷，
+    结果工作区又脏了一次）。现在刷完先比对，没变就不写；这条自检把那个行为钉住。
+    """
+    global passed
+    import hashlib
+    from pathlib import Path
+
+    xlsx = os.path.join(TMP, "refresh_idempotent.xlsx")
+    jpath = os.path.join(TMP, "refresh_idempotent.json")
+    m.build_template(Path(xlsx))
+    digest = lambda p: hashlib.md5(open(p, "rb").read()).hexdigest()
+
+    # 让"候选名字"取不到（指向不存在的配置）——自检不该依赖测试库；取不到会优雅降级
+    backup = os.environ.get("UITEST_DB_CONFIG")
+    os.environ["UITEST_DB_CONFIG"] = os.path.join(TMP, "no_such_db.yaml")
+    try:
+        m.main(["--dropdown", "--xlsx", xlsx, "--json", jpath])  # 第一次：模板 → 补候选值，会写
+        h1 = digest(xlsx)
+        m.main(["--dropdown", "--xlsx", xlsx, "--json", jpath])  # 第二次：什么都没变，不该写
+        h2 = digest(xlsx)
+    finally:
+        if backup is None:
+            os.environ.pop("UITEST_DB_CONFIG", None)
+        else:
+            os.environ["UITEST_DB_CONFIG"] = backup
+
+    if h1 != h2:
+        failed.append("刷新幂等性：第二次刷新也重写了文件（会造成无意义的 git diff）")
+        return
+    passed += 1
+    print("OK   刷新幂等：内容没变就不重写文件（刷两次，第二次文件字节不变）")
+
+
+refresh_is_idempotent()
+
+
 def merge_keeps_content():
     """并格**不能改内容**：并格前后导出来的「用例编号 + 用例名称 + 步骤数」必须一模一样。
 
