@@ -1,8 +1,11 @@
 {
-  "generated_at": "2026-10-13 10:19:10",
+  "generated_at": "2026-10-13 15:49:14",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
-  "warnings": [],
+  "warnings": [
+    "用例「测试」里一个「检查…」动作都没有 —— 只有操作没有检查的用例测不出问题，建议补一条断言（参考 README §五 的反例说明）",
+    "用例「测试」的第一步是「点文字」，不是「回到首页」—— 起点不先摆正的话，上一条用例停在哪儿会带进来（筛选 tab、二级页都可能有残留）"
+  ],
   "actions": [
     {
       "name": "回到首页",
@@ -1259,6 +1262,95 @@
           "param2": "",
           "note": "把手机交还给下一条用例",
           "num": 4
+        }
+      ]
+    },
+    {
+      "id": "学习中心_003",
+      "name": "学习中心顶部有三个 tab",
+      "steps": [
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 1
+        },
+        {
+          "action": "点文字",
+          "param1": "学习中心",
+          "param2": "",
+          "note": "",
+          "num": 2
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "课程",
+          "param2": "",
+          "note": "",
+          "num": 3
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "专栏",
+          "param2": "",
+          "note": "",
+          "num": 4
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "压铸百科",
+          "param2": "",
+          "note": "",
+          "num": 5
+        },
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 6
+        }
+      ]
+    },
+    {
+      "id": "测试",
+      "name": "测试",
+      "steps": [
+        {
+          "action": "点文字",
+          "param1": "我的",
+          "param2": "",
+          "note": "",
+          "num": 1
+        },
+        {
+          "action": "点文字",
+          "param1": "积分商城",
+          "param2": "",
+          "note": "",
+          "num": 2
+        },
+        {
+          "action": "点文字",
+          "param1": "积分获取",
+          "param2": "",
+          "note": "",
+          "num": 3
+        },
+        {
+          "action": "点文字",
+          "param1": "积分明细",
+          "param2": "",
+          "note": "",
+          "num": 4
+        },
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 5
         }
       ]
     }

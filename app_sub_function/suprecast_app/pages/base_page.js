@@ -231,6 +231,29 @@ async function switchToBottomTab(page, tabText, { isTarget, timeout = 15000, ret
 }
 
 /**
+ * 「从二级页退到一级页」的退出判定 —— **纯函数**，只决定下一步做什么。
+ *
+ * 把判定抽出来单独一个函数，是因为这里踩过**差一次检查**的 bug（2026/10/13）：
+ * 原来的循环写成"最多返回 3 次"，而**第 3 次返回之后没有再看一眼**就直接报失败 ——
+ * 于是"正好需要退 3 层"的用例（首页 → 我的 → 积分商城 → 积分明细）必红：
+ * 第 3 次返回后人已经站在有底部 tab 栏的「我的」页上，框架却放弃了。
+ * 真机证据：owner 的用例在「回到首页」这一步失败，而截图里底部 tab 栏清清楚楚就在。
+ *
+ * 抽成纯函数之后，判定逻辑能被离线自检钉住（test_case/diagnostic/selftest_tabpage_exit.js）。
+ *
+ * @param {{hasTabBar: boolean, backsDone: number, maxBacks: number}} p
+ * @returns {"done" | "back" | "give_up"}
+ *   done    已经有底部 tab 栏了（一级页），收工
+ *   back    还没有，而且还能再退一次
+ *   give_up 退够了次数仍然没有 —— 这时才该报错
+ */
+function exitDecision({ hasTabBar, backsDone, maxBacks }) {
+  if (hasTabBar) return "done";
+  if (backsDone < maxBacks) return "back";
+  return "give_up";
+}
+
+/**
  * 确保停在"有底部 tab 栏的一级页面"上。
  *
  * 【为什么需要它 —— 这条是真机验证时踩出来的】
@@ -248,16 +271,25 @@ async function switchToBottomTab(page, tabText, { isTarget, timeout = 15000, ret
  * @returns {Promise<import('playwright').Page>} 带底部 tab 栏的页面
  */
 async function ensureOnTabPage(page, { maxAttempts = 3 } = {}) {
-  for (let i = 1; i <= maxAttempts; i++) {
+  let backsDone = 0;
+  while (true) {
     const fg = await foreground(page);
-    if (await withBottomTabBar(fg)) return fg;
-    console.log(`  [自愈] 当前页没有底部 tab 栏（应处在二级页），点返回退出（第 ${i}/${maxAttempts} 次）`);
+    const hasTabBar = !!(await withBottomTabBar(fg));
+    const action = exitDecision({ hasTabBar, backsDone, maxBacks: maxAttempts });
+    if (action === "done") return fg;
+    if (action === "give_up") break;
+    console.log(
+      `  [自愈] 当前页没有底部 tab 栏（应处在二级页），点返回退出（第 ${backsDone + 1}/${maxAttempts} 次）`
+    );
     page = await goBack(fg, { timeout: 8000 });
+    backsDone++;
   }
   const fg = await foreground(page);
   throw new Error(
     `尝试 ${maxAttempts} 次返回后仍未出现底部 tab 栏，无法进入一级页面。` +
-      `当前页面前 200 字:\n  ${JSON.stringify((await pageText(fg)).slice(0, 200))}`
+      `当前页面前 200 字:\n  ${JSON.stringify((await pageText(fg)).slice(0, 200))}\n` +
+      `  提示：如果屏幕上**明明看得到**底部 tab 栏，那是"前台页认错了页"（多 webview 时的老毛病），` +
+      `请把这一步的截图和日志一起发出来 —— 不要当成用例写错了。`
   );
 }
 
@@ -308,6 +340,7 @@ module.exports = {
   BOTTOM_TAB_TEXTS,
   withBottomTabBar,
   ensureOnTabPage,
+  exitDecision,
   switchToBottomTab,
   inputValue,
 };
