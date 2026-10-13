@@ -141,9 +141,8 @@ python -m pytest -v
 
 - **截图**：`report/photo_app/{用例文件}_{用例函数}/_{步骤名}_{时间戳}.png`
 - **Allure 报告**：`run.py` 生成 `report/allure-report/index.html`，按
-  `feature -> story -> 步骤` 分层。**每一步都贴一张压缩截图**（2026/10/13 起），
-  失败步骤**再补一张原图**（看细节用）；不想让报告变大就设 `UITEST_ALLURE_SHOTS=failed`
-  只贴失败步骤（`none` = 都不贴）
+  `feature -> story -> 步骤` 分层。**失败步骤带原图截图**（默认）；要逐步复盘时设
+  `UITEST_ALLURE_SHOTS=all` 让每一步都带一张压缩图（`none` = 都不贴）
 - **日志文件**：`report/log/pytest.log`
 
 ---
@@ -513,19 +512,21 @@ report/photo_app/test_example_anonymous/_focusSearchInput_1009_173114.png
 
 「调用者」信息由 `getCaller()` 从 `Error().stack`（JS 的调用栈）里取第 4 帧获得，等价于 Python 的 `inspect.stack()[1]`。
 
-### 报告里的截图（2026/10/13 起）
+### 报告里的截图（2026/10/13）
 
-Allure 报告里**每一步都带一张截图**，失败那一步再额外带一张原图。三个档位用环境变量切：
+**默认：只有失败步骤带截图（原图）** —— 报告的重点是"哪条红了、为什么"。
+需要逐步复盘（比如查"到底哪一步开始跟预期不一样"）时，临时打开 all 档：
 
 ```powershell
-$env:UITEST_ALLURE_SHOTS="all"       # 默认：每步一张压缩图（宽 700 的 JPEG，约 70KB/张）
-$env:UITEST_ALLURE_SHOTS="failed"    # 只贴失败步骤（报告最小；但全绿时会一张图都看不到）
+$env:UITEST_ALLURE_SHOTS="all"       # 每一步都带一张压缩图 + 失败那步再补原图
+$env:UITEST_ALLURE_SHOTS="failed"    # 默认：只贴失败步骤的原图
 $env:UITEST_ALLURE_SHOTS="none"      # 都不贴
 ```
 
-为什么默认贴压缩版而不是原图：一张原图 1216×2640、中位 467KB，一次全量约 150 张 ≈ **70MB**
-（报告会大到打不开）；压到宽 700 之后只剩 **约 19%**，全量十几 MB，复盘时每步都看得见。
-这条有离线自检盯着（`scripts/selftest-allure-shots.py`），压不动或压出坏图会当场报红。
+为什么 all 档要先压缩：一张原图 1216×2640、中位 467KB，一次全量约 150 张 ≈ **70MB**
+（报告会大到打不开）；压到宽 700 之后只剩 **约 19%**，全量十几 MB。
+这条有离线自检盯着（`scripts/selftest-allure-shots.py`）：**默认必须是 failed**（免得哪天被顺手
+改成 all、报告又肿起来），all 档用的压缩也确实有效（压完变小、且还是能打开的图）。
 
 ### 时间戳格式
 

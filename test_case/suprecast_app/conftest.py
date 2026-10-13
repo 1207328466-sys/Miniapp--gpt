@@ -171,17 +171,20 @@ def _print_step_summary(entries):
             emit(f"  上下文: {json.dumps(summary['context'], ensure_ascii=False)}")
 
 
-# Allure 里截图怎么贴（2026/10/13）：默认**每一步都贴一张压缩版**，失败步骤再补一张原图。
+# Allure 里截图怎么贴（2026/10/13）。
 #
-# 为什么不是"干脆每步都贴原图"：一张原图是 1216×2640、中位 467KB，一次全量约 150 张 ≈ 70MB，
-# 报告会膨胀到打不开；而旧版只贴失败步骤 —— 全绿的一次运行里，报告里**一张图都没有**，
-# 想复盘"这一步屏幕上到底是什么样"就没得看（这正是 owner 提的问题）。
-# 折中：压缩到宽 700 的 JPEG（约 60~90KB）每步都贴，失败那步再额外贴原图存细节。
-# 开关用环境变量（跟写开关一个路子，跑的人决定）：
-#     UITEST_ALLURE_SHOTS=all     每步都贴（默认）
-#     UITEST_ALLURE_SHOTS=failed  只贴失败步骤（旧行为，报告最小）
-#     UITEST_ALLURE_SHOTS=none    都不贴
-SHOT_MODE = os.environ.get("UITEST_ALLURE_SHOTS", "all").strip().lower()
+# **默认只贴失败步骤**（owner 2026/10/13 拍板："算了不要每一步都贴吧"）。
+# 每步都贴过一次：压到宽 700 的 JPEG 后约 70KB/张、全量十几 MB，技术上跑得动；
+# 但报告的重点是"哪条红了、为什么"，几百张绿步骤的图只会让人翻不到要看的。
+# 所以默认回到最小，需要复盘每一步时再临时打开 all。
+#
+#      UITEST_ALLURE_SHOTS=failed  只贴失败步骤的原图（默认）
+#      UITEST_ALLURE_SHOTS=all     每步一张压缩图 + 失败那步补原图（复盘用）
+#      UITEST_ALLURE_SHOTS=none    都不贴
+#
+# 失败时贴的是**原图**（1216×2640，看清细节比省空间重要）；只有 all 档才压缩 ——
+# 一张原图中位 467KB，一次全量约 150 张 ≈ 70MB，那个量级必须压。
+SHOT_MODE = os.environ.get("UITEST_ALLURE_SHOTS", "failed").strip().lower()
 SHOT_MAX_WIDTH = 700
 SHOT_JPEG_QUALITY = 72
 
@@ -231,14 +234,15 @@ def _attach_to_allure(entries, case_name):
                 continue
             if SHOT_MODE == "failed" and not failed:
                 continue
-            small = _shrink_for_report(shot)
-            if small is not None:
-                allure.attach(
-                    small,
-                    name="截图（压缩版 %s）" % os.path.basename(shot),
-                    attachment_type=allure.attachment_type.JPG,
-                )
-            # 失败那步再补一张原图：报告里看得清细节，复盘时不用去翻磁盘
+            # all 档：每步一张压缩版（只有失败那步再补原图，看细节）
+            if SHOT_MODE == "all":
+                small = _shrink_for_report(shot)
+                if small is not None:
+                    allure.attach(
+                        small,
+                        name="截图（压缩版 %s）" % os.path.basename(shot),
+                        attachment_type=allure.attachment_type.JPG,
+                    )
             if failed:
                 allure.attach.file(
                     shot,
