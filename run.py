@@ -11,6 +11,7 @@
     python run.py -k 专栏          # 其余参数原样透传给 pytest
     python run.py suprecast_app/test_example.js
     python run.py -k 活动入口_001   # 「填表就能写用例」：只跑 cases/用例表.xlsx 里的这一条
+    python run.py --env prod      # 这次改用「生产」环境跑（默认取 config/env.yaml 的 current）
 """
 
 import os
@@ -203,6 +204,63 @@ def preflight_foreground(argv):
     return False
 
 
+def resolve_environment(argv):
+    """把本次要跑的**环境**定下来，并把该带的参数接上（2026/10/13）。
+
+    为什么放在最前面：测试环境和生产环境是**两个不同的小程序**，先在控制台把
+    「本次环境：…（appid …）」打出来，事后才不会出现"翻记录才发现跑错环境了"。
+
+    它做三件事：
+      1. 吃掉 `--env 名字` 这个参数（不然 pytest 会报"不认识的参数"）；
+      2. 按环境把 `UITEST_APP_ID` 塞进环境变量 —— 这一条**接通了早就写好但从没通电的 appid 安全阀**
+         （候选页按期望 appid 硬过滤；在这之前没人设过它，等于每次跑都不校验）；
+      3. 生产环境**强制清掉写开关**（不是提醒，是清掉），并且 appid 没填时**直接停下**。
+
+    @returns (要透传给 pytest 的 argv, 能不能继续)
+    """
+    sys.path.insert(0, str(ROOT / "tools"))
+    import use_env as envmod
+
+    # 1) 挑出 --env / --env=xxx，其余原样留给 pytest
+    rest, name = [], None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--env":
+            if i + 1 >= len(argv):
+                print("\n[!] --env 后面要跟环境名，例如：python run.py --env prod")
+                return rest, False
+            name, i = argv[i + 1], i + 2
+            continue
+        if arg.startswith("--env="):
+            name, i = arg.split("=", 1)[1], i + 1
+            continue
+        rest.append(arg)
+        i += 1
+
+    # 2) 读档案。**档案本身读不了**（文件被删/写坏）不算致命：提示一下、按老样子跑，
+    #    免得一个配置文件把人彻底挡在门外；但**选了某个环境而它不合法**（比如生产没 appid）必须停。
+    try:
+        data = envmod.load()
+    except envmod.EnvError as e:
+        print(f"\n[提示] 环境档案没读到，这次不设置环境（appid 也不会校验）：{e}")
+        return rest, True
+
+    if name is None:
+        name = data.get("current", "")
+    prof, err = envmod.resolve(data, name)
+    if err:
+        print("\n[!] " + err)
+        print("    看有哪些环境：python tools/use_env.py")
+        return rest, False
+
+    done = envmod.apply(prof)
+    print(envmod.banner(prof))
+    if done.get("UITEST_ALLOW_SUBMIT") == "(已清掉)":
+        print("    （这套环境本来就禁止写数据：你设的 UITEST_ALLOW_SUBMIT 已被清掉）")
+    return rest, True
+
+
 def preflight_device(argv):
     """开跑前先确认**手机上连着设备** —— 否则 20 多条用例会一条条失败，白等十几分钟。
 
@@ -249,6 +307,11 @@ def preflight_device(argv):
 def main(argv):
     if not TEST_CASE.is_dir():
         print(f"找不到用例目录：{TEST_CASE}")
+        return 2
+
+    # 先把「这次跑哪个环境」定下来（生产没填 appid 会在这里停下，见函数内说明）
+    argv, env_ok = resolve_environment(argv)
+    if not env_ok:
         return 2
 
     if not preflight():

@@ -19,6 +19,8 @@
   12. `tools/calibrate_android_doc.py --check`  android.js 逐行详解里的行号引用是否漂移
   13. `tools/build_actions_doc.py --check`      docs/动作清单-分类.md 与 ACTIONS 是否一致
       （这份文档是生成的：手册曾经写着「47 个动作」却只列了 44 个，就是靠它挡住）
+  14. `scripts/selftest-env-profile.py`         环境档案（config/env.yaml）的规则：
+      生产没填 appid 必须拒绝开跑、只读环境必须清掉写开关（拿手机之前就该拦下来的事）
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -121,6 +123,7 @@ def main():
         ["node", os.path.join("test_case", "diagnostic", "selftest_course_zero_lesson_match.js")],
     )
     run("selftest-run-preflight（设备预检解析）", [sys.executable, os.path.join("scripts", "selftest-run-preflight.py")])
+    run("selftest-env-profile（环境档案规则）", [sys.executable, os.path.join("scripts", "selftest-env-profile.py")])
     run("check-doc-index（文档索引漂移）", [sys.executable, os.path.join("scripts", "check-doc-index.py")])
     run("check-safety（安全不变式）", [sys.executable, os.path.join("scripts", "check-safety.py")])
     run("check-invariants（框架不变式）", [sys.executable, os.path.join("scripts", "check-invariants.py")])
