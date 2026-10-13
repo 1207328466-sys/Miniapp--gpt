@@ -21,6 +21,7 @@ const TOOLS = {
   caseCopy: path.join(__dirname, "..", "tools", "case_copy_reset.py"),
   courseList: path.join(__dirname, "..", "tools", "course_list_report.py"),
   quizScore: path.join(__dirname, "..", "tools", "quiz_score_report.py"),
+  quizAnswerKey: path.join(__dirname, "..", "tools", "quiz_answer_key_report.py"),
 };
 
 const CLEANUP_TOOL = TOOLS.cleanup;

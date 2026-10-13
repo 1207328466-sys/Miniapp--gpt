@@ -21,6 +21,8 @@
       （这份文档是生成的：手册曾经写着「47 个动作」却只列了 44 个，就是靠它挡住）
   14. `scripts/selftest-env-profile.py`         环境档案（config/env.yaml）的规则：
       生产没填 appid 必须拒绝开跑、只读环境必须清掉写开关（拿手机之前就该拦下来的事）
+  15. `scripts/selftest-quiz-answer-key.py`     判分口径复算（需求 713594985）：
+      **多选必须集合完全一致**才算对 —— 少选一个、多选一个都得判错
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -124,6 +126,7 @@ def main():
     )
     run("selftest-run-preflight（设备预检解析）", [sys.executable, os.path.join("scripts", "selftest-run-preflight.py")])
     run("selftest-env-profile（环境档案规则）", [sys.executable, os.path.join("scripts", "selftest-env-profile.py")])
+    run("selftest-quiz-answer-key（判分口径复算）", [sys.executable, os.path.join("scripts", "selftest-quiz-answer-key.py")])
     run("check-doc-index（文档索引漂移）", [sys.executable, os.path.join("scripts", "check-doc-index.py")])
     run("check-safety（安全不变式）", [sys.executable, os.path.join("scripts", "check-safety.py")])
     run("check-invariants（框架不变式）", [sys.executable, os.path.join("scripts", "check-invariants.py")])

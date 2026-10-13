@@ -233,6 +233,37 @@ async function assertScoreAccounting(page) {
     problems.push(`发放超过了应得：应得 ${kv.should}、实得 ${kv.actual}（应得是上限）`);
   }
 
+  // ①b 判分口径：拿答案键独立复算一遍，跟库里的答对数/应得对上
+  //     （这条能钉住"多选：所选集合必须与答案集合完全一致" —— 少选、多选都算错）
+  //     复算的前提是"每题点了前 1 个选项"（就是 quizPage.answerAllQuestions 的选法）；
+  //     哪天改了选法，这条会红 —— 那正是要人来看一眼的地方。
+  const keyOut = runTool("quizAnswerKey", ["--activity-name", activityTitle]);
+  const keyLine = (keyOut.match(/^\[ANSWERKEY\].*$/m) || [""])[0];
+  const key = {};
+  for (const part of keyLine.replace("[ANSWERKEY] ", "").split(/\s+/)) {
+    const i = part.indexOf("=");
+    if (i > 0) key[part.slice(0, i)] = part.slice(i + 1);
+  }
+  if (!keyLine) {
+    console.log("  [说明] 读不到答案键（工具没输出 [ANSWERKEY] 行），跳过判分复算这条子检查");
+  } else {
+    if (Number(key.expected_correct) !== n("correct")) {
+      problems.push(
+        `判分对不上（答案键复算）：按「每题选前 1 个选项 + 多选须集合完全一致」应当是 ` +
+          `${key.expected_correct} 题对，但库里 correct_count=${kv.correct}`
+      );
+    }
+    if (Number(key.expected_should) !== n("should")) {
+      problems.push(
+        `应得对不上（答案键复算）：按答案键应当是 ${key.expected_should} 分，但库里 should_point=${kv.should}`
+      );
+    }
+    console.log(
+      `  答案键复算：${key.questions} 题（其中多选 ${key.multi} 题）→ 应当答对 ${key.expected_correct} 题、` +
+        `应得 ${key.expected_should} 分；库里 ${kv.correct} 题 / ${kv.should} 分，一致`
+    );
+  }
+
   // ② 到账一致：余额增量必须等于这一笔的实得
   if (!Number.isFinite(gained) || gained !== n("actual")) {
     problems.push(
