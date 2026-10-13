@@ -17,6 +17,8 @@
   11. `scripts/check-invariants.py`     框架自身完整性（11 项：动作↔实现、中文名、退出码兜底、安全阀、
       文档数字、写链路带复位、README 里"照抄即可"的代码引用的函数是否真实存在）
   12. `tools/calibrate_android_doc.py --check`  android.js 逐行详解里的行号引用是否漂移
+  13. `tools/build_actions_doc.py --check`      docs/动作清单-分类.md 与 ACTIONS 是否一致
+      （这份文档是生成的：手册曾经写着「47 个动作」却只列了 44 个，就是靠它挡住）
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -125,6 +127,10 @@ def main():
     run(
         "calibrate_android_doc --check（逐行详解的行号）",
         [sys.executable, os.path.join("tools", "calibrate_android_doc.py"), "--check"],
+    )
+    run(
+        "build_actions_doc --check（动作清单文档是否最新）",
+        [sys.executable, os.path.join("tools", "build_actions_doc.py"), "--check"],
     )
 
     print("\n" + "=" * 60)
