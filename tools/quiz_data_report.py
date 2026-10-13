@@ -69,15 +69,33 @@ def load_conn(config_path):
 
     cfg = read_config(config_path)
     print("连接：%s@%s/%s（密码不回显）" % (cfg["user"], cfg["host"], cfg["database"]))
-    return pymysql.connect(
-        host=cfg["host"],
-        port=cfg["port"],
-        user=cfg["user"],
-        password=cfg["password"],
-        database=cfg["database"],
-        charset="utf8mb4",
-        connect_timeout=8,
-    )
+    try:
+        return pymysql.connect(
+            host=cfg["host"],
+            port=cfg["port"],
+            user=cfg["user"],
+            password=cfg["password"],
+            database=cfg["database"],
+            charset="utf8mb4",
+            connect_timeout=8,
+        )
+    except pymysql.err.OperationalError as e:
+        # 【为什么要把报错翻译成人话】2026/10/13 全量跑里 `课程列表_001` 红了一条，
+        # 报错尾巴是 pymysql 的 traceback（`Can't connect ... (timed out)`）——
+        # 看的人第一反应是"框架坏了"，其实是**这台机器连不到测试库**。
+        # 真正有用的信息是"接下来该查什么"，所以这里直接说清。
+        print()
+        print("连不上测试库：%s:%s（库 %s）" % (cfg["host"], cfg["port"], cfg["database"]))
+        print("  常见原因，按这个顺序查：")
+        print("    ① 不在公司网络 / VPN 没连（测试库只对特定网络开放）；")
+        print("    ② 这台机器的出口 IP 不在 RDS 白名单里（今天能连、明天不能，多半是这个）；")
+        print("    ③ 测试库临时不可用。")
+        print("  自检小技巧：**ping 得通、但 3306 端口连不上** -> 基本就是白名单/防火墙问题")
+        print("     （ping 走 ICMP，跟 3306 端口通不通无关）。")
+        print("  原始报错：%s" % str(e).splitlines()[0])
+        print("  影响范围：依赖数据库的用例会红（答题提交记录/复位、案例复制复位、课程 0 课时对账）；")
+        print("            纯界面用例不受影响，可以先跑它们。")
+        sys.exit(1)
 
 
 OVERVIEW_SQL = (

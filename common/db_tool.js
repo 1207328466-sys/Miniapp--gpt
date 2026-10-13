@@ -25,6 +25,31 @@ const TOOLS = {
 const CLEANUP_TOOL = TOOLS.cleanup;
 
 /**
+ * 数据库工具在"连不上测试库"时会打这句（见 tools/quiz_data_report.py 的 load_conn）。
+ *
+ * 为什么要认这句话：**连不上库是环境问题，不是产品/框架 bug** ——
+ * 它应该记「跳过并说明原因」，而不是记一条红。
+ * 记红的话，报告里就长期躺着一条假失败，久而久之没人再看红（本仓最忌讳的"报告说谎"）。
+ */
+const DB_UNREACHABLE_MARK = "连不上测试库";
+
+/** 输出里是不是"连不上库"（调用方自己判读时用） */
+function dbUnreachable(out) {
+  return String(out || "").includes(DB_UNREACHABLE_MARK);
+}
+
+/** 造一个"前置条件不满足"的错误：连不上库 -> 这条检查本次跳过 */
+function dbUnreachableError(what) {
+  const e = new Error(
+    `${what}依赖测试数据库，但**现在连不上库**（网络/VPN/白名单问题，不是代码问题）。\n` +
+      `  本次记「跳过」：跳过≠通过 —— 等能连上库时再跑一次这条。\n` +
+      `  自检：ping 得通、3306 端口连不上，基本就是白名单/防火墙。`
+  );
+  e.preconditionNotMet = true;
+  return e;
+}
+
+/**
  * 跑 `tools/quiz_data_cleanup.py`。
  *
  * @param {string[]} args 传给脚本的参数，例如 ["--activity-name", "Z-B4-答题角标", "--yes"]
@@ -35,11 +60,14 @@ const CLEANUP_TOOL = TOOLS.cleanup;
 function runTool(which, args, { expectOk = true } = {}) {
   const script = TOOLS[which];
   if (!script) throw new Error(`未知的数据库工具：${which}（可选：${Object.keys(TOOLS).join(" / ")}）`);
+  // 允许用环境变量换一份数据库配置：验证"库不可用时会不会好好跳过"就靠它 ——
+  // 指向一个连不上的库即可，**不用动真实的 config/db.local.yaml**。
+  const extra = process.env.UITEST_DB_CONFIG ? ["--config", process.env.UITEST_DB_CONFIG] : [];
   // 用 UITEST_PYTHON（conftest 会把它设成"当前这个 Python 解释器"），
   // 免得在多 Python/虚拟环境的机器上调到另一个没装 pymysql 的解释器上
   const py = process.env.UITEST_PYTHON || "python";
   try {
-    const out = execFileSync(py, [script, ...args], {
+    const out = execFileSync(py, [script, ...args, ...extra], {
       encoding: "utf-8",
       env: { ...process.env, PYTHONIOENCODING: "utf-8" },
     });
@@ -48,6 +76,8 @@ function runTool(which, args, { expectOk = true } = {}) {
   } catch (e) {
     const out = String((e.stdout || "") + (e.stderr || ""));
     if (out.trim()) console.log(out.trim());
+    // 「连不上库」是环境问题 -> 记跳过并说明原因（见上面 DB_UNREACHABLE_MARK 的说明）
+    if (dbUnreachable(out)) throw dbUnreachableError(`数据库工具「${path.basename(script)}」`);
     if (!expectOk) return out;
     throw new Error(
       `数据库工具执行失败（${path.basename(script)} 参数：${args.join(" ")}，退出码 ${e.status}）：\n  ` +
@@ -127,6 +157,9 @@ module.exports = {
   writeSwitchOffMessage,
   writeSwitchOffError,
   makeWriteSwitchStep,
+  DB_UNREACHABLE_MARK,
+  dbUnreachable,
+  dbUnreachableError,
   CLEANUP_TOOL,
   TOOLS,
 };

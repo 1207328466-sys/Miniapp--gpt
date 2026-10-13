@@ -30,7 +30,14 @@
 const fs = require("fs");
 const path = require("path");
 const { appTest } = require("../../common/app_common");
-const { runTool, runDbTool, writeSwitchOn, writeSwitchOffError } = require("../../common/db_tool");
+const {
+  runTool,
+  runDbTool,
+  writeSwitchOn,
+  writeSwitchOffError,
+  dbUnreachable,
+  dbUnreachableError,
+} = require("../../common/db_tool");
 const android = require("../../app_sub_function/suprecast_app/android");
 const pages = require("../../app_sub_function/suprecast_app/pages");
 const caseCopy = require("../../app_sub_function/suprecast_app/case_copy");
@@ -318,6 +325,7 @@ const HANDLERS = {
       const out = runDbTool(["--activity-name", activityName, "--expect-submits", String(expected)], {
         expectOk: false,
       });
+      if (dbUnreachable(out)) throw dbUnreachableError("「检查答题记录数」");
       const m = out.match(/submits=(\d+)/);
       if (!m) {
         throw new Error(
@@ -405,6 +413,7 @@ const HANDLERS = {
     run: async (page, _p1, _p2, ctx) => {
       // 1) 库里的名单（工具会把名单放在 [COURSE] ... names=[...] 这一行）
       const out = runTool("courseList", []);
+      if (dbUnreachable(out)) throw dbUnreachableError("「检查课时数为0的课程不显示」");
       const m = out.match(/\[COURSE\][^\n]*names=(\[.*\])/);
       if (!m) throw new Error(`读不到"0 课时课程"名单（工具输出里没有 [COURSE] ... names=[]）。\n  输出末尾：${out.trim().slice(-200)}`);
       let dbNames = [];

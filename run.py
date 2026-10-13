@@ -14,6 +14,7 @@
 """
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -127,6 +128,28 @@ def export_case_table(argv):
     return False
 
 
+def parse_focus_app(text):
+    """从 `dumpsys window displays` 的输出里判断**前台是不是小程序**（纯函数，便于离线自检）。
+
+    为什么看这个：框架要抓的是微信的小程序 webview；但"微信开了、小程序却退到后台/被切走"时，
+    它抓不到 —— 于是**20 多条用例会挨个报「找不到前台小程序webview」**（2026/10/13 真跑遇到过一次，
+    一上午的回归里红了两条，白等十几分钟）。这里在开跑前先看一眼前台是谁。
+
+    @returns {"appbrand" | "wechat" | "other" | "unknown"}
+    """
+    # 注意别在 `/` 处截断：窗口名是 `com.tencent.mm/com.tencent.mm.plugin.appbrand.ui.AppBrandUI00`，
+    # 只取到 `com.tencent.mm` 就会把"小程序在前台"误判成"微信在前台"（第一版就是这么错的）
+    m = re.search(r"mCurrentFocus=\S+\s+\S+\s+([^\s}]+)", str(text or ""))
+    if not m:
+        return "unknown"
+    win = m.group(1)
+    if "appbrand" in win.lower():
+        return "appbrand"
+    if win.startswith("com.tencent.mm"):
+        return "wechat"
+    return "other"
+
+
 def parse_adb_devices(text):
     """把 `adb devices` 的输出解析成 (可用设备号列表, 原始行列表) —— **纯函数**，便于离线自检。
 
@@ -138,6 +161,46 @@ def parse_adb_devices(text):
     # 只有"设备号 + 状态"两列、且状态正好是 device 的才算可用
     ready = [l.split()[0] for l in body if len(l.split()) >= 2 and l.split()[1] == "device"]
     return ready, body
+
+
+def preflight_foreground(argv):
+    """开跑前看一眼**前台是不是小程序** —— 不是就当场停下并说清怎么弄。
+
+    真实场景（2026/10/13）：手机连着、adb 也正常，但小程序退到了后台（或微信被切走）。
+    那次全量跑里两条 .js 用例直接报「找不到前台小程序webview」，其余用例照样一条条跑完 ——
+    十几分钟里真正的原因只有一句。所以这里先看一眼，不是小程序就停下。
+
+    （`--collect-only` 这类不碰手机的运行照常放行。）
+    """
+    if any(a in ("--collect-only", "--co", "-h", "--help", "--version") for a in argv):
+        return True
+
+    adb = shutil.which("adb")
+    if adb is None:
+        return True  # 上一步的 preflight_device 已经就"找不到 adb"报过错了
+
+    try:
+        out = subprocess.run(
+            [adb, "shell", "dumpsys", "window", "displays"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+    except Exception:
+        return True  # 拿不到就算了：这只是"提前提醒"，不该把能跑的运行拦下
+
+    who = parse_focus_app(out.stdout)
+    if who in ("appbrand", "unknown"):
+        # unknown = 输出里没看到 mCurrentFocus（有的机型/权限下读不到）—— 不拦
+        return True
+
+    print("\n[!] 前台不是小程序，已停下。")
+    if who == "wechat":
+        print("    现在前台是微信本体（不是某个小程序）。")
+    else:
+        print("    现在前台是别的应用。")
+    print("    要跑真机用例，先做这一步：")
+    print("      在手机上把**被测小程序点开、停在它的页面上**（框架不会替你打开微信/小程序）。")
+    print("    然后重跑 `python run.py`。（只想收集用例：python run.py --collect-only）")
+    return False
 
 
 def preflight_device(argv):
@@ -193,6 +256,10 @@ def main(argv):
 
     # 手机没连上就当场停下（细节见函数里的说明）
     if not preflight_device(argv):
+        return 2
+
+    # 小程序没在前面也当场停下（不然每条用例都会报「找不到前台小程序webview」）
+    if not preflight_foreground(argv):
         return 2
 
     # 表格用例：开跑前先导出一次（表格有错会在这里停下来，见函数内说明）

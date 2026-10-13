@@ -27,6 +27,14 @@ import os
 import subprocess
 import sys
 
+# Windows 控制台默认 GBK：子进程输出里出现无法编码的字符时，print 会直接抛
+# UnicodeEncodeError，把「全绿」误报成「脚本崩了」。统一降级为替换字符，保证不炸。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEST_CASE = os.path.join(REPO, "test_case")
 
@@ -35,8 +43,17 @@ failures = []
 
 def run(name, args, cwd=REPO, shell=False):
     print("\n===== %s =====" % name)
+    # 子进程统一按 UTF-8 输出，避免中文在管道里被解码成乱码
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
     r = subprocess.run(
-        args, cwd=cwd, shell=shell, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        args,
+        cwd=cwd,
+        shell=shell,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
     )
     out = ((r.stdout or "") + (r.stderr or "")).strip()
     tail = "\n".join(out.splitlines()[-8:]) if out else "(没有输出)"

@@ -55,6 +55,36 @@ expect(
     HEADER + "aaa\tunauthorized\nbbb\tdevice\nccc\toffline\nddd\tdevice\n",
     ["bbb", "ddd"],
 )
+# ---------- 前台是谁（决定"要不要提示先打开小程序"）----------
+def expect_focus(name, line, want):
+    """核对前台应用解析（纯函数）。第一版正则在 `/` 处截断，把小程序误判成微信 —— 这条就是为它加的。"""
+    global passed
+    got = runpy.parse_focus_app(line)
+    if got != want:
+        failed.append("%s：解析出 %s，期望 %s" % (name, got, want))
+        return
+    passed += 1
+    print("OK   %s -> %s" % (name, got))
+
+
+expect_focus(
+    "小程序在前台（AppBrandUI）",
+    "  mCurrentFocus=Window{64caf8d u0 com.tencent.mm/com.tencent.mm.plugin.appbrand.ui.AppBrandUI00}",
+    "appbrand",
+)
+expect_focus(
+    "微信本体在前台（聊天列表）",
+    "  mCurrentFocus=Window{a1b2c3d u0 com.tencent.mm/com.tencent.mm.ui.LauncherUI}",
+    "wechat",
+)
+expect_focus("别的应用在前台", "  mCurrentFocus=Window{9f8e7d u0 com.android.settings/.Settings}", "other")
+expect_focus("读不到 mCurrentFocus -> unknown（不拦）", "  (没有任何 focus 行)", "unknown")
+expect_focus(
+    "小程序但类名里没有 AppBrandUI 字样（按包名判断的兜底）",
+    "  mCurrentFocus=Window{111 u0 com.tencent.mm/com.tencent.mm.plugin.appbrand.ui.AppBrandUI}",
+    "appbrand",
+)
+
 expect("adb 的守护进程提示行（* daemon not running…）不算设备", "* daemon not running; starting now at tcp:5037\n" + HEADER, [])
 
 print()
