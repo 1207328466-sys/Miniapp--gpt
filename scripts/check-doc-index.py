@@ -30,6 +30,7 @@ WITH_TOC = [
     "docs/框架导读.md",
     "docs/框架能力与问题账本.md",
     "docs/android-js-逐行详解.md",
+    "docs/零基础-框架全景与维护手册.md",
 ]
 
 failures = []
