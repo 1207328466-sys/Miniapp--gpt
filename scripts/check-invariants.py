@@ -111,6 +111,24 @@ check(
        '、'.join(sorted(set(_grouped) - _declared)) or '无'),
 )
 
+# ---------- 4c) 每个动作都有「怎么填（示例）」，而且示例跟候选项对得上 ----------
+# 为什么盯这条：示例是照着抄的东西 —— 漏一个只是那一格显示「（还没写示例）」没人管；
+# 而示例和下拉框不一致更坏：照抄的人会被导出/真机报错挡住（示例自己就是错的）。
+_no_example = sorted(a['name'] for a in m.ACTIONS if not m.ACTION_EXAMPLES.get(a['name']))
+check('每个动作都有「怎么填（示例）」', not _no_example, '缺示例：%s' % '、'.join(_no_example))
+
+_bad_examples = []
+for _a in m.ACTIONS:
+    _ex = str(m.ACTION_EXAMPLES.get(_a['name'], ''))
+    for _param, _vals in (m.ACTION_PARAM_CHOICES.get(_a['name'], {}) or {}).items():
+        if _vals and not any(str(v) in _ex for v in _vals):
+            _bad_examples.append('%s（示例里没有 %s 的候选值：%s）' % (_a['name'], _param, '/'.join(_vals)))
+check(
+    '示例里出现的值都在该动作的候选项里（照抄不会报错）',
+    not _bad_examples,
+    '；'.join(_bad_examples),
+)
+
 # ---------- 5) 写链路的"自证"：有开关就必须有复位 ----------
 # 为什么盯这条：写数据的用例**必须**跑完把自己造的记录清掉。
 # 如果以后有人照抄写链路用例、只留了开关却把复位那步删了，数据就会被留在库里

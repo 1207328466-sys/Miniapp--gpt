@@ -43,6 +43,12 @@ HEADER = """# 动作清单（按用途分类）
 > **命名口径**（2026/10/13 统一）：**「打开」= 会跳到另一个页面**；**「点」= 在当前页面上点一下**。
 > 所以看到「打开…」就知道视野会变，看到「点…」就知道还在本页。
 >
+> 📝 **「怎么填（示例）」那一列可以照抄**：比如 `检查文字显示` 的示例是「答对最多可赢积分」、
+> `切换首页筛选栏` 的示例是「推荐」。有两个参数的动作写成 **`参数1 / 参数2`**（例如 `滑动` 的
+> 「3 / 上」）。无参数的动作写着「（不用填参数）」，那几格留空即可。
+> （这些示例不是随手写的：`scripts/selftest-export-cases.py` 会把 49 条示例**当成参数填一张表**跑一遍
+> 导出校验 —— 照抄会报错的示例，闸门那一关就过不去。）
+>
 > 🧰 **第一次写用例先只看这几个**（写用例/调用例时天天用的）：
 > `回到首页`（摆正起点）、`打印页面文字`（看屏幕上有什么字）、`检查文字显示`（最常用断言）、
 > `检查元素存在`（最轻的确认）、`滑动`（把屏幕外的东西滚进来），加上各种 `打开…` 走到目标页。
@@ -113,6 +119,13 @@ def render():
         problems.append(
             "这些动作还没归类（在 tools/build_actions_doc.py 的 GROUPS 里补上）：%s" % "、".join(missing)
         )
+    # 示例：每个动作都得有一条"照着填就能跑"的（无参数的写「（不用填参数）」）
+    no_example = [a["name"] for a in m.ACTIONS if not m.ACTION_EXAMPLES.get(a["name"])]
+    if no_example:
+        problems.append(
+            "这些动作还没写示例（在 tools/export_cases.py 的 ACTION_EXAMPLES 里补上）：%s"
+            % "、".join(no_example)
+        )
     if unknown:
         problems.append("分类表里有名字对不上动作清单（可能改名了）：%s" % "、".join(unknown))
     if problems:
@@ -122,14 +135,14 @@ def render():
     for title, note, names in GROUPS:
         lines.append("\n## %s\n" % title)
         lines.append("%s\n" % note)
-        lines.append("| 动作 | 参数1 | 参数2 | 干什么 | 会不会改数据 |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| 动作 | 参数1 | 参数2 | 怎么填（示例） | 干什么 | 会不会改数据 |")
+        lines.append("|---|---|---|---|---|---|")
         for name in names:
             a = by_name[name]
             lines.append(
-                "| %s | %s | %s | %s | %s |"
+                "| %s | %s | %s | %s | %s | %s |"
                 % (name, a["p1"] or "", a["p2"] or "",
-                   a["desc"].replace("\n", " "), a.get("risk", "不会"))
+                   m.ACTION_EXAMPLES.get(name, ""), a["desc"].replace("\n", " "), a.get("risk", "不会"))
             )
     lines.append("\n" + FOOTER)
     return "\n".join(lines)

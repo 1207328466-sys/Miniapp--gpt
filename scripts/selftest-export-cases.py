@@ -10,6 +10,7 @@
 """
 
 import os
+import re
 import sys
 import tempfile
 
@@ -244,6 +245,47 @@ def actions_sheet_at_top(times):
 actions_sheet_at_top(1)
 actions_sheet_at_top(3)
 actions_sheet_at_top(9)  # 就是踩坑那次刷的次数
+
+
+def example_params(action):
+    """把「怎么填（示例）」拆成参数1 / 参数2（有两个参数的动作写成 `参数1 / 参数2`）"""
+    ex = str(m.ACTION_EXAMPLES.get(action["name"], "")).strip()
+    if not action["p1"]:
+        return "", ""
+    # 用「 / 」（带空格）当分隔符：示例本身可能带括号说明，括号里也可能有斜杠
+    parts = [p.strip() for p in ex.split(" / ")] if action["p2"] and " / " in ex else [ex]
+    parts = [re.sub(r"（[^）]*）\s*$", "", p).strip() for p in parts]
+    return parts[0], (parts[1] if len(parts) > 1 else "")
+
+
+def examples_are_copyable():
+    """**每条示例都必须"照抄就能过校验"** —— 把 49 条示例当成参数填一张表，跑一遍导出校验。
+
+    为什么值得单独验：示例是给人照抄的。示例自己写错（比如填了个不存在的候选值、或该填的参数空着），
+    照抄的人会被导出报错挡住 —— 那时他只会觉得"文档骗人"。所以让闸门替他们先抄一遍。
+    """
+    global passed
+    rows = []
+    for a in m.ACTIONS:
+        p1, p2 = example_params(a)
+        rows.append(["EX_%s" % a["name"], "示例校验", 1, a["name"], p1, p2, ""])
+    try:
+        cases = m.validate(m.read_rows(make(rows)))
+    except m.TableError as e:
+        failed.append("示例校验：本该通过，整表却报错 %s" % e.errors)
+        return
+    bad = [(c["id"], c["errors"]) for c in cases if c.get("errors")]
+    if bad:
+        failed.append("示例校验：这些示例照抄会被报错 %s" % bad[:3])
+        return
+    if len(cases) != len(m.ACTIONS):
+        failed.append("示例校验：用例数 %d 与动作数 %d 对不上" % (len(cases), len(m.ACTIONS)))
+        return
+    passed += 1
+    print("OK   示例校验：%d 个动作的示例照抄都能过导出校验" % len(cases))
+
+
+examples_are_copyable()
 
 
 def merge_keeps_content():
