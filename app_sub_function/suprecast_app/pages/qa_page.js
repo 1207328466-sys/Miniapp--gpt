@@ -720,6 +720,16 @@ async function typeKeyword(page, { keyword, clear = true, timeout = 8000 } = {})
     } finally {
       if (originalIme && originalIme !== ADB_KEYBOARD_IME) {
         await setIme(device, originalIme); // 一定切回原来的输入法，别让 owner 打字时发现键盘变了
+        await base.sleep(600); // 等系统把输入法切稳
+        // 【切回输入法会顺手把输入框的焦点弄丢】实测（2026/10/13）：中文输入走 ADBKeyboard、
+        // 输入完切回百度输入法之后，**接着按回车没反应**，搜索根本跑不起来
+        // （表现是页面停在「搜索历史」面板，而用例后面的断言如果写得不严，还会是"绿的"）。
+        // 所以切回来之后补点一下输入框，把焦点还给它。
+        try {
+          await tapElement(device, fg, input);
+        } catch (e) {
+          console.log(`  [提示] 切回输入法后重新聚焦失败（不影响已经输入的内容）: ${e.message.split("\n")[0]}`);
+        }
       }
     }
   }

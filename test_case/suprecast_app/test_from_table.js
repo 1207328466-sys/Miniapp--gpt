@@ -128,12 +128,42 @@ const HANDLERS = {
         );
       }
       const device = await getDevice();
-      // 回车（keyevent 66）把搜索跑起来。与 android.js 里 focusSearchInput 的做法一致；
-      // 只读：只是查一次，不改任何数据。
-      await device.shell("input keyevent 66");
-      await base.sleep(1500); // 给结果页/空态一点渲染时间
-      console.log("已执行搜索");
-      return search;
+      // 【2026/10/13 加固】以前这里只是"发个回车 + 睡 1.5 秒 + 打印'已执行搜索'"，**没有任何验证** ——
+      // owner 反馈「执行搜索没有成功」时，它其实是静默失败（回车没生效，页面还停在搜索历史面板），
+      // 而那一步后面如果正好断言"关键词本身"，历史面板里也显示这个词，就会是**假绿**。
+      // 现在：先确认框里有值，回车后**等页面离开「搜索历史」面板**才算成功；不成功重试一次，
+      // 再不行就明确报错（带上输入框的值和当前页面开头）。
+      const input = search.locator(qaPage.SEL.searchInput).first();
+      const keyword = await base.inputValue(input);
+      if (!keyword) {
+        throw new Error(
+          "搜索框是空的 —— 先「输入搜索关键词」，再执行搜索。\n" +
+            "  （空着按回车不会触发任何搜索，页面会一直停在「搜索历史」面板。）"
+        );
+      }
+      const leftHistoryPanel = async () =>
+        !(await base.pageText(await base.foreground(page))).includes("搜索历史");
+
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        if (attempt > 1) {
+          console.log("  [自愈] 上次回车没搜起来 —— 重新点一下输入框拿到焦点，再回一次车");
+        }
+        // 先点输入框：回车要送给"有焦点的输入框"才有效。中文输入走 ADBKeyboard、切回原输入法后
+        // 焦点可能已经丢了（见 qa_page.typeKeyword 里的说明），所以每次回车前都补一下焦点。
+        await base.tapLocator(search, input, "搜索输入框（回车前先给它焦点）");
+        await device.shell("input keyevent 66"); // 回车 = 把搜索跑起来（只读：只是查一次）
+        if (await base.waitUntil(leftHistoryPanel, { timeout: 4000, interval: 400 })) {
+          console.log(`已执行搜索（关键词 ${JSON.stringify(keyword)}，页面已离开「搜索历史」面板）`);
+          return base.foreground(page);
+        }
+      }
+      const now = await base.foreground(page);
+      throw new Error(
+        `按了回车但页面还停在「搜索历史」面板 —— **搜索没跑起来**（重试 2 次仍如此）。\n` +
+          `  输入框里的值是 ${JSON.stringify(keyword)}\n` +
+          `  当前页面前 120 字: ${JSON.stringify((await base.pageText(now)).slice(0, 120))}\n` +
+          `  常见原因：输入框没拿到焦点（中文输入会临时切输入法，切回来要重新点一下）；或这一步前面根本没输入关键词。`
+      );
     },
   },
 
