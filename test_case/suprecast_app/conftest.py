@@ -414,7 +414,7 @@ _OUTCOMES = {}  # nodeid -> {"outcome", "when", "duration", "reason"}
 
 
 def _display_name(nodeid):
-    """把 `suprecast_app/test_from_table.js::活动入口_001 首页活动入口…` 取成后半截给人看"""
+    """把 `suprecast_app/test_from_table.js::ZW_001 首页活动入口…` 取成后半截给人看"""
     return nodeid.split("::")[-1] if "::" in nodeid else Path(nodeid).name
 
 

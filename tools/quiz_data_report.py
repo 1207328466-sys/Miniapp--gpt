@@ -80,7 +80,7 @@ def load_conn(config_path):
             connect_timeout=8,
         )
     except pymysql.err.OperationalError as e:
-        # 【为什么要把报错翻译成人话】2026/10/13 全量跑里 `课程列表_001` 红了一条，
+        # 【为什么要把报错翻译成人话】2026/10/13 全量跑里 `ZW_018` 红了一条，
         # 报错尾巴是 pymysql 的 traceback（`Can't connect ... (timed out)`）——
         # 看的人第一反应是"框架坏了"，其实是**这台机器连不到测试库**。
         # 真正有用的信息是"接下来该查什么"，所以这里直接说清。

@@ -114,7 +114,7 @@ async function probe(page) {
     return page;
   }
 
-  /* 【反向验证】ZW_003 第4步断言的是「点了评论入口之后页面出现『发送』」。
+  /* 【反向验证】ZW_027 第4步断言的是「点了评论入口之后页面出现『发送』」。
    * 这条断言要成立，必须**点之前页面上没有「发送」** —— 否则点了没反应也会绿（假绿）。
    * 所以这里点之前先数一遍：不是 0 就说明那条用例的核心断言是空的，必须当场报出来。
    */
@@ -132,7 +132,7 @@ async function probe(page) {
   if (beforeText.includes("发送")) {
     throw new Error(
       `反向验证失败：点评论入口之前**可见文字**里就已经有「发送」—— ` +
-        `那 ZW_003 的核心断言（点完检查「发送」出现）就是假绿，得换断言。`
+        `那 ZW_027 的核心断言（点完检查「发送」出现）就是假绿，得换断言。`
     );
   }
 
@@ -147,7 +147,7 @@ async function probe(page) {
   console.log(
     "  正向验证：点之后可见文字里有「发送」吗？%s —— %s",
     afterSend ? "有" : "没有",
-    afterSend ? "评论入口真的有反应（ZW_003 第4步成立）" : "没反应！这条断言会把 bug 抓住"
+    afterSend ? "评论入口真的有反应（ZW_027 第4步成立）" : "没反应！这条断言会把 bug 抓住"
   );
   console.log("  输入框数量：点之前 %d 个，点之后 %d 个", before.inputs.length, after.inputs.length);
   console.log(

@@ -10,7 +10,7 @@
     python run.py                 # 跑全部用例 + 生成 Allure HTML 报告
     python run.py -k 专栏          # 其余参数原样透传给 pytest
     python run.py suprecast_app/test_example.js
-    python run.py -k 活动入口_001   # 「填表就能写用例」：只跑 cases/用例表.xlsx 里的这一条
+    python run.py -k ZW_001   # 「填表就能写用例」：只跑 cases/用例表.xlsx 里的这一条
     python run.py --env prod      # 这次改用「生产」环境跑（默认取 config/env.yaml 的 current）
 """
 
@@ -113,7 +113,7 @@ def export_case_table(argv):
     # 只有「本次运行明确点名了别的用例文件」时才放行，其余一律停下来。
     #
     # 判断只看"像文件路径"的参数（.js/.py 或带目录分隔符）。为什么不能只看
-    # "不以 - 开头的参数"：`python run.py -k 搜索页_001` 里的 搜索页_001 也不是以 -
+    # "不以 - 开头的参数"：`python run.py -k ZW_002` 里的 ZW_002 也不是以 -
     # 开头，但它恰恰**是**表格里的一条用例编号（实际踩到：表格坏了却照旧跑出一条
     # 漂亮的「通过」）。所以 -k 这种无法事先判断命中范围的，一律按"可能命中表格"处理。
     files = [a for a in argv if not a.startswith("-")]

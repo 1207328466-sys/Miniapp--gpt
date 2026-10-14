@@ -599,12 +599,12 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 
 1. **直接填中文**（推荐）：`打开搜索并输入` 的参数里写中文即可 —— 框架遇到非 ASCII 时
    **自动临时切到手机上的 ADBKeyboard 输入法**、用 base64 广播把文本送进去（没有 shell 注入风险），
-   **用完在 finally 里切回你原来的输入法**。现成例子 `中文搜索_002`（真机 5 步全绿）。
+   **用完在 finally 里切回你原来的输入法**。现成例子 `ZW_024`（真机 5 步全绿）。
    一次性准备：手机上装 `ADBKeyboard.apk`（约 17KB，`adb install -r`；装法见 knowledge 的「中文输入」一节）。
    没装时**明确报错并给出安装命令**，不静默失败。
 2. **不依赖输入法**：往 `search_history` 插一行中文（`tools/search_history_tool.py`），
    搜索页的「搜索历史」里就会出现它，用动作**「点搜索历史里的词」**点它即触发搜索。
-   现成例子 `中文搜索_001`（真机 5 步全绿）。
+   现成例子 `ZW_023`（真机 5 步全绿）。
 
 > 另外两条路试过、**都不通**（记下来免得重走）：Playwright 的 CDP `insertText`
 > （小程序的输入框是**原生组件**，DOM 里那个 `<input>` 是 `disabled + visibility:hidden` 的镜像）；
