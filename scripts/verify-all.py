@@ -26,6 +26,8 @@
   16. `scripts/selftest-allure-shots.py`        Allure 截图附件：压缩确实变小、压完还是能打开的图
   17. `test_case/diagnostic/selftest_selector_hint.js`  选择器没命中时的提示口径：
       「多个 class 抄成一串」要认出来并给正确写法，合法的「里面的」写法不许乱改
+  18. `scripts/selftest-pull-requirements.py`  需求拉取对账的纯逻辑（离线，不联网）：
+      解析知识库清单 / 整理拉取结果 / 算「新增·消失·状态变化」—— 这三行是给人看的结论，不能算错
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -131,6 +133,7 @@ def main():
         "selftest-selector-hint（选择器提示口径）",
         ["node", os.path.join("test_case", "diagnostic", "selftest_selector_hint.js")],
     )
+    run("selftest-pull-requirements（需求对账纯逻辑）", [sys.executable, os.path.join("scripts", "selftest-pull-requirements.py")])
     run("selftest-run-preflight（设备预检解析）", [sys.executable, os.path.join("scripts", "selftest-run-preflight.py")])
     run("selftest-env-profile（环境档案规则）", [sys.executable, os.path.join("scripts", "selftest-env-profile.py")])
     run("selftest-quiz-answer-key（判分口径复算）", [sys.executable, os.path.join("scripts", "selftest-quiz-answer-key.py")])
