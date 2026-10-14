@@ -263,48 +263,34 @@ function parseIndex(raw) {
 }
 
 /**
- * 解析「滑动」的**方向 + 每次滑多少** —— **纯函数**，方便离线自检。
+ * 解析「滑动」的两个参数 —— **纯函数**，方便离线自检。
  *
- * 口径（owner 2026/10/14 问"一次滑动多少、能不能自己控制"之后定的）：
- *   · `上` / `下`        -> 每次滑**半屏**（= 今天的行为，老写法一个字都不用改）
- *   · `上 30%` / `下30%` -> 每次滑屏高的 **30%**（想滑一点点、或怕滑过头时用）
- *   · 范围 5%~95%，写超了就报错（**不静默夹到边界** —— 填错了该说，不该假装没看见）
+ * 口径（owner 2026/10/14 定稿）：**「滑动」 = 一直滑到页面不动为止（滑到底/滑到顶）**，
+ * 不需要人去设"每次滑多少 / 滑几次"。
+ *   · 参数1 = 方向：`上`（往下翻到底）/ `下`（滚回顶部）；**可不填**，留空 = 上
+ *   · 参数2 = 最多滑几次（安全上限）：**可不填**，留空 = 10；范围 1~50
  *
- * 起止点跟"半屏"那套保持一致：向上滑固定从屏幕 75% 处起手、向下滑从 25% 处起手，
- * 只改**走多远**。这样"默认"和"自定义"是同一个动作的两档，不会出现两套手感。
- *
- * @param {string|undefined} raw 表里「参数2」那一格，例如 "" / "上" / "上 30%" / "下30％"
- * @returns {{dir: "上"|"下", ratio: number, startRatio: number, endRatio: number, raw: string}}
+ * 为什么要上限：首页那种**无限加载**的列表滑不到头，必须有个数兜着
+ * （到上限不当失败，但会明确打一句"还能继续滚"）。
  */
-function parseSwipeSpec(raw) {
-  const s = String(raw == null ? "" : raw).trim();
-  if (!s) return buildSwipeSpec("上", 0.5, raw); // 参数2 留空 = 向上、半屏
-
-  // 数字可选：只写「上」/「下」= 默认半屏（老写法）
-  const m = /^(上|下)\s*(\d{1,3})?\s*[%％]?$/.exec(s);
-  if (!m) {
+function parseScrollSpec(dirRaw, maxRaw) {
+  const d = String(dirRaw == null ? "" : dirRaw).trim();
+  const dir = d === "" ? "上" : d;
+  if (!["上", "下"].includes(dir)) {
     throw new Error(
-      `「滑动」的参数2 只能填「上」「下」，或带上每次滑多少（例如「上 30%」），现在填的是 ${JSON.stringify(raw)}`
+      `「滑动」的参数1 是**方向**，只能填「上」或「下」（留空 = 上），现在填的是 ${JSON.stringify(dirRaw)}。\n` +
+        `  注意：「滑动」现在不用填次数了 —— 它自己一直滑到不动为止；` +
+        `真想限制最多滑几次，把数字填到**参数2**（例如 5）。`
     );
   }
-  const dir = m[1];
-  if (m[2] === undefined) return buildSwipeSpec(dir, 0.5, raw); // 「上」= 半屏
-
-  const percent = Number(m[2]);
-  if (!(percent >= 5 && percent <= 95)) {
+  const m = String(maxRaw == null ? "" : maxRaw).trim();
+  if (!m) return { dir, max: 10, maxRaw: "" };
+  if (!/^\d+$/.test(m) || Number(m) < 1 || Number(m) > 50) {
     throw new Error(
-      `「滑动」每次滑多少只能填 5%~95%（屏高的百分比），现在填的是 ${JSON.stringify(raw)}。\n` +
-        `  「上」不带数字就是半屏；想滑一点点可以写「上 20%」。`
+      `「滑动」的参数2 是「最多滑几次」，只能填 1~50 的整数（留空 = 10），现在填的是 ${JSON.stringify(maxRaw)}`
     );
   }
-  return buildSwipeSpec(dir, percent / 100, raw);
-}
-
-/** parseSwipeSpec 的内部收尾：把"方向 + 走多远"换算成 swipeUp 的起止比例 */
-function buildSwipeSpec(dir, ratio, raw) {
-  return dir === "下"
-    ? { dir, ratio, startRatio: 0.25, endRatio: 0.25 + ratio, raw }
-    : { dir, ratio, startRatio: 0.75, endRatio: 0.75 - ratio, raw };
+  return { dir, max: Number(m), maxRaw: m };
 }
 
 async function tapLocator(page, locator, what, index = 1) {
@@ -528,7 +514,7 @@ module.exports = {
   countOfText,
   notFound,
   parseIndex,
-  parseSwipeSpec,
+  parseScrollSpec,
   suggestJoinedSelector,
   selectorMissHint,
   rejectIdSelector,

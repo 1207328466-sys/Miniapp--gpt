@@ -231,11 +231,13 @@ ACTIONS = [
     },
     {
         "name": "滑动",
-        "p1": "次数",
-        "p2": "方向",
-        "desc": "滑动屏幕，次数 1~10、方向填 上 或 下。列表要滑到底才看得到的东西用「上」；滑完想滚回顶部用「下」。"
-        "**每次滑多少可以自己定**：方向后面带百分比即可，例如「上 30%」= 每次只滑屏高的 30%"
-        "（范围 5%~95%；不带数字就是默认的半屏）",
+        "p1": "方向（可不填）",
+        "p2": "最多滑几次（可不填）",
+        "p1_optional": True,
+        "p2_optional": True,
+        "desc": "**一直滑到页面不动为止**（滑到底 / 滚回顶部），不用自己算次数。"
+        "参数1 = 方向：`上`（往下翻到底）/ `下`（滚回顶部），留空 = 上；"
+        "参数2 = 最多滑几次（安全上限），留空 = 10 —— 首页那种无限加载的列表滑不到头，靠它兜着",
     },
     {
         "name": "切换首页筛选栏",
@@ -470,22 +472,12 @@ def ordered_actions():
 ACTION_PARAM_CHOICES = {
     "切换首页筛选栏": {"p1": ["最新提问", "推荐", "精选问答", "我的关注"]},
     "切换学习中心顶部栏": {"p1": ["课程", "专栏", "压铸百科"]},
-    # 次数只能是 1~10（以前要人自己记住范围、手打数字；现在下拉选）
-    "滑动": {"p1": ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"], "p2": ["上", "下"]},
+    # 「滑动」= 一直滑到不动（滑到底/滑到顶）：方向下拉选，最多滑几次是可选的数字（不设下拉）
+    "滑动": {"p1": ["上", "下"]},
     "检查课程详情页": {"p1": ["课程介绍", "课程目录"]},
     # 出现次数这类"小整数"也给下拉：防止有人填 0 或 100（那样这条断言基本没意义）
     "检查文字出现次数": {"p2": ["1", "2", "3", "4", "5"]},
     "打印页面结构": {"p1": ["全量", "只看有文字"]},
-}
-
-# 这些参数**不走**上面那道"只能填这几个值"的通用闸门（它们有自己的专用格式）：
-#   · 滑动 的参数2：允许「上 30%」这种"方向 + 每次滑多少"的写法 —— 见 parse_swipe_amount
-PARAM_CHOICES_EXEMPT = {("滑动", "p2")}
-
-# 参数列的表头提示，个别动作需要说得更细（默认是「参数名（只能填：…）」）
-PARAM_HINT_OVERRIDE = {
-    # ⚠️ 这段会被塞进「参数名（…）」的括号里，所以自己**别再套一层括号**（套了会变成双括号）
-    ("滑动", "p2"): "上 / 下；要自己定每次滑多少就带幅度，例如「上 30%」= 每次滑屏高的 30%，不带就是半屏",
 }
 
 # ---------- 每个动作一条「照着填就能跑」的示例（2026/10/13）----------
@@ -526,7 +518,9 @@ ACTION_EXAMPLES = {
     # ③ 通用交互
     "点文字": "我的（重名时参数2填 2 = 点第 2 个）",
     "点选择器": ".search-container（重名时参数2填 2 = 点第 2 个，例如 .hot-topics .inline-flex 第 2 条）",
-    "滑动": "3 / 上（每次半屏；想自己定就写「上 30%」= 每次滑屏高的 30%）",
+    # ⚠️ 示例里别出现「 / 」：那是"参数1 / 参数2"的分隔符，写了会被当成分隔
+    # （当天自检当场抓到：照抄会报"参数1 只能填 上/下"，实际读到的是半句话）
+    "滑动": "上（不用填别的；想限制最多滑几次就把数字填到参数2，比如 5）",
     "切换首页筛选栏": "推荐",
     "等待": "2000（= 等 2 秒）",
     "打印页面文字": "（不用填参数）",
@@ -709,31 +703,6 @@ def looks_like_id_selector(value):
     if s.startswith("#"):
         return True
     return re.search(r"\[\s*id\s*[~|^$*]?=", s) is not None
-
-
-def parse_swipe_amount(value):
-    """解析「滑动」参数2 里的**方向 + 每次滑多少** —— **纯函数**（离线自检直接调它）。
-
-    口径与 JS 侧 `base_page.parseSwipeSpec` **完全一致**（两侧同规则，改一边要改另一边）：
-        "上" / "下"        -> 每次半屏（默认，老写法不变）
-        "上 30%" / "下30％" -> 每次滑屏高的 30%（5%~95%，写超了报错，不静默夹边界）
-
-    @returns (dir, ratio) 或 None（认不出来 / 超出范围）
-    """
-    s = str(value or "").strip()
-    if not s:
-        return ("上", 0.5)
-    # 数字是**可选**的：只写「上」/「下」= 默认半屏（老写法）—— 把 \d 写成必需的话，
-    # 连老三样的「上」都会被判非法（当天自检当场抓到过）
-    m = re.match(r"^(上|下)\s*(\d{1,3})?\s*[%％]?$", s)
-    if not m:
-        return None
-    if m.group(2) is None:
-        return (m.group(1), 0.5)
-    percent = int(m.group(2))
-    if not (5 <= percent <= 95):
-        return None
-    return (m.group(1), percent / 100)
 
 
 def add_dropdowns(ws, last_row=1000):
@@ -985,13 +954,8 @@ def fill_actions_sheet(ws):
         p2 = a["p2"]
         if p1 and choices.get("p1"):
             p1 = "%s（只能填：%s）" % (p1, " / ".join(choices["p1"]))
-        if p2:
-            # 个别动作的参数说明要更细（例如「滑动」的方向还能带幅度）—— 用 override 覆盖默认文案
-            hint = PARAM_HINT_OVERRIDE.get((a["name"], "p2"))
-            if hint:
-                p2 = "%s（%s）" % (p2, hint)
-            elif choices.get("p2"):
-                p2 = "%s（只能填：%s）" % (p2, " / ".join(choices["p2"]))
+        if p2 and choices.get("p2"):
+            p2 = "%s（只能填：%s）" % (p2, " / ".join(choices["p2"]))
         ws.append(
             [a["name"], p1, p2, plain_text(ACTION_EXAMPLES.get(a["name"], "（还没写示例）")),
              plain_text(a.get("risk", "不会")), desc,
@@ -1237,20 +1201,18 @@ def validate(rows):
             case_errors_of(case).append(
                 "第 %d 行：「检查元素数量」的参数2 是数量，应该像 1 这样，现在填的是 %s" % (lineno, p2)
             )
-        if action == "滑动" and p1 and not (p1.isdigit() and 1 <= int(p1) <= 10):
+        # 「滑动」= 一直滑到不动（2026/10/14 owner 定稿）。参数1 = 方向，参数2 = 最多滑几次（上限）。
+        # 旧写法（`3 / 上`，参数1 填次数）会在这里被挡住，并直接告诉人"次数搬到哪去了"。
+        if action == "滑动" and p1 and p1 not in ("上", "下"):
             case_errors_of(case).append(
-                "第 %d 行：「滑动」的参数1 是次数，只能填 1~10 之间的整数，现在填的是 %s" % (lineno, p1)
+                "第 %d 行：「滑动」的参数1 是**方向**，只能填「上」或「下」（留空 = 上），现在填的是 %s。"
+                "注意：滑动不用再填次数了 —— 它一直滑到页面不动为止；真想限制次数就把数字填到参数2（例如 5）"
+                % (lineno, p1)
             )
-        # 「滑动」的参数2 = 方向，可带每次滑多少（owner 2026/10/14 要的"自己能控制"）：
-        #   上 / 下         = 每次半屏（默认）
-        #   上 30% / 下30％ = 每次滑屏高的 30%（5%~95%）
-        # 范围写成硬规则而不是悄悄夹到边界：填 0% 或 200% 一定是写错了，该当场说。
-        if action == "滑动" and p2 and parse_swipe_amount(p2) is None:
+        if action == "滑动" and p2 and not (p2.isdigit() and 1 <= int(p2) <= 50):
             case_errors_of(case).append(
-                # ⚠️ 这条刻意不用 %-格式化：正文里有「30%」「5%~95%」这些百分号，
-                # 一不小心就会被当成格式符（当天真踩到：`ValueError: unsupported format character`）
-                "第 " + str(lineno) + " 行：「滑动」的参数2 只能填「上」「下」，或带上每次滑多少"
-                "（例如「上 30%」，范围 5%~95%），现在填的是 " + str(p2)
+                "第 %d 行：「滑动」的参数2 是「最多滑几次」，只能填 1~50 的整数（留空 = 10），现在填的是 %s"
+                % (lineno, p2)
             )
         if action == "检查文字出现次数" and p2 and not (p2.isdigit() and int(p2) >= 0):
             case_errors_of(case).append(
@@ -1276,9 +1238,6 @@ def validate(rows):
 
         # 只能从固定几个值里选的动作：填错字当场挡下（比真机跑到一半再报错友好）
         for field, value in (("p1", p1), ("p2", p2)):
-            # 「滑动」的参数2 例外：它允许「上 30%」这种带幅度的写法，由上面那条专用规则判
-            if (action, field) in PARAM_CHOICES_EXEMPT:
-                continue
             allowed = ACTION_PARAM_CHOICES.get(action, {}).get(field)
             if allowed and value and value not in allowed:
                 case_errors_of(case).append(

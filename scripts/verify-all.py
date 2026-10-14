@@ -6,8 +6,8 @@
   1. 语法：所有 .js 过 `node --check`；所有 .py 过 `py_compile`
   2. 用例收集：`pytest --collect-only`（能查出 conftest / 用例收集被改坏）
   3. `scripts/check-docs.py`            文档死链
-  4. `scripts/selftest-export-cases.py` 表格校验与体检规则（46 项，含"一条填错只红它自己"、
-     「按用例的四列承接」「按 id 定位的写法要挡住」「滑动每次滑多少的写法」）
+  4. `scripts/selftest-export-cases.py` 表格校验与体检规则（47 项，含"一条填错只红它自己"、
+     「按用例的四列承接」「按 id 定位的写法要挡住」「滑动=滑到底的两个参数与上限」）
   5. `scripts/selftest-quiz-cleanup.py` 复位工具的安全闸门（15 项：该拦的必须拦、该放的必须放）
   5b. `scripts/selftest-case-copy-reset.py` 案例复制复位工具的护栏（14 项：库名/点名案例/量上限/重名）
   6. `test_case/diagnostic/selftest_quiz_question_options.js` 答题"选项 2~6 且互不相同"规则（10 项，纯函数，正反都验）
@@ -26,10 +26,10 @@
   15. `scripts/selftest-quiz-answer-key.py`     判分口径复算（需求 713594985）：
       **多选必须集合完全一致**才算对 —— 少选一个、多选一个都得判错
   16. `scripts/selftest-allure-shots.py`        Allure 截图附件：压缩确实变小、压完还是能打开的图
-  17. `test_case/diagnostic/selftest_selector_hint.js`  选择器与参数规则（41 项）：
+  17. `test_case/diagnostic/selftest_selector_hint.js`  选择器与参数规则（37 项）：
       「多个 class 抄成一串」要认出来并给正确写法，合法的「里面的」写法不许乱改；
       另外盯着「按 id 定位」的写法必须挡住（`#_AQ` / `[id=...]`），合法选择器一个都不许误伤；
-      「滑动」的方向带幅度（`上 30%`）要算出正确的起止比例
+      「滑动」的两个参数（方向 / 最多滑几次）留空走默认、写错要报错
   18. `scripts/selftest-pull-requirements.py`  需求拉取对账的纯逻辑（离线，不联网）：
       解析知识库清单 / 整理拉取结果 / 算「新增·消失·状态变化」—— 这三行是给人看的结论，不能算错
 

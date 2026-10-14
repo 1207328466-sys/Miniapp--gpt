@@ -576,7 +576,7 @@ async function assertSelectorCount(page, { selector, expected, timeout = 8000, i
 }
 
 /**
- * 向上滑动（从屏幕下方向上方滑动），使用真实 adb 触摸事件。
+ * 滑**一次**（默认向上 = 页面向下翻），并如实报出"到底动没动" —— 滑动这件事的**唯一实现**。
  *
  * 【为什么不用 page.mouse】
  * 实测对照（首页，用各容器 scrollTop 变化作为判据）：
@@ -585,17 +585,13 @@ async function assertSelectorCount(page, { selector, expected, timeout = 8000, i
  * 小程序视图层只响应真实触摸事件，合成鼠标事件对它无效。
  *
  * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{duration?: number, startRatio?: number, endRatio?: number, ignoreNoMove?: boolean}} params
+ * @param {{duration?: number, startRatio?: number, endRatio?: number, timeout?: number}} params
  *        duration: 滑动持续时间（毫秒）；startRatio/endRatio: 起止位置占屏幕高度的比例
- *        ignoreNoMove: 页面没动时**不报错**（给"滑到顶/滑到底"这类循环用：
- *                      那时"没动"是**正常结果**，不是失败 —— 2026/10/14 写探针时踩到）
- * @returns {Promise<import('playwright').Page>} page
+ * @returns {Promise<{page: import('playwright').Page, moved: boolean, before: Object, after: Object}>}
+ *          moved=false 表示"这一滑页面没动"（到底/到顶/不可滚）—— 由调用方决定它算不算错：
+ *          单次滑动（`swipeUp`）算错，"滑到底"（`swipeToEdge`）算正常收工。
  */
-async function swipeUp(
-  page,
-  { duration = 500, startRatio = 0.75, endRatio = 0.25, timeout = 5000, ignoreNoMove = false } = {}
-) {
-  try {
+async function swipeUpEx(page, { duration = 500, startRatio = 0.75, endRatio = 0.25, timeout = 5000 } = {}) {
     const device = await getDevice();
     const view = await page.evaluate(() => ({
       dpr: window.devicePixelRatio,
@@ -642,7 +638,7 @@ async function swipeUp(
       );
     };
 
-    // 一次滑动 = "发一次 adb swipe，然后等它动"。抽成函数是为了能在"没动"时**重试一次**（见下）。
+    // 一次滑动 = "发一次 adb swipe，然后等它动"
     const swipeOnce = async () => {
       const before = await probe();
       await device.shell(`input swipe ${x} ${y1} ${x} ${y2} ${duration}`);
@@ -656,23 +652,34 @@ async function swipeUp(
       return { ok: movedBetween(before, after), before, after };
     };
 
-    let res = await swipeOnce();
-    if (!res.ok && !ignoreNoMove) {
+    const res = await swipeOnce();
+    if (res.ok) {
+      console.log(`向上滑动完成（adb input swipe ${x} ${y1} ${x} ${y2} ${duration}），页面已位移`);
+    }
+    return { page, moved: res.ok, before: res.before, after: res.after };
+}
+
+/**
+ * 向上/向下滑一次（**严格版**：没滑动就报错）—— 绝大多数调用方用这个。
+ *
+ * 这一层只做"判死活"：真正的滑动由 `swipeUpEx` 干（它返回"动没动"），
+ * 所以"循环滑到不动"（`swipeToEdge`）能复用同一份实现，而不是另写一套滑动手势
+ * —— 手势的坐标/判据只此一处（2026/10/14 把判据修好后，这里也顺带收成了两层）。
+ */
+async function swipeUp(page, { duration = 500, startRatio = 0.75, endRatio = 0.25, timeout = 5000 } = {}) {
+  try {
+    let res = await swipeUpEx(page, { duration, startRatio, endRatio, timeout });
+    if (!res.moved) {
       // 一次不成就判死太急：**刚跳到某页时列表内容可能还没渲染出来**，那一刻页面滚不动 ——
       // 实测（2026/10/14）：`打开案例库` 之后立刻滑 -> "未发生位移"；等约 1.5 秒再滑就正常了
-      // （到达判据只等"页面容器出现"，不等"卡片渲染完"）。所以这里重试一次，
+      // （到达判据只等"页面容器出现"，不等"卡片渲染完"）。所以重试一次，
       // **重试还不动才算失败**：错误文案与判据都没放松，仍然不会"发了 swipe 就当过"。
       console.log("  这次滑动页面没有位移，等 800ms 再试一次（刚跳过来的页面，内容可能还没渲染完）");
       await page.waitForTimeout(800);
-      res = await swipeOnce();
+      res = await swipeUpEx(page, { duration, startRatio, endRatio, timeout });
     }
 
-    if (!res.ok) {
-      if (ignoreNoMove) {
-        // 循环场景：没动 = 已经到顶/到底（或这一页本来就不滚）—— 如实说一句就返回，不当失败
-        console.log("  页面没有位移（可能已经到顶/到底，或这一页本来就不可滚动）");
-        return page;
-      }
+    if (!res.moved) {
       // 明确抛错，避免"发了 swipe 就当过"的假通过
       throw new Error(
         `滑动后页面未发生位移（scrollTop ${res.before.scrollTop} → ${res.after.scrollTop}；` +
@@ -681,13 +688,65 @@ async function swipeUp(
           `  （已经重试过一次：等 800ms 再滑，仍然没动）`
       );
     }
-
-    console.log(`向上滑动完成（adb input swipe ${x} ${y1} ${x} ${y2} ${duration}），页面已位移`);
     return page;
   } catch (e) {
     console.error(`滑动失败: ${e.message}`);
     throw e;
   }
+}
+
+/**
+ * **一直滑到不动为止**（"="滑到底/滑到顶"）—— 表格动作「滑动」就是它。
+ *
+ * 为什么要它（owner 2026/10/14）：表格里写「滑 N 次」要靠人猜次数 ——
+ * 猜少了目标还在屏幕外，猜多了白等；而"滑到不能再滑"才是绝大多数用例真正想表达的
+ * （列表要滑到底才看得到的检查、长页面找目标）。
+ *
+ * 语义：
+ *   · 滑到**页面不再移动**就停（到底/到顶；也可能是这一页本来就不滚）→ `reached=true`；
+ *   · 滑满 `max` 次还在动 → **不当失败**，但会明确打一句"到了上限"（首页那种无限加载的列表
+ *     就是这样）；`reached=false`，下一步如果找不到目标，这句就是线索；
+ *   · 每一滑的判据与单次滑动**完全同一套**（swipeUpEx），不另写一份。
+ *
+ * @param {import('playwright').Page} page
+ * @param {{dir?: "上"|"下", max?: number}} params dir=上 表示"往下翻到底"，dir=下 表示"滚回顶部"
+ * @returns {Promise<{page: import('playwright').Page, swipes: number, reached: boolean}>}
+ */
+async function swipeToEdge(page, { dir = "上", max = 10 } = {}) {
+  const opts = dir === "下" ? { startRatio: 0.25, endRatio: 0.75 } : { startRatio: 0.75, endRatio: 0.25 };
+  let swipes = 0;
+  let reached = false;
+  let sawScrollTop = false; // 这一页是不是"原生滚动"（有非 0 的 scrollTop）
+  for (let i = 1; i <= max; i++) {
+    const r = await swipeUpEx(page, opts);
+    page = r.page;
+    if (r.after.scrollTop > 0) sawScrollTop = true;
+    /* 什么时候算"到头了"：
+     *   ① 这一滑页面根本没动（`!moved`）—— 最直接；
+     *   ② 页面在滚，但**这个方向已经没进展**了 —— 上滑时 scrollTop 不再变大 / 下滑时不再变小。
+     *   为什么要有 ②：到顶/到底时会有"橡皮筋回弹"，元素 top 会抖 >5px，
+     *   光看"动没动"会一直被当成"还在滚"，把上限滑满还报"还能继续滚"
+     *   （2026/10/14 探针实测：`下` 从 2256 滚到顶之后又白滑了十几次）。
+     *   ② 只在"这一页确实有原生滚动"时启用：scrollTop 恒为 0 的页面（用 transform 滚的）
+     *   仍然走 ① —— 那种页面没有 scrollTop 可看。 */
+    const delta = r.after.scrollTop - r.before.scrollTop;
+    const noProgress = sawScrollTop && (dir === "上" ? delta <= 5 : delta >= -5);
+    if (!r.moved || noProgress) {
+      reached = true;
+      break;
+    }
+    swipes = i;
+    await page.waitForTimeout(300); // 给它一点时间把新内容渲进来（无限列表会在这里接着加载）
+  }
+  if (reached) {
+    console.log(`  已滑动 ${swipes} 次，页面不再移动（${dir === "下" ? "到顶了" : "到底了"}）`);
+  } else {
+    console.log(
+      `  已滑满上限 ${max} 次，页面还能继续滚 —— 若下一步找不到目标，把「最多滑几次」调大；` +
+        `（首页这类会无限加载的列表本来就滑不到头）`
+    );
+  }
+  return { page, swipes, reached };
 }
 
 // 返回按钮的候选选择器。第一个是专栏详情页实测可用的：
@@ -958,6 +1017,8 @@ module.exports = {
   assertSelectorExists,
   assertSelectorCount,
   swipeUp,
+  swipeUpEx,
+  swipeToEdge,
   goBack,
   switchToUserCenter,
   focusSearchInput,

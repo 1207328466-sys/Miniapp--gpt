@@ -242,24 +242,19 @@ const HANDLERS = {
   },
 
   滑动: {
-    run: async (page, times, direction) => {
-      const n = Number(times) || 1;
-      if (!(n >= 1 && n <= 10)) throw new Error(`「滑动」的次数只能是 1~10，现在是 ${times}`);
-      // 参数2 = 方向（+ 可选幅度）：`上` = 每次半屏（默认）；`上 30%` = 每次滑屏高的 30%。
-      // 解析器是纯函数（base.parseSwipeSpec），离线自检盯着它；起止比例也只在这里算一次。
-      const spec = base.parseSwipeSpec(direction);
-      for (let i = 1; i <= n; i++) {
-        console.log(
-          `  第 ${i}/${n} 次向${spec.dir}滑动（每次约 ${Math.round(spec.ratio * 100)}% 屏高）`
-        );
-        // swipeUp 的起止比例反过来就是向下滑（同一个原子操作，不重复造一个函数）
-        page = await android.swipeUp(page, {
-          startRatio: spec.startRatio,
-          endRatio: spec.endRatio,
-        });
-        await base.sleep(800); // 滑完给它一点时间稳定，紧接着就断言容易读到中间态
-      }
-      return page;
+    // 「滑动」= **一直滑到页面不动为止**（滑到底 / 滚回顶部），不是"滑 N 次"。
+    //   参数1 = 方向（上/下，可不填，留空 = 上）
+    //   参数2 = 最多滑几次（可不填，留空 = 10；给无限加载的列表兜个上限）
+    // 解析用纯函数 base.parseScrollSpec（离线自检盯着它），循环由 android.swipeToEdge 干
+    // —— 滑动手势与"动没动"的判据全框架只有一份实现。
+    run: async (page, dir, maxTimes) => {
+      const spec = base.parseScrollSpec(dir, maxTimes);
+      console.log(
+        `向${spec.dir}滑，直到页面不再移动（最多 ${spec.max} 次）` +
+          (spec.maxRaw ? "" : "（参数2 没填 = 默认上限 10）")
+      );
+      const r = await android.swipeToEdge(page, { dir: spec.dir, max: spec.max });
+      return r.page;
     },
   },
 
