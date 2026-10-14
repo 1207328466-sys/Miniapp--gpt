@@ -89,6 +89,35 @@ async function countOfText(p, text) {
 }
 
 /**
+ * 把「元素 id」转成可靠的选择器 —— **纯函数**，方便离线自检。
+ *
+ * 【为什么不用 `#id`】CSS 的 `#xxx` 在 id 以数字开头时是**非法**的，而这个小程序里正好有
+ * 那种 id（实测形如 `9d834775--_XFi`）。属性写法 `[id="xxx"]` 对任何字符都成立。
+ *
+ * 【什么样的 id 能用】（2026/10/14 实测）：
+ *   · 短 id（形如 `_AQ`、`_WwW`）：**隔天还在**（4 份昨天的 dump + 1 份今天的，搜索栏一直是 `_AQ`）；
+ *   · 带 hash 前缀的（形如 `9d834775--_XFi`）：只在某一次的 dump 里出现过 —— 看起来跟"这一次会话/
+ *     这一个页面实例"绑在一起，**不要拿它当锚点**。
+ *   另外 id 是"页面结构"的产物：结构变了（列表多几条、顺序改了）后面的元素可能整体挪位，
+ *   所以**列表里的东西优先用文字/class**，id 更适合页面顶部那些固定元素。
+ *
+ * @param {string} id id（前面的 `#` 有无都行）
+ * @returns {string} 形如 `[id="_AQ"]` 的选择器
+ */
+function idSelector(id) {
+  let v = String(id == null ? "" : id).trim();
+  if (v.startsWith("#")) v = v.slice(1);
+  if (!v) throw new Error("id 是空的：要填元素的 id（从「打印页面结构」里抄，形如 _AQ）");
+  if (v.includes('"')) throw new Error(`id 里不该有引号：${JSON.stringify(id)}`);
+  return `[id="${v}"]`;
+}
+
+/** 按 id 点一下（参数填 id 本身，不必写 #） */
+async function tapId(page, id, what) {
+  return tapSelector(page, idSelector(id), what || `id「${id}」`);
+}
+
+/**
  * 把「像是把元素的多个 class 抄成一串」的选择器，改写成 CSS 里真正的写法（`.a.b.c`）。
  *
  * 【为什么要有它】真实踩到（2026/10/13 owner 填表）：页面上一个元素的 class 是
@@ -132,6 +161,20 @@ function suggestJoinedSelector(selector) {
  * 宁可少说一句，也不要给一个同样错的答案。
  */
 async function selectorMissHint(page, selector) {
+  // 按 id 找、没找到时的专属提示（2026/10/14 实测）：
+  //   · 首页那种**长驻页面**里的 id 是稳的（搜索栏 `_AQ` 隔天还在）；
+  //   · 而**新打开的页面**里的 id 每次都重新分配（搜索页的输入框昨天 `_RlY`、今天 `_Hj`）——
+  //     所以"昨天还能用的 id 今天找不到"是正常现象，不是用例写错了。
+  const idMatch = /^\[id="((?:[^"\\]|\\.)+)"\]$/.exec(String(selector || "").trim());
+  if (idMatch) {
+    return (
+      `\n  [提示] 按 id 找的是「${idMatch[1]}」。id 的稳定性**分页面**：\n` +
+      `    首页那种一直是同一个的页面里，id 隔天还在（实测搜索栏 _AQ）；\n` +
+      `    但**新打开的页面每次都会重新分配 id**（实测搜索页输入框：昨天 _RlY、今天 _Hj）。\n` +
+      `    所以：① 想确认现在的 id —— 用「打印页面结构」或 node test_case/diagnostic/dump_page.js --only-text；\n` +
+      `    ② 要写长期用例，优先用**文字**（检查文字显示）或 **class**（.search-container），id 留给固定元素或临时调试。`
+    );
+  }
   const joined = suggestJoinedSelector(selector);
   if (!joined) return "";
   let n = 0;
@@ -406,6 +449,8 @@ module.exports = {
   notFound,
   suggestJoinedSelector,
   selectorMissHint,
+  idSelector,
+  tapId,
   waitUntil,
   tapLocator,
   tapSelector,

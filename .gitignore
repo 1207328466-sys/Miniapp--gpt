@@ -90,3 +90,7 @@ id_ecdsa.pub
 *.ppk
 *_public_key.txt
 ssh_config*.txt
+
+# 账号/凭据类的本地文件：这类文件名一看就是放用户名密码的，**绝不入库**。
+# （2026/10/14：工作区里出现过一个 oacli/accounts.json，里面是 accounts 列表 —— 确认之前先按"凭据"处理。）
+accounts.json

@@ -42,6 +42,33 @@ check("第一段不是点号开头的 class", s("div span"), null);
 check("空串 / 只有一个词", s(""), null);
 check("纯 class 名（无点号，不是我们教的写法）", s("search-container"), null);
 
+// ---- 按 id 定位（2026/10/14）：id 转选择器的口径 ----
+const i = base.idSelector;
+check("普通 id", i("_AQ"), '[id="_AQ"]');
+check("带 # 的 id（也认）", i("#_AQ"), '[id="_AQ"]');
+check(
+  "★以数字开头的 id（CSS 的 #xxx 用不了，必须走属性写法）",
+  i("9d834775--_XFi"),
+  '[id="9d834775--_XFi"]'
+);
+check("前后有空格先去掉", i("  _AQ  "), '[id="_AQ"]');
+
+let threw = false;
+try {
+  i("");
+} catch (e) {
+  threw = true;
+}
+check("空 id 要报错（而不是生成一个匹配一切的选择器）", threw, true);
+
+let threw2 = false;
+try {
+  i('a"b');
+} catch (e) {
+  threw2 = true;
+}
+check("id 里带引号要报错（不然会拼出一个坏选择器）", threw2, true);
+
 console.log();
 if (failed.length) {
   console.log(`有 ${failed.length} 项不符合预期：`);
