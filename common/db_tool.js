@@ -22,6 +22,8 @@ const TOOLS = {
   courseList: path.join(__dirname, "..", "tools", "course_list_report.py"),
   quizScore: path.join(__dirname, "..", "tools", "quiz_score_report.py"),
   quizAnswerKey: path.join(__dirname, "..", "tools", "quiz_answer_key_report.py"),
+  // 礼品分类的夹具（屏蔽/还原）——缺陷 713396918 的回归用例要用
+  giftCategory: path.join(__dirname, "..", "tools", "gift_category_tool.py"),
 };
 
 const CLEANUP_TOOL = TOOLS.cleanup;

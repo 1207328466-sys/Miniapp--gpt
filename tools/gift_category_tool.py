@@ -39,7 +39,8 @@ TEST_DB_HINTS = ("alpha", "test", "dev", "beta")
 def main(argv=None):
     ap = argparse.ArgumentParser(description="礼品分类 屏蔽/还原（只改 status）")
     ap.add_argument("--config", default=str(DEFAULT_CONFIG), help="数据库配置（默认 config/db.local.yaml）")
-    ap.add_argument("--id", type=int, required=True, help="礼品分类 id（gift_category.id）")
+    ap.add_argument("--id", type=int, help="礼品分类 id（gift_category.id）")
+    ap.add_argument("--name", help="礼品分类名（跟后台一字不差；重名会拒绝，让你改用 --id）")
     ap.add_argument("--block", action="store_true", help="屏蔽（status=0）")
     ap.add_argument("--restore", action="store_true", help="还原（status=1）")
     ap.add_argument("--yes", action="store_true", help="真的写库（不加就是只预览）")
@@ -48,6 +49,9 @@ def main(argv=None):
     preview_only = not (args.block or args.restore)
     if args.block and args.restore:
         print("[拒绝] 二选一：--block 或 --restore")
+        return 2
+    if not args.id and not args.name:
+        print("[拒绝] 要点名目标：--id 27 或 --name 实物商品")
         return 2
 
     cfg = read_config(args.config)
@@ -62,8 +66,24 @@ def main(argv=None):
         target = 0 if args.block else 1
     conn = load_conn(args.config)
     cur = conn.cursor()
-    cur.execute("select id, category_name, status, is_deleted, gift_count from gift_category where id = %s", (args.id,))
-    row = cur.fetchone()
+    # 按名字找时**必须唯一**：重名就让人改用 --id（猜一个的后果是改错分类）
+    if args.name:
+        cur.execute(
+            "select id, category_name, status, is_deleted, gift_count from gift_category "
+            "where category_name = %s and is_deleted = 0 order by id",
+            (args.name,),
+        )
+        found = cur.fetchall()
+        if len(found) > 1:
+            print("[拒绝] 名字「%s」有 %d 个未删除的分类，请改用 --id：%s"
+                  % (args.name, len(found), [r[0] for r in found]))
+            cur.close()
+            conn.close()
+            return 1
+        row = found[0] if found else None
+    else:
+        cur.execute("select id, category_name, status, is_deleted, gift_count from gift_category where id = %s", (args.id,))
+        row = cur.fetchone()
     if not row:
         print("[!] 没有这个分类 id：%s" % args.id)
         cur.close()

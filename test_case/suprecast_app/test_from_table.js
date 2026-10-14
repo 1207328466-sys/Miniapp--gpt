@@ -369,6 +369,42 @@ const HANDLERS = {
     },
   },
 
+  /* ---------- 2026/10/14 追加：礼品分类的夹具（缺陷 713396918 回归用）----------
+   * 这两步是一对：`屏蔽礼品分类` 造夹具、`还原礼品分类` 收尾。为什么要有它们：
+   * 那条缺陷的断言是"屏蔽分类后，该分类的礼品不显示" —— 夹具不摆好，断言天然成立（假绿）；
+   * 而 owner 的要求是"数据改完记得还原"，所以把**摆夹具 + 收尾**都写进用例里，
+   * 跑一次就把状态改回去，不用人记着手动还原。
+   * 开关照旧：`UITEST_ALLOW_SUBMIT=1` 才允许写（没开就报错，不静默跳过）。
+   */
+
+  屏蔽礼品分类: {
+    run: async (page, categoryName) => {
+      if (!writeSwitchOn()) throw writeSwitchOffError("「屏蔽礼品分类」");
+      const out = runTool("giftCategory", ["--name", categoryName, "--block", "--yes"]);
+      if (!/\[已改\]|幂等/.test(out)) {
+        throw new Error(
+          `「屏蔽礼品分类」没有改成（分类名 ${JSON.stringify(categoryName)}）—— 工具可能拒绝了（重名/库名不像测试库）。\n` +
+            out.trim().split("\n").slice(-3).join("\n")
+        );
+      }
+      return page;
+    },
+  },
+
+  还原礼品分类: {
+    run: async (page, categoryName) => {
+      if (!writeSwitchOn()) throw writeSwitchOffError("「还原礼品分类」");
+      const out = runTool("giftCategory", ["--name", categoryName, "--restore", "--yes"]);
+      if (!/\[已改\]|幂等/.test(out)) {
+        throw new Error(
+          `「还原礼品分类」没有改回（分类名 ${JSON.stringify(categoryName)}）—— 夹具可能还留在屏蔽状态，快去查！\n` +
+            out.trim().split("\n").slice(-3).join("\n")
+        );
+      }
+      return page;
+    },
+  },
+
   检查答题记录数: {
     run: async (page, activityName, expected) => {
       // 只读检查：不需要开关。expectOk=false -> 数量对不上时不抛错，由下面自己给一句人话报错
