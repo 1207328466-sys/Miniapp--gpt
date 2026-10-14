@@ -12,7 +12,8 @@
   5b. `scripts/selftest-case-copy-reset.py` 案例复制复位工具的护栏（14 项：库名/点名案例/量上限/重名）
   6. `test_case/diagnostic/selftest_quiz_question_options.js` 答题"选项 2~6 且互不相同"规则（10 项，纯函数，正反都验）
   7. `test_case/diagnostic/selftest_course_zero_lesson_match.js` 课程"0 课时对账"的匹配规则（12 项，含前缀误报边界）
-  8. `scripts/selftest-run-preflight.py` run.py 开跑前"设备预检"的解析规则（16 项，含 unauthorized/offline 反例）
+  8. `scripts/selftest-run-preflight.py` run.py 开跑前"预检"的解析规则（33 项：设备就绪判定、
+     前台是谁、以及"按编号挑一条要写 -k"的位置参数判据 —— 含 unauthorized/offline 反例）
   9. `scripts/check-doc-index.py`       文档索引不许漂移（目录↔正文、踩坑索引、文档地图登记）
   10. `scripts/check-safety.py`         数据/凭据安全不变式（20 项）
   11. `scripts/check-invariants.py`     框架自身完整性（14 项：动作↔实现、中文名、退出码兜底、安全阀、

@@ -87,6 +87,61 @@ expect_focus(
 
 expect("adb 的守护进程提示行（* daemon not running…）不算设备", "* daemon not running; starting now at tcp:5037\n" + HEADER, [])
 
+# ---------- 「按编号挑一条」要写 -k（2026/10/14 owner 实际踩到）----------
+# 为什么盯它：`python run.py ZW_029` 里的 ZW_029 会被 pytest 当成**文件路径**，
+# 找不到 -> collected 0 items + 退出码 4，而报错里完全没提"你该用 -k"。
+# 这里的判据只认"真的在用例表里出现过的编号"，路径该报错还是让 pytest 自己报。
+def expect_selector(name, token, want):
+    """核对「这个位置参数像不像用例编号」的判断"""
+    global passed
+    got = runpy.looks_like_case_id(token, CASE_IDS)
+    if got != want:
+        failed.append("%s：判成 %s，期望 %s" % (name, got, want))
+        return
+    passed += 1
+    print("OK   %s -> %s" % (name, got))
+
+
+CASE_IDS = ["ZW_001", "ZW_022", "ZW_029"]
+
+# 正例：确实是用例编号（要拦下来并提示 -k）
+expect_selector("用例编号（就是 owner 踩到的那个）", "ZW_029", True)
+expect_selector("带末尾反斜杠（Windows 路径写法）", "ZW_029\\", True)
+expect_selector("带末尾斜杠", "ZW_029/", True)
+expect_selector("前后有空格", "  ZW_022  ", True)
+expect_selector("小写也认（编号不区分大小写）", "zw_029", True)
+
+# 反例（都不能误伤）
+expect_selector("-k 之后的那个词不该被当成位置参数处理", "-k", False)
+expect_selector("正常的 .js 用例文件路径", "suprecast_app/test_example.js", False)
+expect_selector("带目录的路径", "suprecast_app/hhh.js", False)
+expect_selector("用例表里没有的编号 -> 交给 pytest 报错，不猜", "ZW_999", False)
+expect_selector("完全不相干的词", "专栏", False)
+expect_selector("空串", "", False)
+
+
+def expect_positionals(name, argv, want):
+    """核对「哪些词会被 pytest 当文件/目录收集」。
+
+    ⚠️ 这条是为一个**当天写完就验出来的自伤**加的：第一版没跳过 `-k` 的值，
+    于是把正确写法 `python run.py -k ZW_029` 也拦了下来（把 -k 后面的编号当成了位置参数）。
+    """
+    global passed
+    got = runpy.positional_candidates(argv)
+    if got != want:
+        failed.append("%s：挑出 %s，期望 %s" % (name, got, want))
+        return
+    passed += 1
+    print("OK   %s -> %s" % (name, got))
+
+
+expect_positionals("★正确写法：-k 的值不算位置参数", ["-k", "ZW_029"], [])
+expect_positionals("--env 的值也不算", ["--env", "test", "ZW_029"], ["ZW_029"])
+expect_positionals("光秃秃一个编号（owner 踩到的写法）", ["ZW_029\\"], ["ZW_029\\"])
+expect_positionals("-vs 是开关（不带值），后面的编号仍是位置参数", ["-vs", "ZW_029"], ["ZW_029"])
+expect_positionals("点名 .js 文件", ["suprecast_app/test_example.js"], ["suprecast_app/test_example.js"])
+expect_positionals("什么都不给 = 跑全部", [], [])
+
 print()
 if failed:
     print("有 %d 项不符合预期：" % len(failed))

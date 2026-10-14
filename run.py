@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import sys
+import json
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,7 @@ ALLURE_HTML = REPORT / "allure-report"
 # 「填表就能写用例」：开跑前先把 Excel 用例表导出成 json
 CASES_XLSX = ROOT / "cases" / "用例表.xlsx"
 EXPORT_SCRIPT = ROOT / "tools" / "export_cases.py"
+TABLE_CASE_JSON = ROOT / "cases" / "用例表.json"
 TABLE_CASE_FILE = "test_from_table.js"
 
 # 跑起来必需的 Python 依赖（缺一个就会以"看不懂的报错"失败）
@@ -126,6 +128,98 @@ def export_case_table(argv):
     print("    改好 cases/用例表.xlsx 再跑；若只想跑别的用例，点名到文件即可，例如：")
     print("      python run.py suprecast_app/test_example.js")
     print("    （用 -k 时无法事先判断会不会命中表格里的用例，所以这里保守地停下来）")
+    return False
+
+
+def looks_like_case_id(token, case_ids):
+    """这个位置参数看起来是不是**用例编号**？—— **纯函数**（离线自检直接调它）。
+
+    【为什么要有它】2026/10/14 owner 实际踩到：`python run.py ZW_029` ——
+    这里的 `ZW_029` 会被 pytest 当成**文件/目录路径**去收集，找不到就：
+
+        ERROR: file or directory not found: ZW_029
+        collected 0 items          （退出码 4）
+
+    而人想说的是"只跑这一条"。pytest 里那是 `-k` 的活：
+
+        python run.py -k ZW_029
+
+    报错本身没说这句人话（"命令行参数错误"听着像参数写错了格式，其实是"位置参数的含义不对"），
+    所以这里在开跑前就把它翻译出来。判据刻意保守：**只有在用例表里真能找到这个编号**才算命中 ——
+    路径该长什么样就交给 pytest 自己报错（`file or directory not found` 已经够清楚）。
+
+    @param {string} token 一个不以 - 开头的命令行参数
+    @param {Iterable[str]} case_ids 用例表里的编号（大小写不敏感）
+    @returns {bool}
+    """
+    t = str(token or "").strip().strip("\\/")  # 末尾的 \ 或 / 是路径分隔符，去掉再看
+    if not t or t.startswith("-"):
+        return False
+    # 看着就是文件/目录路径的，不归这里管（交给 pytest 报"找不到"）
+    if t.endswith((".js", ".py", ".xlsx", ".json")) or "/" in t or "\\" in t:
+        return False
+    return t.lower() in {str(c).lower() for c in (case_ids or [])}
+
+
+# 这些选项**后面那一个词是它们的值**，不是位置参数 —— 判断时要跳过它。
+# ⚠️ 漏掉这一步真踩到过（2026/10/14 写完立刻验到的）：`python run.py -k ZW_029` 里
+# 的 ZW_029 会被当成"位置参数"拦下来 —— 而那正是**正确**写法。所以先按选项把值摘出去。
+VALUE_OPTIONS = ("-k", "-m", "-n", "--env", "--alluredir", "--deselect")
+
+
+def positional_candidates(argv):
+    """挑出「真正会被 pytest 当成 文件/目录 去收集」的位置参数（选项的值不算）。
+
+    **纯函数**，离线自检直接调它。判据：
+      · `-k` / `--env` 这类"带值选项"后面那一个词 -> 是值，跳过；
+      · 其余以 - 开头的 -> 是选项本身，跳过；
+      · 剩下的就是位置参数。
+    """
+    out, skip_next = [], False
+    for a in argv or []:
+        if skip_next:
+            skip_next = False
+            continue
+        if a in VALUE_OPTIONS:
+            skip_next = True
+            continue
+        if str(a).startswith("-"):
+            continue
+        out.append(a)
+    return out
+
+
+def preflight_case_selector(argv):
+    """按用例编号挑一条时要写 `-k`；写成位置参数的话，在这里就讲清楚（别等 pytest 报天书）。
+
+    @returns 能不能继续（False = 已把原因和正确写法打印出来，本次不跑）
+    """
+    case_ids, titles = [], {}
+    try:
+        payload = json.loads(TABLE_CASE_JSON.read_text(encoding="utf-8"))
+        for c in payload.get("cases", []):
+            case_ids.append(c.get("id", ""))
+            titles[str(c.get("id", ""))] = c.get("name", "")
+    except Exception:
+        return True  # 没有/读不了 json：不拦（后面 pytest 该报什么报什么）
+
+    hits = [a for a in positional_candidates(argv) if looks_like_case_id(a, case_ids)]
+    if not hits:
+        return True
+
+    for token in hits:
+        cid = str(token).strip().strip("\\/")
+        title = titles.get(cid) or titles.get(cid.upper(), "")
+        print(f"\n[!] 「{token}」是**用例编号**，这样传跑不起来 —— " + (f"（{cid}「{title}」）" if title else ""))
+        print("    位置参数在 pytest 里表示「收集哪个文件/目录」，它不是名字筛选：")
+        print(f"      ERROR: file or directory not found: {token}")
+        print("      collected 0 items（退出码 4，看着像参数格式写错了，其实是位置参数的含义不对）")
+        print("    只跑这一条的正确写法是给它加个 -k：")
+        print(f"      python run.py -k {cid}        # -k 后面写编号，或标题里的几个字")
+        print(
+            "    （后面什么都不写就是跑表里的全部 %d 条；点名单个 .js 用例文件时才直接给路径）"
+            % len([c for c in case_ids if c])
+        )
     return False
 
 
@@ -327,6 +421,11 @@ def main(argv):
 
     # 表格用例：开跑前先导出一次（表格有错会在这里停下来，见函数内说明）
     if not export_case_table(argv):
+        return 2
+
+    # 「python run.py ZW_029」这种写法：ZW_029 会被当成文件路径 -> 0 条用例（退出码 4）。
+    # 在这里翻译成人话并给出正确写法（-k），见函数内说明。
+    if not preflight_case_selector(argv):
         return 2
 
     # 日志与 Allure 结果目录先建好：pytest 的 log_file 不会自动创建多级目录
