@@ -611,6 +611,24 @@ function checkActionList(table) {
   if (extra.length) {
     console.warn(`  [提示] 代码里有、清单里没有的动作：${extra.join("、")}（表格里填不到，无害）`);
   }
+
+  /* 「可不填」的参数：json 里必须带 p1_optional / p2_optional 标记。
+   *
+   * 为什么盯它（2026/10/14 真踩到）：加「点文字」的「第几个（可不填）」时，只有 Python 侧认
+   * "可不填"，JS 侧还在按"这一格有值吗"判断 —— 于是表格里参数2 留空，运行时被当成漏填，
+   * **用例直接报错跑不起来**（自检只覆盖了 Python 侧，所以没拦住）。
+   * 现在让执行端自己验这条契约：标记没跟着来，就当场说清"重新导出一遍"。
+   */
+  for (const a of table.actions || []) {
+    for (const f of ["p1", "p2"]) {
+      if (String(a[f] || "").includes("可不填") && !a[`${f}_optional`]) {
+        throw new Error(
+          `动作「${a.name}」的「${f}」写着"可不填"，但用例表 json 里没有 ${f}_optional 标记。\n` +
+            `  这份 json 是旧版导出脚本生成的。修法：python tools/export_cases.py --dropdown 重新导出一遍。`
+        );
+      }
+    }
+  }
 }
 
 /** 用例表比导出结果新时提醒一句（Excel 一保存文件时间就变，所以只说提示、不当错误） */
@@ -654,11 +672,13 @@ function buildStepFunc(step) {
   }
 
   // 参数再查一遍：正常由 export_cases.py 保证，这里防的是「有人手改了 json」
+  // 「可不填」的参数（p1_optional / p2_optional，目前只有「点文字」「点选择器」的「第几个」）
+  // 例外：留空是合法输入，走默认值 —— 见 checkActionList 里那段"标记必须跟着来"的校验。
   const spec = ACTION_SPEC[step.action];
-  if (spec && spec.p1 && !step.param1) {
+  if (spec && spec.p1 && !step.param1 && !spec.p1_optional) {
     throw new Error(`动作「${step.action}」缺「参数1」（${spec.p1}）—— 去用例表里检查这一行`);
   }
-  if (spec && spec.p2 && !step.param2) {
+  if (spec && spec.p2 && !step.param2 && !spec.p2_optional) {
     throw new Error(`动作「${step.action}」缺「参数2」（${spec.p2}）—— 去用例表里检查这一行`);
   }
 
@@ -689,6 +709,10 @@ async function runOneCase(caseDef) {
   const funcList = caseDef.steps.map(buildStepFunc);
   console.log("\n" + "=".repeat(66));
   console.log(`用例 ${caseDef.id}：${caseDef.name}（${funcList.length} 步）`);
+  // 表格里那两列「按用例」的说明也打出来：跑挂了的时候，第一眼要看的往往不是报错，
+  // 而是"跑这条之前手机该是什么状态"（前置条件）。报告里也会贴一份（见 conftest.py）。
+  if (caseDef.precondition) console.log(`前置条件：${caseDef.precondition}`);
+  if (caseDef.note) console.log(`备注：${caseDef.note}`);
   console.log("=".repeat(66));
 
   await appTest(funcList, {
@@ -698,6 +722,8 @@ async function runOneCase(caseDef) {
       feature: "填表用例",
       story: caseDef.id,
       title: `${caseDef.id} ${caseDef.name}`,
+      precondition: caseDef.precondition || "",
+      note: caseDef.note || "",
     },
   });
 }

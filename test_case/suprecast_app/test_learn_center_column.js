@@ -61,7 +61,21 @@ const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
     [learnCenter.switchToColumnTab, null],
 
     // 断言：「专栏」内容确实显示出来了
-    [assertTextVisible, { text: learnCenter.MARKER_COLUMN_LIST }],
+    // 2026/10/14 校准：这块的"独有小标题"会随运营数据变（「热门专栏」/「往期专栏」），
+    // 盯着某一个词做断言，数据一变就报假失败（那天真机上一整页找不到「热门专栏」）。
+    // 所以改成盯**判据本身**：有专栏卡片 + 有其中任一小标题 —— 判据定义见页面对象。
+    [
+      async function assertOnColumnList(page) {
+        if (!(await learnCenter.isOnColumnList(page))) {
+          throw new Error(
+            "断言失败：这一页不像专栏列表页（判据：有 .column-card 卡片，且有「热门专栏」或「往期专栏」之一）"
+          );
+        }
+        console.log("断言通过：当前是专栏列表页（卡片 + 小标题都在）");
+        return page;
+      },
+      null,
+    ],
     // 卡片数会随运营内容变化，所以只断言"至少一张"，不断言精确数量
     // —— 写死数量会在别人新增一张专栏时变成假失败。
     [assertSelectorExists, { selector: learnCenter.SEL.columnCard }],
@@ -72,7 +86,16 @@ const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
     // 断言：确实在详情页 —— 详情页有且只有一个 .col-title，
     // 而列表页独有的「热门专栏」应当消失
     [assertSelectorCount, { selector: columnDetail.SEL.title, expected: 1 }],
-    [assertTextNotVisible, { text: learnCenter.MARKER_COLUMN_LIST }],
+    [
+      async function assertLeftColumnList(page) {
+        if (await learnCenter.isOnColumnList(page)) {
+          throw new Error("断言失败：进了详情页，但页面仍然像专栏列表页（卡片 + 小标题还在）");
+        }
+        console.log("断言通过：已经离开专栏列表页");
+        return page;
+      },
+      null,
+    ],
 
     // 断言：进的就是刚才点的那一个专栏（用步骤间共享上下文传数据）
     // 只断言"进了详情页"是不够的 —— 点错卡片、或者列表顺序变了，那样仍然会通过。

@@ -224,6 +224,19 @@ def _attach_to_allure(entries, case_name):
     allure.dynamic.story(header.get("story") or case_name)
     allure.dynamic.title(header.get("title") or case_name)
 
+    # 表格用例的「前置条件 / 备注」也贴进报告（2026/10/14 加的表格列）：
+    # 报告里挂了的时候，第一件想确认的就是"跑这条之前手机该是什么状态" ——
+    # 只写在 Excel 里的话，看报告的人（可能是别人）根本没机会看到。
+    precondition = str(header.get("precondition") or "").strip()
+    note = str(header.get("note") or "").strip()
+    if precondition or note:
+        lines = []
+        if precondition:
+            lines.append("前置条件：%s" % precondition)
+        if note:
+            lines.append("备注：%s" % note)
+        allure.dynamic.description("\n".join(lines))
+
     for s in steps:
         with allure.step(f"{s.get('num')}. {s.get('name')} ({s.get('duration')}s)"):
             if s.get("error"):

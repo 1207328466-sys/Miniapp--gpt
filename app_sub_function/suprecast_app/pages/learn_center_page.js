@@ -40,7 +40,14 @@ const SEL = {
 
 const TOP_TAB = { course: "课程", column: "专栏", encyclopedia: "压铸百科" };
 const BOTTOM_TAB_TEXT = "学习中心";
-const MARKER_COLUMN_LIST = "热门专栏";
+/* 专栏列表页的"独有小标题"。
+ * 2026/10/14 实测校准：原来只有「热门专栏」，那天真机上整页找不到它 ——
+ * 页面上是「往期专栏」（互动专栏过了活动期就会落到"往期"，见 `wx-text` 标题行）。
+ * 两个都认：**这个问题的本质是"判据漂移"** —— 判据盯着一句会随数据变的文案，
+ * 数据一变，用例就报"没到达"，看着像功能坏了。所以只要**其中之一**在，就算到了专栏列表页；
+ * 卡片（`.column-card`）数量 > 0 仍是必要条件，防止把"空列表"当成到达。
+ */
+const MARKERS_COLUMN_LIST = ["热门专栏", "往期专栏"];
 
 /** 现在是不是学习中心（判据：三个顶部 tab 元素都在） */
 async function isOn(page) {
@@ -48,11 +55,12 @@ async function isOn(page) {
   return (await base.countOf(fg, SEL.headerTab)) >= 3;
 }
 
-/** 现在是不是学习中心的「专栏」列表页（有卡片 且 有「热门专栏」标题） */
+/** 现在是不是学习中心的「专栏」列表页（有卡片 且 有专栏小标题：热门专栏 / 往期专栏） */
 async function isOnColumnList(page) {
   const fg = await base.foreground(page);
   if ((await base.countOf(fg, SEL.columnCard)) === 0) return false;
-  return (await base.pageText(fg)).includes(MARKER_COLUMN_LIST);
+  const text = await base.pageText(fg);
+  return MARKERS_COLUMN_LIST.some((m) => text.includes(m));
 }
 
 /** 当前选中的是哪个顶部 tab（返回 tab 文本；拿不到返回空串） */
@@ -352,7 +360,10 @@ module.exports = {
   SEL,
   TOP_TAB,
   BOTTOM_TAB_TEXT,
-  MARKER_COLUMN_LIST,
+  // ⚠️ 这两个导出别混：MARKERS_（复数）是判据用的**列表**；
+  // MARKER_COLUMN_LIST（单数）保留旧名给老代码/文档引用，指向**首选**那个小标题。
+  MARKERS_COLUMN_LIST,
+  MARKER_COLUMN_LIST: MARKERS_COLUMN_LIST[0],
   isOn,
   isOnColumnList,
   activeTopTab,

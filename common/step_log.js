@@ -28,7 +28,9 @@ const path = require("path");
  * @param {{filePath?: string|null, caseFile?: string|null, meta?: Object|null}} [options]
  *        filePath: 日志文件路径；为空则整体禁用（不会报错）
  *        caseFile: 用例文件名，用于报告标题
- *        meta: 用例元数据 {feature, story, title}，可省略（省略时按文件名推导）
+ *        meta: 用例元数据 {feature, story, title, precondition, note}，
+ *              可省略（省略时按文件名推导）；后两个是表格用例的「前置条件 / 备注」，
+ *              Python 侧（conftest.py）会把它们贴进 Allure 报告的描述里。
  * @returns {{enabled: boolean, case: Function, step: Function, finish: Function}}
  */
 function createStepLogger({ filePath = null, caseFile = null, meta = null } = {}) {
@@ -71,6 +73,9 @@ function createStepLogger({ filePath = null, caseFile = null, meta = null } = {}
         feature: (meta && meta.feature) || extra.feature || null,
         story: (meta && meta.story) || extra.story || null,
         title: (meta && meta.title) || extra.title || caseFile || null,
+        // 表格用例才有：报告描述里的「前置条件 / 备注」
+        precondition: (meta && meta.precondition) || extra.precondition || null,
+        note: (meta && meta.note) || extra.note || null,
         startedAt: new Date().toISOString(),
       });
     },
