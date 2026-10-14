@@ -608,39 +608,66 @@ async function swipeUp(
     const y1 = Math.round(view.h * startRatio * view.dpr);
     const y2 = Math.round(view.h * endRatio * view.dpr);
 
-    // 滚动判据：记录页面中部若干个元素的位置，滑动后看它们有没有位移。
-    // 不用 scrollHeight - clientHeight 判断（小程序动态加载时该差值不稳定，
-    // 实测出现过一个可滚动容器都检测不到、导致误判"未滚动"的情况）。
+    /* 滚动判据（2026/10/14 修正）：**两个信号，任意一个变过就算动了** ——
+     *   ① 所有元素里最大的 scrollTop（原生滚动，最直接）；
+     *   ② 页面中部若干元素的 top（滚动可能是用 transform 做的，那时 scrollTop 恒为 0，只能看这个）。
+     *
+     * 【为什么要加第①个】当天在案例库页上实测到：页面**真的滚了 159 px**，
+     * 但采样窗口（top 100~600、高>20）里只有**吸顶元素**（top 恒为 123），
+     * 于是旧判据（只看元素 top）报「未发生位移」—— 一天里冤枉了 3 条用例
+     * （案例库_003、ZW_029、以及一条临时用例）。证据见 test_case/diagnostic/probe_swipe_judge.js。
+     *
+     * 另外仍然**不**用 scrollHeight - clientHeight 判断"能不能滚"：小程序动态加载时那个差值不稳，
+     * 实测出现过"一个可滚动容器都检测不到"的误判 —— 那说的是**能力**，这里量的是**有没有动**。
+     */
     const probe = () =>
       page.evaluate(() => {
-        const out = [];
+        let scrollTop = 0;
+        document.querySelectorAll("*").forEach((el) => {
+          if (el.scrollTop > scrollTop) scrollTop = el.scrollTop;
+        });
+        const tops = [];
         document.querySelectorAll("wx-view, wx-text, wx-scroll-view").forEach((el) => {
           const r = el.getBoundingClientRect();
-          if (r.height > 20 && r.top > 100 && r.top < 600) {
-            out.push(Math.round(r.top));
-          }
+          if (r.height > 20 && r.top > 100 && r.top < 600) tops.push(Math.round(r.top));
         });
-        return out.slice(0, 20);
+        return { scrollTop: Math.round(scrollTop), tops: tops.slice(0, 20) };
       });
 
-    const before = await probe();
-    await device.shell(`input swipe ${x} ${y1} ${x} ${y2} ${duration}`);
+    const movedBetween = (before, after) => {
+      if (Math.abs(after.scrollTop - before.scrollTop) > 5) return true; // ① 页面真的滚了
+      return (
+        before.tops.length > 0 && after.tops.length > 0 && // ② 元素挪位了（transform 滚动的情况）
+        after.tops.some((v, i) => before.tops[i] !== undefined && Math.abs(v - before.tops[i]) > 5)
+      );
+    };
 
-    // 等页面滚动动画结束，再确认是否真的滚了
-    const deadline = Date.now() + timeout;
-    let after = await probe();
-    while (Date.now() < deadline) {
-      await page.waitForTimeout(300);
-      after = await probe();
-      if (after.length && before.length && after.some((v, i) => before[i] !== undefined && Math.abs(v - before[i]) > 5)) {
-        break;
+    // 一次滑动 = "发一次 adb swipe，然后等它动"。抽成函数是为了能在"没动"时**重试一次**（见下）。
+    const swipeOnce = async () => {
+      const before = await probe();
+      await device.shell(`input swipe ${x} ${y1} ${x} ${y2} ${duration}`);
+      // 等页面滚动动画结束，再确认是否真的滚了
+      const deadline = Date.now() + timeout;
+      let after = await probe();
+      while (!movedBetween(before, after) && Date.now() < deadline) {
+        await page.waitForTimeout(300);
+        after = await probe();
       }
+      return { ok: movedBetween(before, after), before, after };
+    };
+
+    let res = await swipeOnce();
+    if (!res.ok && !ignoreNoMove) {
+      // 一次不成就判死太急：**刚跳到某页时列表内容可能还没渲染出来**，那一刻页面滚不动 ——
+      // 实测（2026/10/14）：`打开案例库` 之后立刻滑 -> "未发生位移"；等约 1.5 秒再滑就正常了
+      // （到达判据只等"页面容器出现"，不等"卡片渲染完"）。所以这里重试一次，
+      // **重试还不动才算失败**：错误文案与判据都没放松，仍然不会"发了 swipe 就当过"。
+      console.log("  这次滑动页面没有位移，等 800ms 再试一次（刚跳过来的页面，内容可能还没渲染完）");
+      await page.waitForTimeout(800);
+      res = await swipeOnce();
     }
 
-    const moved =
-      before.length > 0 && after.length > 0 && after.some((v, i) => before[i] !== undefined && Math.abs(v - before[i]) > 5);
-
-    if (!moved) {
+    if (!res.ok) {
       if (ignoreNoMove) {
         // 循环场景：没动 = 已经到顶/到底（或这一页本来就不滚）—— 如实说一句就返回，不当失败
         console.log("  页面没有位移（可能已经到顶/到底，或这一页本来就不可滚动）");
@@ -648,8 +675,10 @@ async function swipeUp(
       }
       // 明确抛错，避免"发了 swipe 就当过"的假通过
       throw new Error(
-        `滑动后页面未发生位移（探测点 ${JSON.stringify(before.slice(0, 5))} → ${JSON.stringify(after.slice(0, 5))}）。` +
-          `可能原因：当前页面不可滚动、滑动的容器不对、或需要先滚动到有内容的区域。`
+        `滑动后页面未发生位移（scrollTop ${res.before.scrollTop} → ${res.after.scrollTop}；` +
+          `元素 top ${JSON.stringify(res.before.tops.slice(0, 5))} → ${JSON.stringify(res.after.tops.slice(0, 5))}）。` +
+          `可能原因：当前页面不可滚动、滑动的容器不对、或需要先滚动到有内容的区域。\n` +
+          `  （已经重试过一次：等 800ms 再滑，仍然没动）`
       );
     }
 
