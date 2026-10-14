@@ -55,11 +55,11 @@ check("解析知识库清单：表头那行不会被当成数据", "id" not in k
 
 # ---------- 整理拉取结果 ----------
 pulled = p.summarize([
-    {"id": 712880447, "subject": "小程序-压铸百科", "status": "已关闭",
+    {"id": 712880447, "tracker": "Story", "subject": "小程序-压铸百科", "status": "已关闭",
      "assigned": "俞振豪", "updated_str": "2025-06-19 10:00"},
-    {"id": 713594979, "subject": " 小程序-有问必答首页增加活动入口 ", "status": "已关闭",
+    {"id": 713594979, "tracker": "Story", "subject": " 小程序-有问必答首页增加活动入口 ", "status": "已关闭",
      "assigned": "詹鑫泽", "updated_str": "2026-10-13 16:25"},
-    {"id": "999999999", "subject": "新来的需求", "status": "新建", "assigned": "", "updated_str": "2026-10-14"},
+    {"id": "999999999", "tracker": "Story", "subject": "新来的需求", "status": "新建", "assigned": "", "updated_str": "2026-10-14"},
 ])
 check("整理拉取结果：id 统一成字符串、字段都取到",
       pulled["713594979"]["status"] == "已关闭" and pulled["713594979"]["title"].startswith("小程序")
@@ -67,7 +67,9 @@ check("整理拉取结果：id 统一成字符串、字段都取到",
       str(pulled))
 
 # ---------- 对账 ----------
-added, gone, changed = p.diff(kb, pulled)
+added, gone, changed, first_time = p.diff(kb, pulled)
+check("对账：这次没有「首次纳入的类型」（两边都是 Story）", first_time == {}, str(first_time))
+# diff 现在返回 4 个（第 4 个是「首次纳入的类型」）
 check("对账：新增只有 999999999", added == ["999999999"], str(added))
 check("对账：消失为空（知识库两条都在拉取结果里）", gone == [], str(gone))
 check("对账：状态变化算成变化、不算新增/消失",
@@ -76,21 +78,69 @@ check("对账：状态变化算成变化、不算新增/消失",
 # ---------- 反例：把"消失"造出来 ----------
 kb2 = dict(kb)
 kb2["700000000"] = {"tracker": "Story", "status": "已关闭", "title": "知识库里有、拉取没有"}
-added2, gone2, changed2 = p.diff(kb2, pulled)
+added2, gone2, changed2, _ft2 = p.diff(kb2, pulled)
 check("对账（反例）：知识库有、拉取没有 -> 算「消失」", gone2 == ["700000000"], str(gone2))
 check("对账（反例）：消失不会同时算成新增", "700000000" not in added2, str(added2))
 
 # ---------- 反例：状态一边为空时不硬算变化 ----------
-pulled3 = {"713594979": {"title": "x", "status": "", "assigned": "", "updated": ""}}
-_a, _g, changed3 = p.diff({"713594979": kb["713594979"]}, pulled3)
+pulled3 = {"713594979": {"tracker": "Story", "title": "x", "status": "", "assigned": "", "updated": ""}}
+_a, _g, changed3, _ft3 = p.diff({"713594979": kb["713594979"]}, pulled3)
 check("对账（反例）：状态读到空值时不算「状态变化」", changed3 == [], str(changed3))
 
 # ---------- 报告：零差异时必须写「零差异」，不能只给一张空表 ----------
 rep = p.render_report(pulled, pulled, [], [], [], {"time": "t", "project_name": "P", "project_id": "id"})
 check("报告：零差异时写明「零差异」", "零差异" in rep, rep[:80])
-rep2 = p.render_report(pulled, kb, added, gone, changed, {"time": "t", "project_name": "P", "project_id": "id"})
+rep2 = p.render_report(pulled, kb, added, gone, changed, {"time": "t", "project_name": "P", "project_id": "id"}, first_time)
 check("报告：有变化时三段标题都在", "新增" in rep2 and "状态变化" in rep2 and "消失" in rep2, "")
 check("报告：把新增那条的标题写进去（不是只写 id）", "新来的需求" in rep2, "")
+
+# ---------- 首次纳入的类型（2026/10/14：把缺陷也拉进知识库时加的）----------
+kb_story_only = {"713594979": {"tracker": "Story", "status": "已关闭", "title": "老需求"}}
+pulled_mixed = {
+    "713594979": {"tracker": "Story", "status": "已关闭", "title": "老需求", "assigned": "", "updated": ""},
+    "712977285": {"tracker": "Bug", "status": "已关闭", "title": "老缺陷", "assigned": "", "updated": ""},
+    "713999999": {"tracker": "Story", "status": "新建", "title": "真·新需求", "assigned": "", "updated": ""},
+}
+_a3, _g3, _c3, ft3 = p.diff(kb_story_only, pulled_mixed)
+check("对账：首次拉缺陷不算「新增」（否则会像一夜冒出来 545 条）", _a3 == ["713999999"], str(_a3))
+check("对账：首次纳入的类型单独报出来", ft3 == {"Bug": 1}, str(ft3))
+
+# ---------- 描述正文：HTML -> 人能读的一段字（2026/10/14 加了"从 API 拉详情重建知识库"）----------
+h = p.html_to_text(
+    '<p>第一段 <b>加粗</b></p><p>第二段</p><img src="/v2/upload/x.png" height="10">'
+    '<p>带实体 &amp; &lt;尖括号&gt; &nbsp;结尾</p>'
+)
+check("HTML 转文本：标签都去掉了", "<p>" not in h and "<b>" not in h, h)
+check("HTML 转文本：图片变成 [图]（保留「这里有张图」的信息）",
+      "[图]" in h, h)
+check("HTML 转文本：实体还原（&amp; -> &）", "& <尖括号>" in h, h)
+check("HTML 转文本：空白压成一个空格、不留多余空行", "  " not in h and "\n" not in h, repr(h))
+check("HTML 转文本：空输入不炸", p.html_to_text(None) == "", repr(p.html_to_text(None)))
+
+# ---------- 列表 + 详情 -> 知识库生成器要的字段 ----------
+issues = [{"id": 713594985, "subject": "列表里的标题", "status": "新建", "assigned": "列表里的处理人",
+           "updated_str": "2026-10-10 10:00"}]
+details = {"713594985": {
+    "id": 713594985, "name": "详情里的标题", "description": "<p>需求正文</p>",
+    "tracker": {"name": "Story"}, "status": {"name": "已关闭"}, "priority": {"name": "高"},
+    "module": {"name": "有问必答"}, "domain": {"name": "小程序"}, "iteration": {"name": "Sprint11"},
+    "assigned_user": {"nick_name": "詹鑫泽"}, "creator": {"nick_name": "孙亭亭"},
+    "created_time": "2026-09-08 10:00", "updated_time": "2026-10-13 16:25",
+}}
+items = p.to_kb_items(issues, details)
+one = items["713594985"]
+check("映射：编号/标题用详情里的（详情更准）", one["编号"] == "713594985" and one["标题"] == "详情里的标题", str(one))
+check("映射：状态/类型/优先级/模块/迭代/领域都取到了",
+      (one["状态"], one["类型"], one["优先级"], one["模块"], one["迭代"], one["领域"])
+      == ("已关闭", "Story", "高", "有问必答", "Sprint11", "小程序"), str(one))
+check("映射：处理人取别名字段、创建时间取详情", one["处理人"] == "詹鑫泽" and one["创建时间"] == "2026-09-08 10:00", str(one))
+check("映射：描述已被压成一段纯文本", one["描述"] == "需求正文", str(one))
+
+# 详情缺失时（网络失败/新拉到的还没缓存）不能崩，要退回列表里的字段
+items2 = p.to_kb_items(issues, {})
+t2 = items2["713594985"]
+check("映射（反例）：没有详情时退回列表字段，不报错",
+      t2["标题"] == "列表里的标题" and t2["状态"] == "新建" and t2["描述"] == "", str(t2))
 
 print()
 if failed:

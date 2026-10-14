@@ -89,15 +89,21 @@ def load_all(src_dir):
     return items, files
 
 
-def write_items_md(items):
+def write_items_md(items, source_line=None, rerun_line=None):
+    """写「工作项清单.md」。
+
+    source_line / rerun_line 是给**别的数据来源**用的（2026/10/14 加了"直接从 CodeArts 拉"这条路，
+    见 tools/pull_requirements.py）：默认还是 xlsx 那套说法，传了就用传进来的 ——
+    免得文档头写着"来源：导出的 xlsx"，而数据其实是 API 拉的（**报告不能说谎**）。
+    """
     os.makedirs(KB_DIR, exist_ok=True)
     out = os.path.join(KB_DIR, "工作项清单.md")
     stories = [r for r in items.values() if norm(r.get("类型")) in ("Story", "需求", "Epic", "Feature")]
     bugs = [r for r in items.values() if r not in stories]
     with open(out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("# 工作项清单（机器生成，勿手改）\n\n")
-        fh.write("> 来源：超云生态平台（CodeArts）导出的工作项 xlsx。\n")
-        fh.write("> 重新生成：`python tools/build_requirements_kb.py <导出解包目录>`\n")
+        fh.write("> 来源：%s\n" % (source_line or "超云生态平台（CodeArts）导出的工作项 xlsx。"))
+        fh.write("> 重新生成：%s\n" % (rerun_line or "`python tools/build_requirements_kb.py <导出解包目录>`"))
         fh.write(f"> 本次共 {len(items)} 条唯一工作项（需求/故事 {len(stories)} 条，其余 {len(bugs)} 条）。\n\n")
         for title, group in (("需求 / 故事", stories), ("缺陷 / 其它", bugs)):
             fh.write(f"## {title}（{len(group)} 条）\n\n")
@@ -118,7 +124,7 @@ def write_items_md(items):
     return out
 
 
-def write_summary_md(items):
+def write_summary_md(items, rerun_line=None):
     out = os.path.join(KB_DIR, "迭代与模块汇总.md")
 
     def counter_md(title, key, limit=None):
@@ -131,7 +137,7 @@ def write_summary_md(items):
 
     with open(out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("# 迭代与模块汇总（机器生成，勿手改）\n\n")
-        fh.write("> 重新生成：`python tools/build_requirements_kb.py <导出解包目录>`\n\n")
+        fh.write("> 重新生成：%s\n\n" % (rerun_line or "`python tools/build_requirements_kb.py <导出解包目录>`"))
         for title, key in (("按迭代", "迭代"), ("按模块", "模块"), ("按领域", "领域"),
                            ("按类型", "类型"), ("按状态", "状态"), ("按发布版本", "发布版本号")):
             md, _ = counter_md(title, key)
@@ -139,13 +145,13 @@ def write_summary_md(items):
     return out
 
 
-def write_descriptions_md(items):
+def write_descriptions_md(items, out_name="需求描述汇编.md", title="需求描述汇编", source_line=None, rerun_line=None):
     """把每条工作项的**描述正文**按迭代导出。
 
     描述是需求正文最接近的一手材料（实测 30 列导出里 100/100 非空、平均 445 字），
     比只看标题更能搞清楚"这个功能到底要做什么"。
     """
-    out = os.path.join(KB_DIR, "需求描述汇编.md")
+    out = os.path.join(KB_DIR, out_name)
     groups = defaultdict(list)
     for r in items.values():
         groups[norm(r.get("迭代")) or "(未归入迭代)"].append(r)
@@ -155,9 +161,9 @@ def write_descriptions_md(items):
         return (0, int(m.group(1))) if m else (1, 0)
 
     with open(out, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("# 需求描述汇编（机器生成，勿手改）\n\n")
-        fh.write("> 来源：超云生态平台导出的工作项 xlsx（30 列格式才有描述字段）。\n")
-        fh.write("> 重新生成：`python tools/build_requirements_kb.py <导出解包目录>`\n")
+        fh.write("# %s（机器生成，勿手改）\n\n" % title)
+        fh.write("> 来源：%s\n" % (source_line or "超云生态平台导出的工作项 xlsx（30 列格式才有描述字段）。"))
+        fh.write("> 重新生成：%s\n" % (rerun_line or "`python tools/build_requirements_kb.py <导出解包目录>`"))
         fh.write(f"> 共 {len(items)} 条，按迭代分组。\n\n")
         for sprint in sorted(groups, key=sprint_key):
             fh.write(f"## {sprint}（{len(groups[sprint])} 条）\n\n")
