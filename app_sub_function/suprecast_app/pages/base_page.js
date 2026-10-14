@@ -170,7 +170,8 @@ async function selectorMissHint(page, selector) {
     return (
       `\n  [提示] 按 id 找的是「${idMatch[1]}」。id 的稳定性**分页面**：\n` +
       `    首页那种一直是同一个的页面里，id 隔天还在（实测搜索栏 _AQ）；\n` +
-      `    但**新打开的页面每次都会重新分配 id**（实测搜索页输入框：昨天 _RlY、今天 _Hj）。\n` +
+      `    但**只要重进一次这个页面，id 就全变了**（实测：退出去再进搜索页，搜索框 _JN -> _Kr，\n` +
+      `    5 个热门话题的 id 也全换了一遍）。\n` +
       `    所以：① 想确认现在的 id —— 用「打印页面结构」或 node test_case/diagnostic/dump_page.js --only-text；\n` +
       `    ② 要写长期用例，优先用**文字**（检查文字显示）或 **class**（.search-container），id 留给固定元素或临时调试。`
     );
