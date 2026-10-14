@@ -244,16 +244,19 @@ const HANDLERS = {
   滑动: {
     run: async (page, times, direction) => {
       const n = Number(times) || 1;
-      const dir = direction || "上";
       if (!(n >= 1 && n <= 10)) throw new Error(`「滑动」的次数只能是 1~10，现在是 ${times}`);
-      if (!["上", "下"].includes(dir)) throw new Error(`「滑动」的方向只能填 上 或 下，现在是 ${dir}`);
+      // 参数2 = 方向（+ 可选幅度）：`上` = 每次半屏（默认）；`上 30%` = 每次滑屏高的 30%。
+      // 解析器是纯函数（base.parseSwipeSpec），离线自检盯着它；起止比例也只在这里算一次。
+      const spec = base.parseSwipeSpec(direction);
       for (let i = 1; i <= n; i++) {
-        console.log(`  第 ${i}/${n} 次向${dir}滑动`);
+        console.log(
+          `  第 ${i}/${n} 次向${spec.dir}滑动（每次约 ${Math.round(spec.ratio * 100)}% 屏高）`
+        );
         // swipeUp 的起止比例反过来就是向下滑（同一个原子操作，不重复造一个函数）
-        page =
-          dir === "下"
-            ? await android.swipeUp(page, { startRatio: 0.25, endRatio: 0.75 })
-            : await android.swipeUp(page);
+        page = await android.swipeUp(page, {
+          startRatio: spec.startRatio,
+          endRatio: spec.endRatio,
+        });
         await base.sleep(800); // 滑完给它一点时间稳定，紧接着就断言容易读到中间态
       }
       return page;

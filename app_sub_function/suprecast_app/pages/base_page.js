@@ -262,6 +262,51 @@ function parseIndex(raw) {
   return n;
 }
 
+/**
+ * 解析「滑动」的**方向 + 每次滑多少** —— **纯函数**，方便离线自检。
+ *
+ * 口径（owner 2026/10/14 问"一次滑动多少、能不能自己控制"之后定的）：
+ *   · `上` / `下`        -> 每次滑**半屏**（= 今天的行为，老写法一个字都不用改）
+ *   · `上 30%` / `下30%` -> 每次滑屏高的 **30%**（想滑一点点、或怕滑过头时用）
+ *   · 范围 5%~95%，写超了就报错（**不静默夹到边界** —— 填错了该说，不该假装没看见）
+ *
+ * 起止点跟"半屏"那套保持一致：向上滑固定从屏幕 75% 处起手、向下滑从 25% 处起手，
+ * 只改**走多远**。这样"默认"和"自定义"是同一个动作的两档，不会出现两套手感。
+ *
+ * @param {string|undefined} raw 表里「参数2」那一格，例如 "" / "上" / "上 30%" / "下30％"
+ * @returns {{dir: "上"|"下", ratio: number, startRatio: number, endRatio: number, raw: string}}
+ */
+function parseSwipeSpec(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (!s) return buildSwipeSpec("上", 0.5, raw); // 参数2 留空 = 向上、半屏
+
+  // 数字可选：只写「上」/「下」= 默认半屏（老写法）
+  const m = /^(上|下)\s*(\d{1,3})?\s*[%％]?$/.exec(s);
+  if (!m) {
+    throw new Error(
+      `「滑动」的参数2 只能填「上」「下」，或带上每次滑多少（例如「上 30%」），现在填的是 ${JSON.stringify(raw)}`
+    );
+  }
+  const dir = m[1];
+  if (m[2] === undefined) return buildSwipeSpec(dir, 0.5, raw); // 「上」= 半屏
+
+  const percent = Number(m[2]);
+  if (!(percent >= 5 && percent <= 95)) {
+    throw new Error(
+      `「滑动」每次滑多少只能填 5%~95%（屏高的百分比），现在填的是 ${JSON.stringify(raw)}。\n` +
+        `  「上」不带数字就是半屏；想滑一点点可以写「上 20%」。`
+    );
+  }
+  return buildSwipeSpec(dir, percent / 100, raw);
+}
+
+/** parseSwipeSpec 的内部收尾：把"方向 + 走多远"换算成 swipeUp 的起止比例 */
+function buildSwipeSpec(dir, ratio, raw) {
+  return dir === "下"
+    ? { dir, ratio, startRatio: 0.25, endRatio: 0.25 + ratio, raw }
+    : { dir, ratio, startRatio: 0.75, endRatio: 0.75 - ratio, raw };
+}
+
 async function tapLocator(page, locator, what, index = 1) {
   const count = await locator.count().catch(() => 0);
   if (count === 0) throw await notFound(what, page);
@@ -483,6 +528,7 @@ module.exports = {
   countOfText,
   notFound,
   parseIndex,
+  parseSwipeSpec,
   suggestJoinedSelector,
   selectorMissHint,
   rejectIdSelector,

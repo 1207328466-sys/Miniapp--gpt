@@ -585,11 +585,16 @@ async function assertSelectorCount(page, { selector, expected, timeout = 8000, i
  * 小程序视图层只响应真实触摸事件，合成鼠标事件对它无效。
  *
  * @param {import('playwright').Page} page 小程序 webview 页面
- * @param {{duration?: number, startRatio?: number, endRatio?: number}} params
+ * @param {{duration?: number, startRatio?: number, endRatio?: number, ignoreNoMove?: boolean}} params
  *        duration: 滑动持续时间（毫秒）；startRatio/endRatio: 起止位置占屏幕高度的比例
+ *        ignoreNoMove: 页面没动时**不报错**（给"滑到顶/滑到底"这类循环用：
+ *                      那时"没动"是**正常结果**，不是失败 —— 2026/10/14 写探针时踩到）
  * @returns {Promise<import('playwright').Page>} page
  */
-async function swipeUp(page, { duration = 500, startRatio = 0.75, endRatio = 0.25, timeout = 5000 } = {}) {
+async function swipeUp(
+  page,
+  { duration = 500, startRatio = 0.75, endRatio = 0.25, timeout = 5000, ignoreNoMove = false } = {}
+) {
   try {
     const device = await getDevice();
     const view = await page.evaluate(() => ({
@@ -636,6 +641,11 @@ async function swipeUp(page, { duration = 500, startRatio = 0.75, endRatio = 0.2
       before.length > 0 && after.length > 0 && after.some((v, i) => before[i] !== undefined && Math.abs(v - before[i]) > 5);
 
     if (!moved) {
+      if (ignoreNoMove) {
+        // 循环场景：没动 = 已经到顶/到底（或这一页本来就不滚）—— 如实说一句就返回，不当失败
+        console.log("  页面没有位移（可能已经到顶/到底，或这一页本来就不可滚动）");
+        return page;
+      }
       // 明确抛错，避免"发了 swipe 就当过"的假通过
       throw new Error(
         `滑动后页面未发生位移（探测点 ${JSON.stringify(before.slice(0, 5))} → ${JSON.stringify(after.slice(0, 5))}）。` +

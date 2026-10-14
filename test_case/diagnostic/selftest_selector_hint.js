@@ -88,6 +88,58 @@ for (const [name, raw] of [
   check(`反例：${name}`, bad, true);
 }
 
+// ---- 「滑动」的方向 + 每次滑多少（2026/10/14：owner 问"一次滑多少、能不能自己控制"）----
+// 为什么值得盯：这是表格里唯一的"物理量"参数，两侧（导出校验 / 真机执行）各有一份同样的规则，
+// 而且**默认行为必须一个字不变**（老的 `滑动 | 3 | 上` 要还是半屏）—— 这条自检就是钉这个的。
+const sw = base.parseSwipeSpec;
+function expectSwipe(name, raw, wantDir, wantRatio) {
+  let got;
+  try {
+    const s = sw(raw);
+    got = `${s.dir} ${Math.round(s.ratio * 100)}%`;
+  } catch (e) {
+    got = "（报错：" + e.message.split("\n")[0].slice(0, 40) + "）";
+  }
+  const want = `${wantDir} ${Math.round(wantRatio * 100)}%`;
+  check(name, got, want);
+}
+
+expectSwipe("不填 = 向上、半屏（老行为不变）", undefined, "上", 0.5);
+expectSwipe("只写方向 = 半屏", "上", "上", 0.5);
+expectSwipe("向下也是半屏", "下", "下", 0.5);
+expectSwipe("★自己定：上 30%", "上 30%", "上", 0.3);
+expectSwipe("不带空格也认", "下30%", "下", 0.3);
+expectSwipe("全角百分号也认", "上30％", "上", 0.3);
+expectSwipe("边界：最小 5%", "上 5%", "上", 0.05);
+expectSwipe("边界：最大 95%", "下 95%", "下", 0.95);
+
+for (const [name, raw] of [
+  ["越界（96%）要报错，不静默夹边界", "上 96%"],
+  ["越界（0%）要报错", "上 0%"],
+  ["方向写错要报错", "左"],
+  ["只有数字没方向要报错", "30%"],
+]) {
+  let bad = false;
+  try {
+    sw(raw);
+  } catch (e) {
+    bad = true;
+  }
+  check(`反例：${name}`, bad, true);
+}
+
+// 起止比例：向上滑固定从 75% 处起手、向下滑从 25% 处起手 —— 只改"走多远"
+check(
+  "起止比例：上 30% -> 0.75 拖到 0.45",
+  JSON.stringify([sw("上 30%").startRatio, sw("上 30%").endRatio]),
+  JSON.stringify([0.75, 0.45])
+);
+check(
+  "起止比例：下 30% -> 0.25 拖到 0.55",
+  JSON.stringify([sw("下 30%").startRatio, sw("下 30%").endRatio]),
+  JSON.stringify([0.25, 0.55])
+);
+
 console.log();
 if (failed.length) {
   console.log(`有 ${failed.length} 项不符合预期：`);
