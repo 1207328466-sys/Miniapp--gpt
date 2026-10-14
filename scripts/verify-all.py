@@ -6,15 +6,16 @@
   1. 语法：所有 .js 过 `node --check`；所有 .py 过 `py_compile`
   2. 用例收集：`pytest --collect-only`（能查出 conftest / 用例收集被改坏）
   3. `scripts/check-docs.py`            文档死链
-  4. `scripts/selftest-export-cases.py` 表格校验与体检规则（17 项，含"一条填错只红它自己"）
+  4. `scripts/selftest-export-cases.py` 表格校验与体检规则（40 项，含"一条填错只红它自己"、
+     「按用例的四列承接」「按 id 定位的写法要挡住」）
   5. `scripts/selftest-quiz-cleanup.py` 复位工具的安全闸门（15 项：该拦的必须拦、该放的必须放）
   5b. `scripts/selftest-case-copy-reset.py` 案例复制复位工具的护栏（14 项：库名/点名案例/量上限/重名）
   6. `test_case/diagnostic/selftest_quiz_question_options.js` 答题"选项 2~6 且互不相同"规则（10 项，纯函数，正反都验）
   7. `test_case/diagnostic/selftest_course_zero_lesson_match.js` 课程"0 课时对账"的匹配规则（12 项，含前缀误报边界）
-  8. `scripts/selftest-run-preflight.py` run.py 开跑前"设备预检"的解析规则（11 项，含 unauthorized/offline 反例）
+  8. `scripts/selftest-run-preflight.py` run.py 开跑前"设备预检"的解析规则（16 项，含 unauthorized/offline 反例）
   9. `scripts/check-doc-index.py`       文档索引不许漂移（目录↔正文、踩坑索引、文档地图登记）
-  10. `scripts/check-safety.py`         数据/凭据安全不变式（14 项）
-  11. `scripts/check-invariants.py`     框架自身完整性（11 项：动作↔实现、中文名、退出码兜底、安全阀、
+  10. `scripts/check-safety.py`         数据/凭据安全不变式（20 项）
+  11. `scripts/check-invariants.py`     框架自身完整性（14 项：动作↔实现、中文名、退出码兜底、安全阀、
       文档数字、写链路带复位、README 里"照抄即可"的代码引用的函数是否真实存在）
   12. `tools/calibrate_android_doc.py --check`  android.js 逐行详解里的行号引用是否漂移
   13. `tools/build_actions_doc.py --check`      docs/动作清单-分类.md 与 ACTIONS 是否一致
@@ -24,8 +25,9 @@
   15. `scripts/selftest-quiz-answer-key.py`     判分口径复算（需求 713594985）：
       **多选必须集合完全一致**才算对 —— 少选一个、多选一个都得判错
   16. `scripts/selftest-allure-shots.py`        Allure 截图附件：压缩确实变小、压完还是能打开的图
-  17. `test_case/diagnostic/selftest_selector_hint.js`  选择器没命中时的提示口径：
-      「多个 class 抄成一串」要认出来并给正确写法，合法的「里面的」写法不许乱改
+  17. `test_case/diagnostic/selftest_selector_hint.js`  选择器规则（27 项）：
+      「多个 class 抄成一串」要认出来并给正确写法，合法的「里面的」写法不许乱改；
+      另外盯着「按 id 定位」的写法必须挡住（`#_AQ` / `[id=...]`），合法选择器一个都不许误伤
   18. `scripts/selftest-pull-requirements.py`  需求拉取对账的纯逻辑（离线，不联网）：
       解析知识库清单 / 整理拉取结果 / 算「新增·消失·状态变化」—— 这三行是给人看的结论，不能算错
 

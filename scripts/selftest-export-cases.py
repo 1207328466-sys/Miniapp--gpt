@@ -118,6 +118,53 @@ bad_case(
 )
 bad_case("动作那一格是空的", [["B_007", "名字", "", 1, "", "", "", ""]], "「动作」是空的")
 bad_case("没写用例标题", [["B_011", "", "", 1, "回到首页", "", "", ""]], "没写「用例标题」")
+
+# ---------- 按 id 定位：动作已删，另一条路（选择器参数）也要挡（2026/10/14）----------
+# 为什么盯它：id 会变（重进一次页面就全换），按它定位的用例今天绿明天红。
+# 三个按 id 定位的动作已经删了，这里验的是"把 id 抄成选择器"那条路也堵上了。
+bad_case(
+    "选择器参数里写 #id",
+    [["B_012", "名字", "", 1, "点选择器", "#_AQ", "", ""]],
+    "按 id 定位",
+)
+bad_case(
+    "选择器参数里写 [id=...]",
+    [["B_013", "名字", "", 1, "检查元素存在", '[id="_AQ"]', "", ""]],
+    "按 id 定位",
+)
+
+
+def id_selector_rule():
+    """纯函数正反例：该认的认出来，**合法选择器一个都不许误伤**（误伤比漏判更坏 ——
+    填表的人会以为"连 .xxx 都不能用"）。"""
+    global passed
+    cases = [
+        ("#_AQ", True),
+        ("#_AQ .title", True),
+        ('[id="_AQ"]', True),
+        ("[id='_AQ']", True),
+        ('div [id="_AQ"] span', True),
+        ("  #_AQ  ", True),
+        # ↓ 合法的，必须原样放过
+        (".search-container", False),
+        ("wx-input.search-input", False),
+        (".hot-topics .inline-flex", False),
+        (".fs-28.text-blacks28.ml-2", False),
+        ('[class*="custom-tab-bar"] span', False),
+        (".column-card", False),
+        ("", False),
+        (None, False),
+    ]
+    bad = ["%r 判成 %s（期望 %s）" % (v, m.looks_like_id_selector(v), want) for v, want in cases
+           if m.looks_like_id_selector(v) != want]
+    if bad:
+        failed.append("按 id 定位的判据：\n      " + "\n      ".join(bad))
+        return
+    passed += 1
+    print("OK   按 id 定位的判据：%d 条正反例（#id / [id=...] 挡住，合法选择器全放过）" % len(cases))
+
+
+id_selector_rule()
 def mixed(name, rows, good_id, bad_id):
     """**这次改动的核心**：一条填错时，别的用例必须一点不受影响。
 

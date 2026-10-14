@@ -881,6 +881,13 @@ async function dumpElements(page, { tag, onlyText = false, maxLines = 300, save 
       `\n[dumpElements] 本页元素 ${result.pageTotal} 个；本次遍历 ${result.visited} 个，输出 ${result.total} 行` +
         (result.truncated ? `（控制台只显示前 ${maxLines} 行，完整内容见文件）` : "")
     );
+    // 这份 dump 是给人挑锚点用的，所以把"哪一列能抄、哪一列别抄"直接说在结尾 ——
+    // 2026/10/14 删掉按 id 定位之后，id 只剩"看结构"这一个用途（它每次重建页面都会变）。
+    console.log(
+      "[dumpElements] 挑锚点提醒：**抄 class**（形如 .search-container；带 index-- 前缀的是编译器噪声，已过滤掉），" +
+        "或者直接用页面上看得见的文字；**别抄 id** —— 同一个页面重建一次（退出去再进来）id 就全换，" +
+        "按它定位的动作已经从框架里删掉了（见 docs/踩坑记录.md 坑 38）"
+    );
 
     if (save) {
       try {

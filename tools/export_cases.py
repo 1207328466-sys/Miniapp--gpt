@@ -35,6 +35,7 @@
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -173,19 +174,6 @@ ACTIONS = [
         "desc": "断言页面上找得到这个选择器，例如 .search-container",
     },
     {
-        "name": "检查id存在",
-        "p1": "id",
-        "p2": "",
-        "desc": "断言页面上找得到这个 id 的元素（**前面不用写 #**，从「打印页面结构」里抄，形如 _AQ）。"
-        "适合临时确认「这个 id 现在在不在」；**别写进长期用例** —— 重进一次页面 id 就会全变（见「点id」的说明）。只读",
-    },
-    {
-        "name": "检查id不存在",
-        "p1": "id",
-        "p2": "",
-        "desc": "断言页面上**没有**这个 id 的元素（例如：进了搜索页之后，首页那个 `_AQ` 搜索栏就不该在）。只读",
-    },
-    {
         "name": "检查元素数量",
         "p1": "选择器",
         "p2": "期望数量",
@@ -239,16 +227,6 @@ ACTIONS = [
         "p2": "第几个（可不填）",
         "p2_optional": True,
         "desc": "按选择器点一处元素（比按文字点更准：文字有重名时用它），例如 .search-container。**参数2 可以填「第几个」**（留空 = 第 1 个）——class 重复时用它挑，例如热门话题 5 条标题 class 完全一样",
-        "risk": "会（和「点文字」同一道安全阀）",
-    },
-    {
-        "name": "点id",
-        "p1": "id",
-        "p2": "",
-        "desc": "按元素 id 点一下（从「打印页面结构」里抄，形如 _AQ；**前面不用写 #**）。"
-        "id 比 class 更精确、也不怕重名 —— 但**只适合临时调试**：实测"
-        "页面一直开着时 id 不变（首页搜索栏 `_AQ` 隔天还在），可**只要重进一次页面，id 就全变**"
-        "（退出去再进搜索页：搜索框 `_JN`->`_Kr`，5 个热门话题的 id 全换）。长期用例请用文字或 class。只读",
         "risk": "会（和「点文字」同一道安全阀）",
     },
     {
@@ -445,13 +423,13 @@ ACTION_GROUPS = [
     (
         "③ 通用交互",
         "点、滑、等这类通用动作。**能不用「等待」就别用**：先看有没有对应的「检查…」动作",
-        ["点文字", "点选择器", "点id", "滑动", "切换首页筛选栏", "等待", "打印页面文字", "打印页面结构"],
+        ["点文字", "点选择器", "滑动", "切换首页筛选栏", "等待", "打印页面文字", "打印页面结构"],
     ),
     (
         "④ 通用断言（检查「看得见没有」）",
         "断言类动作，用例靠它们才有意义。**只有操作没有检查的用例，测不出问题**",
         ["检查文字显示", "检查文字不显示", "检查文字出现次数", "检查元素存在",
-         "检查元素不存在", "检查元素数量", "检查id存在", "检查id不存在", "检查输入框的值"],
+         "检查元素不存在", "检查元素数量", "检查输入框的值"],
     ),
     (
         "⑤ 需求专项检查",
@@ -536,7 +514,6 @@ ACTION_EXAMPLES = {
     # ③ 通用交互
     "点文字": "我的（重名时参数2填 2 = 点第 2 个）",
     "点选择器": ".search-container（重名时参数2填 2 = 点第 2 个，例如 .hot-topics .inline-flex 第 2 条）",
-    "点id": "_AQ（首页搜索栏；也可以写 #_AQ）",
     "滑动": "3 / 上",
     "切换首页筛选栏": "推荐",
     "等待": "2000（= 等 2 秒）",
@@ -548,8 +525,6 @@ ACTION_EXAMPLES = {
     "检查文字出现次数": "收藏 / 1",
     "检查元素存在": ".search-container",
     "检查元素不存在": ".activity-quiz-page",
-    "检查id存在": "_AQ",
-    "检查id不存在": "_AQ（进了搜索页之后，首页那个搜索栏就不该在了）",
     "检查元素数量": ".hot-topics .inline-flex / 5",
     "检查输入框的值": "wx-input.search-input / test",
     # ⑤ 需求专项检查
@@ -702,6 +677,26 @@ def cell_text(value):
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
     return str(value).strip()
+
+
+def looks_like_id_selector(value):
+    """这一格是不是「按 id 定位」的写法？—— **纯函数**（离线自检直接调它）。
+
+    【为什么要把这条规则写下来】2026/10/14 owner 决定：按 id 定位的动作不稳定，全删。
+    实测依据：id 是"页面实例"的产物 —— 页面一直开着时不变（首页搜索栏 `_AQ` 隔天还在），
+    但**重进一次页面就全换**（退出搜索页再进去，输入框 `_JN` → `_Kr`，热门话题 5 条的 id 全换）。
+    删掉那三个动作只堵住一条路，这里堵住另一条：把 id 抄成选择器填进「点选择器」「检查元素…」。
+
+    判据刻意保守（宁可判不出来，也不误伤合法选择器）：只认 `#xxx` 和 `[id=...]` 两种写法 ——
+    `.hot-topics .inline-flex`、`wx-input.search-input`、`[class*="xx"] span` 都要原样放过。
+    ⚠️ JS 侧有一份**同样的**规则（`base_page.rejectIdSelector`），改这里记得同步改那边。
+    """
+    s = str(value or "").strip()
+    if not s:
+        return False
+    if s.startswith("#"):
+        return True
+    return re.search(r"\[\s*id\s*[~|^$*]?=", s) is not None
 
 
 def add_dropdowns(ws, last_row=1000):
@@ -1211,6 +1206,19 @@ def validate(rows):
         if action == "检查答题记录数" and p2 and not (p2.isdigit() and int(p2) >= 0):
             case_errors_of(case).append(
                 "第 %d 行：「检查答题记录数」的参数2 是条数，应该像 0 或 1 这样，现在填的是 %s" % (lineno, p2)
+            )
+
+        # 「选择器」类参数不许写 id 定位（2026/10/14 owner 决定）：id 会变，按它定位的用例
+        # 今天绿、明天红（实测：重进一次搜索页，输入框 id 就从 _JN 变成 _Kr）。
+        # 表格里那三个按 id 定位的动作已经删掉，这里堵住另一条路：把 id 抄进选择器参数。
+        # 放宽一步看：**导出时就挡住**比"真机上偶发红"便宜得多。
+        if spec["p1"] == "选择器" and p1 and looks_like_id_selector(p1):
+            case_errors_of(case).append(
+                "第 %d 行：动作「%s」的「参数1」是**按 id 定位**（%s），框架不允许：id 会变"
+                "（实测：退出搜索页再进去，输入框 _JN → _Kr，热门话题 5 条的 id 全换）。\n"
+                "        换成：① 看得见的文字（「点文字」「检查文字显示」）；"
+                "② class（「打印页面结构」里抄，例如 .search-container）；"
+                "③ 结构写法（例如 .hot-topics .inline-flex）" % (lineno, action, p1)
             )
 
         # 只能从固定几个值里选的动作：填错字当场挡下（比真机跑到一半再报错友好）

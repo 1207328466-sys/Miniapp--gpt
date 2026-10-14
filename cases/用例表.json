@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-14 11:29:02",
+  "generated_at": "2026-10-14 13:47:10",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
   "warnings": [
@@ -211,15 +211,6 @@
       "choices": {}
     },
     {
-      "name": "点id",
-      "p1": "id",
-      "p2": "",
-      "p1_optional": false,
-      "p2_optional": false,
-      "desc": "按元素 id 点一下（从「打印页面结构」里抄，形如 _AQ；**前面不用写 #**）。id 比 class 更精确、也不怕重名 —— 但**只适合临时调试**：实测页面一直开着时 id 不变（首页搜索栏 `_AQ` 隔天还在），可**只要重进一次页面，id 就全变**（退出去再进搜索页：搜索框 `_JN`->`_Kr`，5 个热门话题的 id 全换）。长期用例请用文字或 class。只读",
-      "choices": {}
-    },
-    {
       "name": "滑动",
       "p1": "次数",
       "p2": "方向",
@@ -353,24 +344,6 @@
       "p1_optional": false,
       "p2_optional": false,
       "desc": "断言选择器命中的元素个数正好是期望值，例如 .search-container / 1",
-      "choices": {}
-    },
-    {
-      "name": "检查id存在",
-      "p1": "id",
-      "p2": "",
-      "p1_optional": false,
-      "p2_optional": false,
-      "desc": "断言页面上找得到这个 id 的元素（**前面不用写 #**，从「打印页面结构」里抄，形如 _AQ）。适合临时确认「这个 id 现在在不在」；**别写进长期用例** —— 重进一次页面 id 就会全变（见「点id」的说明）。只读",
-      "choices": {}
-    },
-    {
-      "name": "检查id不存在",
-      "p1": "id",
-      "p2": "",
-      "p1_optional": false,
-      "p2_optional": false,
-      "desc": "断言页面上**没有**这个 id 的元素（例如：进了搜索页之后，首页那个 `_AQ` 搜索栏就不该在）。只读",
       "choices": {}
     },
     {

@@ -79,9 +79,9 @@ indPageWith / login / clickElementById / clickElementByText / inputText /
 - 第 9 节：打开搜索页（387-433 行：`focusSearchInput`）★历史实现，见下面说明
 - 第 10 节：通用操作与断言（592-679 行：`swipeUp` 等）【均已重构】
 - 第 11 节：返回上一页（680-769 行：`goBack`）
-- 第 14 节：输出页面结构（809-905 行：`dumpElements`）★调试利器
-- 第 15 节：导出清单（906-926 行：`module.exports`）
-- 附：全文 17 个函数速查表（行号按 811 行版本校准）
+- 第 14 节：输出页面结构（809-912 行：`dumpElements`）★调试利器
+- 第 15 节：导出清单（913-933 行：`module.exports`）
+- 附：全文 17 个函数速查表（行号按 783 行版本校准）
 - 附：本文件问题清单（状态已更新至 2026/10/10）
 
 ## 第 0 节：先建立整体认知
@@ -579,7 +579,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 14 节：输出页面结构（809-905 行：`dumpElements`）★调试利器
+## 第 14 节：输出页面结构（809-912 行：`dumpElements`）★调试利器
 
 > **2026/10/13 增强**（当前实现就在上面写的 772-864 行）：照 webzdh4.7 那版的思路补了 4 件事 ——
 >
@@ -674,7 +674,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 第 15 节：导出清单（906-926 行：`module.exports`）
+## 第 15 节：导出清单（913-933 行：`module.exports`）
 
 ```js
 430: module.exports = {
@@ -723,7 +723,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 
 ---
 
-## 附：全文 17 个函数速查表（行号按 811 行版本校准）
+## 附：全文 17 个函数速查表（行号按 783 行版本校准）
 
 | 行号 | 函数 | 参数 | 用途 | 导出 |
 |---|---|---|---|---|
@@ -743,7 +743,7 @@ async function clickElementByText(page, { text, timeout = 10000 } = {}) {
 | 592 | `swipeUp` | page, {duration,startRatio,endRatio,timeout} | 向上滑动【adb swipe + 位移校验】 | ✅ |
 | 680 | `goBack` | page, {timeout, selectors} | **点返回按钮 + 校验页面确实变了**；找不到按钮退回安卓返回键【已修，见坑 20】 | ✅ |
 | 809 | `dumpElements` | page, {tag} | **打印页面 HTML（调试点）** | ✅ |
-| 906 | `module.exports` | — | 导出清单 | — |
+| 913 | `module.exports` | — | 导出清单 | — |
 
 ---
 

@@ -42,32 +42,27 @@ check("第一段不是点号开头的 class", s("div span"), null);
 check("空串 / 只有一个词", s(""), null);
 check("纯 class 名（无点号，不是我们教的写法）", s("search-container"), null);
 
-// ---- 按 id 定位（2026/10/14）：id 转选择器的口径 ----
-const i = base.idSelector;
-check("普通 id", i("_AQ"), '[id="_AQ"]');
-check("带 # 的 id（也认）", i("#_AQ"), '[id="_AQ"]');
-check(
-  "★以数字开头的 id（CSS 的 #xxx 用不了，必须走属性写法）",
-  i("9d834775--_XFi"),
-  '[id="9d834775--_XFi"]'
-);
-check("前后有空格先去掉", i("  _AQ  "), '[id="_AQ"]');
-
-let threw = false;
-try {
-  i("");
-} catch (e) {
-  threw = true;
+// ---- 按 id 定位：框架不给这条路（2026/10/14 起）----
+// 三个按 id 定位的动作当天已从动作清单删除；这里验的是"另一条路"也堵着：
+// 有人把 id 抄成 #xxx / [id=...] 填进选择器参数时，必须当场报错。
+const r = base.rejectIdSelector;
+function throws(fn) {
+  try {
+    fn();
+    return false;
+  } catch (e) {
+    return true;
+  }
 }
-check("空 id 要报错（而不是生成一个匹配一切的选择器）", threw, true);
-
-let threw2 = false;
-try {
-  i('a"b');
-} catch (e) {
-  threw2 = true;
-}
-check("id 里带引号要报错（不然会拼出一个坏选择器）", threw2, true);
+check("#id 写法要拦住", throws(() => r("#_AQ")), true);
+check('[id="..."] 写法要拦住', throws(() => r('[id="_AQ"]')), true);
+check("选择器里夹着 id 也要拦住", throws(() => r('div [id="_AQ"] span')), true);
+check("普通 id（不带 # 也不带 [id=]）不算 id 选择器，按普通选择器走", throws(() => r("_AQ")), false);
+// ↓ 合法的选择器一个都不许误伤（误伤会让填表的人以为"连 .xxx 都不能用"）
+check("class 选择器放过", throws(() => r(".search-container")), false);
+check("标签+class 放过", throws(() => r("wx-input.search-input")), false);
+check("后代选择器放过", throws(() => r(".hot-topics .inline-flex")), false);
+check("属性选择器（不是 id）放过", throws(() => r('[class*="custom-tab-bar"] span')), false);
 
 // ---- 「第几个」的解析（2026/10/14：给「点文字」「点选择器」加的参数2）----
 const px = base.parseIndex;

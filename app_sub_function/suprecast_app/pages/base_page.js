@@ -89,32 +89,35 @@ async function countOfText(p, text) {
 }
 
 /**
- * 把「元素 id」转成可靠的选择器 —— **纯函数**，方便离线自检。
+ * 拦住「按 id 定位」的写法 —— **纯函数**，方便离线自检。
  *
- * 【为什么不用 `#id`】CSS 的 `#xxx` 在 id 以数字开头时是**非法**的，而这个小程序里正好有
- * 那种 id（实测形如 `9d834775--_XFi`）。属性写法 `[id="xxx"]` 对任何字符都成立。
+ * 【为什么把它做成硬规则】2026/10/14 实测结论：**id 是"页面实例"的产物，会变。**
+ *   · 页面一直开着时它不变（首页搜索栏 `_AQ` 隔天还在，4 份 dump 都是它）；
+ *   · 但**只要重进一次页面就全换**：退出搜索页再进去，输入框 `_JN` → `_Kr`，
+ *     5 个热门话题的 id 全换一遍；带 hash 前缀的（`9d834775--_XFi`）更是只在一次 dump 里出现过。
+ * 所以框架里**不留任何按 id 定位的口子**：表格里那三个动作（`点id` / `检查id存在` /
+ * `检查id不存在`）当天就从动作清单里删掉了；这个函数管住另一条路 ——
+ * 有人把 id 写法抄进「点选择器」「检查元素存在」这类**选择器参数**里。
  *
- * 【什么样的 id 能用】（2026/10/14 实测）：
- *   · 短 id（形如 `_AQ`、`_WwW`）：**隔天还在**（4 份昨天的 dump + 1 份今天的，搜索栏一直是 `_AQ`）；
- *   · 带 hash 前缀的（形如 `9d834775--_XFi`）：只在某一次的 dump 里出现过 —— 看起来跟"这一次会话/
- *     这一个页面实例"绑在一起，**不要拿它当锚点**。
- *   另外 id 是"页面结构"的产物：结构变了（列表多几条、顺序改了）后面的元素可能整体挪位，
- *   所以**列表里的东西优先用文字/class**，id 更适合页面顶部那些固定元素。
+ * 判据刻意保守（宁可判不出来，也不要乱报）：只认 `#xxx` 和 `[id=...]` 两种写法。
  *
- * @param {string} id id（前面的 `#` 有无都行）
- * @returns {string} 形如 `[id="_AQ"]` 的选择器
+ * @param {string} selector 选择器（通常是表格里「参数1」那一格）
+ * @returns {string} 原样返回（过了这一关就是合法的），方便直接链式用
  */
-function idSelector(id) {
-  let v = String(id == null ? "" : id).trim();
-  if (v.startsWith("#")) v = v.slice(1);
-  if (!v) throw new Error("id 是空的：要填元素的 id（从「打印页面结构」里抄，形如 _AQ）");
-  if (v.includes('"')) throw new Error(`id 里不该有引号：${JSON.stringify(id)}`);
-  return `[id="${v}"]`;
-}
-
-/** 按 id 点一下（参数填 id 本身，不必写 #） */
-async function tapId(page, id, what) {
-  return tapSelector(page, idSelector(id), what || `id「${id}」`);
+function rejectIdSelector(selector) {
+  const s = String(selector == null ? "" : selector).trim();
+  const looksLikeId = s.startsWith("#") || /\[\s*id\s*[~|^$*]?=/.test(s);
+  if (looksLikeId) {
+    throw new Error(
+      `「${selector}」是**按 id 定位**，框架不允许：id 会变。\n` +
+        `  实测（2026/10/14）：页面一直开着时 id 不变，可**只要重进一次页面就全换**——` +
+        `退出搜索页再进去，输入框 _JN → _Kr，热门话题 5 条的 id 全换。\n` +
+        `  换成这几种（按可靠程度）：① 看得见的文字（「点文字」「检查文字显示」）；` +
+        `② class（「打印页面结构」里抄，例如 .search-container）；` +
+        `③ 结构写法（例如 .hot-topics .inline-flex，参数2 还能填「第几个」）。`
+    );
+  }
+  return selector;
 }
 
 /**
@@ -481,8 +484,7 @@ module.exports = {
   parseIndex,
   suggestJoinedSelector,
   selectorMissHint,
-  idSelector,
-  tapId,
+  rejectIdSelector,
   waitUntil,
   tapLocator,
   tapSelector,

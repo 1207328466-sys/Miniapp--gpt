@@ -241,42 +241,6 @@ const HANDLERS = {
     },
   },
 
-  // ---- 按 id 定位（2026/10/14）----
-  // 为什么要这三个：元素常常"没有文字可打"（图标按钮、容器），而 class 又不够特别；
-  // id 最精确。id 从「打印页面结构」里抄（形如 _AQ），**前面不用写 #**（写 # 也行）。
-  // ⚠️ 只适合页面上部的固定元素：实测短 id 隔天还在，而带 hash 前缀的（9d834775--_XFi）
-  //    只在某一次的 dump 里出现过 —— 那种别当锚点（见 base_page.idSelector 的说明）。
-  点id: {
-    run: async (page, id) => {
-      const fg = await base.foreground(page);
-      await base.tapId(fg, id);
-      return fg;
-    },
-  },
-
-  检查id存在: {
-    run: (page, id) => android.assertSelectorExists(page, { selector: base.idSelector(id) }),
-  },
-
-  检查id不存在: {
-    run: async (page, id) => {
-      const selector = base.idSelector(id);
-      const ok = await base.waitUntil(
-        async () => (await base.countOf(await base.foreground(page), selector)) === 0,
-        { timeout: 8000 }
-      );
-      if (!ok) {
-        const fg = await base.foreground(page);
-        throw new Error(
-          `断言失败: 页面上仍然有 id「${id}」的元素（${selector} 命中数 > 0）。\n` +
-            `  当前页面前 160 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 160))}`
-        );
-      }
-      console.log(`断言通过: 页面上没有 id「${id}」的元素`);
-      return base.foreground(page);
-    },
-  },
-
   滑动: {
     run: async (page, times, direction) => {
       const n = Number(times) || 1;
@@ -681,6 +645,11 @@ function buildStepFunc(step) {
   if (spec && spec.p2 && !step.param2 && !spec.p2_optional) {
     throw new Error(`动作「${step.action}」缺「参数2」（${spec.p2}）—— 去用例表里检查这一行`);
   }
+  // 「选择器」类参数不许写 id 定位：id 会变（框架里那三个按 id 定位的动作当天已删，
+  // 这里堵住另一条路 —— 把 id 抄成 #xxx / [id=...] 填进选择器参数）。
+  // 放在这里=**一处**管住全部 5 个用选择器的动作（点选择器 / 检查元素存在·不存在·数量 /
+  // 检查输入框的值），不用在 5 个实现里各写一遍。
+  if (spec && spec.p1 === "选择器" && step.param1) base.rejectIdSelector(step.param1);
 
   const fn = async (page, _kwargs, ctx) => {
     const out = await handler.run(page, step.param1, step.param2, ctx);
