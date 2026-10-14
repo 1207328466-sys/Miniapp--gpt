@@ -14,6 +14,9 @@ const base = pages.base;
 const mall = pages.pointsMall;
 
 async function probe(page) {
+  // ⚠️ 先回首页再进商城：`mall.ensureOn` 是幂等的（已在商城就不动），
+  // 直接调它会看到**上一次渲染的旧内容** —— 第一次验证"屏蔽分类生效没"就是这么被骗的。
+  page = await pages.qaPage.ensureOnHomeFeed(page);
   page = await mall.ensureOn(page);
   const fg = await base.foreground(page);
   const info = await fg.evaluate(() => {
