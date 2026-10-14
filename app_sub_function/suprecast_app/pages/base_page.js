@@ -234,12 +234,42 @@ async function waitUntil(check, { timeout = 8000, interval = 300 } = {}) {
  * @param {import('playwright').Locator} locator
  * @param {string} what 人话描述，用于日志与报错
  */
-async function tapLocator(page, locator, what) {
+/**
+ * 「取第几个」的解析 —— **纯函数**，方便离线自检。
+ *
+ * 为什么要有它（2026/10/14 owner 提的「找找更方便的定位方式」）：
+ * 定位元素时最常见的麻烦不是"选择器写不对"，而是**命中了多个、想挑其中一个**：
+ * 热门话题那 5 条标题 class 完全一样，页面上"查看"按钮也可能有好几个 ——
+ * 而 id 会变（重进页面就全换）、class 重复、文字重名。
+ * 所以给「点文字」「点选择器」加一个 **参数2 = 第几个**：留空是第 1 个（老行为不变），
+ * 填 2 就是第 2 个。这样既不用学 `:nth-match(...)` 那种写法，也不用碰会变的 id。
+ *
+ * @param {string|number|undefined} raw 表里填的"第几个"
+ * @returns {number} ≥1 的整数；留空返回 1
+ */
+function parseIndex(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (!s) return 1; // 不填 = 第 1 个（跟以前完全一样）
+  if (!/^\d+$/.test(s)) {
+    throw new Error(`「第几个」只能填 1、2、3… 这样的正整数，现在填的是 ${JSON.stringify(raw)}`);
+  }
+  const n = Number(s);
+  if (n < 1) throw new Error(`「第几个」要从 1 数起，现在填的是 ${n}`);
+  return n;
+}
+
+async function tapLocator(page, locator, what, index = 1) {
   const count = await locator.count().catch(() => 0);
   if (count === 0) throw await notFound(what, page);
+  if (index > count) {
+    throw new Error(
+      `${what}：要取第 ${index} 个，但只命中了 ${count} 个（「第几个」不能超出命中数）。\n` +
+        `  当前页面前 120 字: ${JSON.stringify((await pageText(page)).slice(0, 120))}`
+    );
+  }
   const device = await getDevice();
-  await tapElement(device, page, locator.first());
-  console.log(`  已点击${what}（匹配 ${count} 个，取第 1 个）`);
+  await tapElement(device, page, locator.nth(index - 1));
+  console.log(`  已点击${what}（匹配 ${count} 个，取第 ${index} 个）`);
 }
 
 /**
@@ -248,11 +278,11 @@ async function tapLocator(page, locator, what) {
  * @param {string} selector
  * @param {string} what 人话描述，用于日志与报错
  */
-async function tapSelector(page, selector, what) {
-  const label = `${what}（选择器 ${selector}）`;
+async function tapSelector(page, selector, what, index = 1) {
+  const label = `${what}（选择器 ${selector}${index > 1 ? `，第 ${index} 个` : ""}）`;
   // 把 selector 一起传进去：没命中时才能给出"空格是「里面的」"那条提示（填表的人最常踩的坑）
   if ((await countOf(page, selector)) === 0) throw await notFound(label, page, selector);
-  await tapLocator(page, page.locator(selector), label);
+  await tapLocator(page, page.locator(selector), label, index);
 }
 
 /**
@@ -261,12 +291,12 @@ async function tapSelector(page, selector, what) {
  * @param {string} text
  * @param {string} what 人话描述；省略时用文本本身
  */
-async function tapText(page, text, what) {
-  const label = what || `文本「${text}」`;
+async function tapText(page, text, what, index = 1) {
+  const label = (what || `文本「${text}」`) + (index > 1 ? `（取第 ${index} 个）` : "");
   if ((await countOfText(page, text)) === 0) throw await notFound(label, page);
-  // 注意用 hasText 精确锁定"包含该文本的那个元素集合"再取第 1 个。
+  // 注意用 hasText 精确锁定"包含该文本的那个元素集合"再取第 N 个。
   // 不加 .first() 会在 strict mode 下抛 "resolved to N elements"（账本 根因 3）。
-  await tapLocator(page, page.getByText(text), label);
+  await tapLocator(page, page.getByText(text), label, index);
 }
 
 /** 取指定 page 上某选择器第 1 个元素的文本（失败返回空串） */
@@ -448,6 +478,7 @@ module.exports = {
   countOf,
   countOfText,
   notFound,
+  parseIndex,
   suggestJoinedSelector,
   selectorMissHint,
   idSelector,

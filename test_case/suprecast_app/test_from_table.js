@@ -170,7 +170,7 @@ const HANDLERS = {
   打开答题活动: { run: (page) => quizPage.ensureOn(page) },
 
   点文字: {
-    run: async (page, text) => {
+    run: async (page, text, nth) => {
       const hit = BLOCKED_TEXT.find((w) => String(text).includes(w));
       if (hit) {
         throw new Error(
@@ -180,7 +180,8 @@ const HANDLERS = {
         );
       }
       const fg = await base.foreground(page);
-      return base.tapText(fg, text, `文字「${text}」`);
+      // 参数2 = 第几个（留空 = 第 1 个）：文字重名时用它挑，不用去学 :nth-match 那种写法
+      return base.tapText(fg, text, `文字「${text}」`, base.parseIndex(nth));
     },
   },
 
@@ -232,9 +233,10 @@ const HANDLERS = {
   },
 
   点选择器: {
-    run: async (page, selector) => {
+    run: async (page, selector, nth) => {
       const fg = await base.foreground(page);
-      await base.tapSelector(fg, selector, `选择器 ${selector}`);
+      // 参数2 = 第几个（留空 = 第 1 个）：class 重复时用它挑，例如热门话题 5 条标题
+      await base.tapSelector(fg, selector, `选择器 ${selector}`, base.parseIndex(nth));
       return fg;
     },
   },

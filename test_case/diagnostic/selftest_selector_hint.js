@@ -69,6 +69,30 @@ try {
 }
 check("id 里带引号要报错（不然会拼出一个坏选择器）", threw2, true);
 
+// ---- 「第几个」的解析（2026/10/14：给「点文字」「点选择器」加的参数2）----
+const px = base.parseIndex;
+check("不填 = 第 1 个（老行为不变）", px(""), 1);
+check("不填（undefined）= 第 1 个", px(undefined), 1);
+check("填 2 = 第 2 个", px("2"), 2);
+check("填 10 = 第 10 个", px("10"), 10);
+check("数字类型也认", px(3), 3);
+check("前后空格先去掉", px("  4  "), 4);
+
+for (const [name, raw] of [
+  ["0 要从 1 数起", "0"],
+  ["负数不行", "-1"],
+  ["小数不行", "1.5"],
+  ["文字不行", "第二个"],
+]) {
+  let bad = false;
+  try {
+    px(raw);
+  } catch (e) {
+    bad = true;
+  }
+  check(`反例：${name}`, bad, true);
+}
+
 console.log();
 if (failed.length) {
   console.log(`有 ${failed.length} 项不符合预期：`);

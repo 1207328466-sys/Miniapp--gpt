@@ -137,8 +137,9 @@ ACTIONS = [
     {
         "name": "点文字",
         "p1": "文字",
-        "p2": "",
-        "desc": "按页面上看得见的文字点一下。提交/兑换/支付这类会改数据的文字被默认禁止（见「填写说明」）",
+        "p2": "第几个（可不填）",
+        "p2_optional": True,
+        "desc": "按页面上看得见的文字点一下。**参数2 可以填「第几个」**（留空 = 第 1 个）——文字重名时用它挑，比写选择器省事。提交/兑换/支付这类会改数据的文字被默认禁止（见「填写说明」）",
         "risk": "会（提交/兑换/支付类文字已被默认拦住）",
     },
     {"name": "返回上一页", "p1": "", "p2": "", "desc": "点返回按钮退回上一页（会校验页面确实变了）"},
@@ -225,8 +226,9 @@ ACTIONS = [
     {
         "name": "点选择器",
         "p1": "选择器",
-        "p2": "",
-        "desc": "按选择器点第一处元素（比按文字点更准：文字有重名时用它），例如 .search-container",
+        "p2": "第几个（可不填）",
+        "p2_optional": True,
+        "desc": "按选择器点一处元素（比按文字点更准：文字有重名时用它），例如 .search-container。**参数2 可以填「第几个」**（留空 = 第 1 个）——class 重复时用它挑，例如热门话题 5 条标题 class 完全一样",
         "risk": "会（和「点文字」同一道安全阀）",
     },
     {
@@ -522,8 +524,8 @@ ACTION_EXAMPLES = {
     "打开案例库介绍长图": "（不用填参数）",
     "打开案例": "填充任务1",
     # ③ 通用交互
-    "点文字": "我的",
-    "点选择器": ".search-container",
+    "点文字": "我的（重名时参数2填 2 = 点第 2 个）",
+    "点选择器": ".search-container（重名时参数2填 2 = 点第 2 个，例如 .hot-topics .inline-flex 第 2 条）",
     "点id": "_AQ（首页搜索栏；也可以写 #_AQ）",
     "滑动": "3 / 上",
     "切换首页筛选栏": "推荐",
@@ -610,7 +612,8 @@ HELP_LINES = [
     "3. 「动作」只能填「动作清单」工作表里列出的名字 —— 填别的会在导出时报错，不会静默跳过。",
     "3b. 有几类参数要填**数据里的名字**（课程名 / 案例名 / 活动名），一字不差才行；",
     "    候选值在「名称候选」工作表里，直接复制粘贴即可（刷新它：python tools/export_cases.py --dropdown）。",
-    "4. 「参数1 / 参数2」按动作需要填，不用就留空。填多了（该动作用不到）也会报错，防手滑。",
+    "4. 「参数1 / 参数2」按动作需要填，不用就留空。填多了（该动作用不到）也会报错，防手滑；",
+    "   参数名后面写着「（可不填）」的，留空就走默认值（例如「第几个」留空 = 第 1 个）。",
     "5. 「备注」随便写，只出现在日志和报告里，不影响执行。",
     "6. 填完执行：python run.py      （它会先自动把本表导出成 json，再跑用例）",
     "   只想跑表格里的某一条：python run.py -k 活动入口_001",
@@ -1064,17 +1067,22 @@ def validate(rows):
             continue
 
         # 参数校验：该用的必须填，不该用的不许填 —— 后者专治「把参数填错了列」
-        if spec["p1"] and not p1:
+        # 「可不填」的参数（p1_optional / p2_optional）例外：留空就走默认值。
+        # 为什么要这个概念（2026/10/14）：「点文字」「点选择器」加了「第几个」（留空 = 第 1 个），
+        # 如果按老规则"声明了就必须填"，**所有老用例都会立刻报错** —— 加个可选参数不该有这种代价。
+        if spec["p1"] and not p1 and not spec.get("p1_optional"):
             case_errors_of(case).append(
-                "第 %d 行：动作「%s」的「参数1」要填「%s」，现在是空的" % (lineno, action, spec["p1"])
+                "第 %d 行：动作「%s」的「参数1」要填「%s」，现在是空的"
+                % (lineno, action, spec["p1"].replace("（可不填）", ""))
             )
         if not spec["p1"] and p1:
             case_errors_of(case).append(
                 "第 %d 行：动作「%s」用不到「参数1」，请清空（现在填的是 %s）" % (lineno, action, p1)
             )
-        if spec["p2"] and not p2:
+        if spec["p2"] and not p2 and not spec.get("p2_optional"):
             case_errors_of(case).append(
-                "第 %d 行：动作「%s」的「参数2」要填「%s」，现在是空的" % (lineno, action, spec["p2"])
+                "第 %d 行：动作「%s」的「参数2」要填「%s」，现在是空的"
+                % (lineno, action, spec["p2"].replace("（可不填）", ""))
             )
         if not spec["p2"] and p2:
             case_errors_of(case).append(
@@ -1093,6 +1101,12 @@ def validate(rows):
         if action == "等待" and p1 and not (p1.isdigit() and int(p1) > 0):
             case_errors_of(case).append(
                 "第 %d 行：「等待」的参数1 是毫秒数，应该像 2000 这样，现在填的是 %s" % (lineno, p1)
+            )
+        # 「第几个」只能填正整数（跟 JS 侧 parseIndex 的口径一致：写错了在导出时就挡住，别等真机）
+        if action in ("点文字", "点选择器") and p2 and not (p2.isdigit() and int(p2) > 0):
+            case_errors_of(case).append(
+                "第 %d 行：动作「%s」的「第几个」只能填 1、2、3… 这样的正整数（不填就是第 1 个），现在填的是 %s"
+                % (lineno, action, p2)
             )
         if action == "检查元素数量" and p2 and not (p2.isdigit() and int(p2) >= 0):
             case_errors_of(case).append(
