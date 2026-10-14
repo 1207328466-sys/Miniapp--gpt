@@ -164,19 +164,20 @@ function suggestJoinedSelector(selector) {
  * 宁可少说一句，也不要给一个同样错的答案。
  */
 async function selectorMissHint(page, selector) {
-  // 按 id 找、没找到时的专属提示（2026/10/14 实测）：
-  //   · 首页那种**长驻页面**里的 id 是稳的（搜索栏 `_AQ` 隔天还在）；
-  //   · 而**新打开的页面**里的 id 每次都重新分配（搜索页的输入框昨天 `_RlY`、今天 `_Hj`）——
-  //     所以"昨天还能用的 id 今天找不到"是正常现象，不是用例写错了。
+  // 按 id 找、没找到时的专属提示。
+  // 2026/10/14：按 id 定位已经从框架里删掉了（动作删了、选择器参数写了也会在导出时被拦，
+  // 见 rejectIdSelector）。这段提示留给**绕过表格的那条路**（页面对象/临时探针里手写
+  // `[id="..."]` 的情况）：id 会变，找不到是正常现象，不是"用例写错了"。
   const idMatch = /^\[id="((?:[^"\\]|\\.)+)"\]$/.exec(String(selector || "").trim());
   if (idMatch) {
     return (
-      `\n  [提示] 按 id 找的是「${idMatch[1]}」。id 的稳定性**分页面**：\n` +
-      `    首页那种一直是同一个的页面里，id 隔天还在（实测搜索栏 _AQ）；\n` +
-      `    但**只要重进一次这个页面，id 就全变了**（实测：退出去再进搜索页，搜索框 _JN -> _Kr，\n` +
-      `    5 个热门话题的 id 也全换了一遍）。\n` +
-      `    所以：① 想确认现在的 id —— 用「打印页面结构」或 node test_case/diagnostic/dump_page.js --only-text；\n` +
-      `    ② 要写长期用例，优先用**文字**（检查文字显示）或 **class**（.search-container），id 留给固定元素或临时调试。`
+      `\n  [提示] 这行是**按 id 找**「${idMatch[1]}」—— 框架里按 id 定位已经删掉了，因为 id 会变：\n` +
+      `    · 同一个页面一直开着时它不变（首页搜索栏 _AQ 隔天还在）；\n` +
+      `    · 但**只要重进一次这个页面就全换**（实测：退出再进搜索页，搜索框 _JN -> _Kr，\n` +
+      `      5 个热门话题的 id 也全换了一遍）。\n` +
+      `    所以"昨天还能用的 id 今天找不到"是正常现象，不是你写错了。\n` +
+      `    换法（表格里可用）：① 看得见的**文字**（点文字 / 检查文字显示）；② **class**（.search-container）；\n` +
+      `    ③ 结构写法（.hot-topics .inline-flex）。id 只当**看结构**的调试信息（打印页面结构 / dump_page.js）。`
     );
   }
   const joined = suggestJoinedSelector(selector);
