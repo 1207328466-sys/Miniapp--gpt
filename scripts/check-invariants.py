@@ -143,12 +143,19 @@ for p in sorted(WRITE_CASE_DIR.glob('test_*.js')):
     text = read('test_case/suprecast_app/' + p.name)
     if 'UITEST_ALLOW_SUBMIT' not in text:
         continue  # 只读用例，不涉及复位
-    # ⚠️ 判据要按**两种复位机制的真实痕迹**来（两次反向验证各抓到一次错）：
+    # ⚠️ 判据要按**复位机制的真实痕迹**来（两次反向验证各抓到一次错）：
     #   ①「案例复制」用 `--reset` + 水位（case_copy_reset.py）
     #   ②「答题」用 `--yes` 直接删（quiz_data_cleanup.py，没有 --reset 这种参数）
+    #   ③「置顶帖」用 `--unpin` 取消置顶（tools/post_top_tool.py，2026/10/15 新增；
+    #      这条夹具走的是管理后台接口，不是数据库，所以复位痕迹就是取消置顶本身）
     # 所以认"Do 调过数据工具"这件事本身：`--reset` 或 `runDbTool(`。
     # 最早写成"含「复位」两个字"—— 注释里写「复位」就能骗过它（判据太松，等于没查）。
-    has_reset = ('--reset' in text) or ('runDbTool(' in text) or ('.reset(' in text)
+    has_reset = (
+        ('--reset' in text)
+        or ('runDbTool(' in text)
+        or ('.reset(' in text)
+        or ('--unpin' in text)
+    )
     if not has_reset:
         no_reset.append(p.name)
 check('写链路用例都带复位（有开关就必须有复位）', not no_reset, '缺复位：%s' % '、'.join(no_reset))

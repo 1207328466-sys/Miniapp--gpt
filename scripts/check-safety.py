@@ -170,17 +170,24 @@ check(
 # ---------- 3.6) 会写数据的 Python 工具：三道闸一个都不能少 ----------
 # 这两个工具是仓库里仅有的"会删/会改数据"的脚本。它们的护栏是**代码里写死的**，
 # 所以只要有人"顺手"删掉一段，保护就没了、而且不会报错 —— 必须由闸门盯着。
+#
+# 最后一个布尔：这个工具要不要"库名闸门"。
+#   · 改库的工具（答题复位 / 案例复制复位）-> True；
+#   · 走**接口**写数据的工具（帖子置顶：置顶状态不在这套库里，只能调管理后台接口）->
+#     False，但"默认只预览 + 必须点名目标"这两道闸照旧要盯。
 WRITE_TOOLS = (
-    ("tools/quiz_data_cleanup.py", "--activity", "答题数据复位"),
-    ("tools/case_copy_reset.py", "--case", "案例复制复位"),
+    ("tools/quiz_data_cleanup.py", "--activity", "答题数据复位", True),
+    ("tools/case_copy_reset.py", "--case", "案例复制复位", True),
+    ("tools/post_top_tool.py", "--id", "帖子置顶/取消置顶（走管理后台接口）", False),
 )
-for rel, must_name_target, label in WRITE_TOOLS:
+for rel, must_name_target, label, touches_db in WRITE_TOOLS:
     src = read(rel)
-    check(
-        "%s：库名闸门还在（只认测试库）" % label,
-        "TEST_DB_MARKERS" in src,
-        "%s 里找不到 TEST_DB_MARKERS —— 「只动测试库」这道闸被删了" % rel,
-    )
+    if touches_db:
+        check(
+            "%s：库名闸门还在（只认测试库）" % label,
+            "TEST_DB_MARKERS" in src,
+            "%s 里找不到 TEST_DB_MARKERS —— 「只动测试库」这道闸被删了" % rel,
+        )
     check(
         "%s：默认只预览（要 --yes 才真删）" % label,
         "args.yes" in src,
