@@ -66,6 +66,39 @@ async function backTopState(page) {
 }
 
 /**
+ * 读**用户现在看到的积分余额**（积分商城首页上的「当前积分 N」）。
+ *
+ * 【为什么读页面，而不是读库里的 `user.points`】
+ * 库里的 `user.points` 是**本地余额**，而小程序显示的是「本地余额 + 还没同步进来的中台流水」
+ * （表字典：`point_daily_sync_record` 是 T+1 的副本）—— 用户看到的是后者。
+ * 2026/10/14 实测就撞上过：页面显示 30326，库里 `user.points` 只有 28331。
+ * 所以「发多少到账多少」这种对账，必须以**页面上的数**为准（详见 docs/踩坑记录.md 坑 42）。
+ *
+ * 【为什么先回首页再进商城】导航都是幂等的（已经在那一页就不动），不强制重进会读到**旧渲染**
+ * —— 验数据库类改动时踩过这个坑（坑 43）。
+ *
+ * 副作用：跑完手机停在**积分商城首页**。
+ *
+ * @param {import('playwright').Page} page
+ * @returns {Promise<{page: import('playwright').Page, points: number}>} 导航后的 page + 读到的余额
+ */
+async function readVisiblePoints(page) {
+  const qaPage = require("./qa_page");
+  page = await qaPage.ensureOnHomeFeed(page);
+  page = await ensureOn(page);
+  const fg = await base.foreground(page);
+  const text = await base.pageText(fg);
+  const points = base.parsePointsFromText(text);
+  if (points === null) {
+    throw new Error(
+      "读不到「当前积分」：积分商城首页上没有『当前积分 N』这段文字。\n" +
+        `  当前页面前 160 字: ${JSON.stringify(text.slice(0, 160))}`
+    );
+  }
+  return { page: fg, points };
+}
+
+/**
  * 按需求 713582097 校验「回到顶部」按钮（**只读**：只滑动 + 点这个按钮本身，不改数据）。
  *
  * 三步，每步都对着需求里的一句话：
@@ -126,4 +159,13 @@ async function assertBackTopRules(page, { maxSwipes = 4 } = {}) {
   return base.foreground(page);
 }
 
-module.exports = { SEL, ENTRY_TEXT, PAGE_MARKERS, isOn, ensureOn, backTopState, assertBackTopRules };
+module.exports = {
+  SEL,
+  ENTRY_TEXT,
+  PAGE_MARKERS,
+  isOn,
+  ensureOn,
+  backTopState,
+  readVisiblePoints,
+  assertBackTopRules,
+};

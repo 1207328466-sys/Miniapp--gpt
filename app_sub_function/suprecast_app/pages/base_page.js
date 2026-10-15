@@ -263,6 +263,24 @@ function parseIndex(raw) {
 }
 
 /**
+ * 从页面文本里抠出**用户看到的积分余额** —— **纯函数**，方便离线自检。
+ *
+ * 实测口径（2026/10/14 积分商城首页）：页面上是「当前积分 30326」这种形式
+ * （同一屏还有「积分明细 / 积分获取 / 积分抽奖 / 兑换记录 / 积分榜单」这些入口名）。
+ *
+ * 【为什么要读页面上的数，而不是只读库】库里的 `user.points` 是**本地余额**，
+ * 而小程序显示的是「本地余额 + 还没同步进来的中台流水」（表字典：point_daily_sync_record 是 T+1 副本）
+ * —— 用户看到的是后者。对账要么看用户看到的数，要么两个都看（见 docs/踩坑记录.md 坑 42）。
+ *
+ * @param {string} text 页面可见文本
+ * @returns {number|null} 读到的余额；读不到返回 null（**不要**猜成 0）
+ */
+function parsePointsFromText(text) {
+  const m = /当前积分\s*[:：]?\s*(\d+)/.exec(String(text || ""));
+  return m ? Number(m[1]) : null;
+}
+
+/**
  * 解析「滑动」的两个参数 —— **纯函数**，方便离线自检。
  *
  * 口径（owner 2026/10/14 定稿）：**「滑动」 = 一直滑到页面不动为止（滑到底/滑到顶）**，
@@ -514,6 +532,7 @@ module.exports = {
   countOfText,
   notFound,
   parseIndex,
+  parsePointsFromText,
   parseScrollSpec,
   suggestJoinedSelector,
   selectorMissHint,

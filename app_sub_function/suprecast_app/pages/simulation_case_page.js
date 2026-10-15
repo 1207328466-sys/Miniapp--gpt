@@ -511,7 +511,7 @@ async function assertIntroRules(page, kwargs, ctx) {
  */
 
 /** 点当前详情页的「复制案例」，并断言弹出需求里那句提示（**会写数据**） */
-async function copyCurrentCase(page, { timeout = 10000, ctx = null } = {}) {
+async function copyCurrentCase(page, { timeout = 10000, ctx = null, onNoEffect = null } = {}) {
   const fg = await base.foreground(page);
   if ((await base.countOf(fg, SEL.detailPage)) === 0) {
     throw new Error(`「复制案例」要在案例详情页上执行（当前页没有 ${SEL.detailPage}）`);
@@ -521,41 +521,69 @@ async function copyCurrentCase(page, { timeout = 10000, ctx = null } = {}) {
     throw new Error(`详情页上找不到「${SEL.copyButtonText}」按钮`);
   }
 
-  await base.tapText(fg, SEL.copyButtonText, `「${SEL.copyButtonText}」按钮`);
-
   /*
    * 付费案例会**先弹确认框**（「确认复制案例？ 花费积分：N / 兑换成功后，不支持撤回兑换」），
    * 只有点「确定」才真的复制（扣积分）。免费案例没有这一步，所以这里要"有就点、没有就跳过"。
    * 实测（2026/10/12）：不加这一步，付费案例点完复制什么都不发生 —— 用例会报
    * 「点了复制案例但没有出现提示」，看着像产品坏了，其实是流程上少点了一次确认。
    */
-  // 免费案例直接出提示、付费案例先弹确认框 —— 所以这里等"两者之一先出现"，
-  // 而不是死等确认框（免费案例根本没有它，死等会白花几秒）
-  await base.waitUntil(
-    async () => {
-      const t = await base.pageText(await base.foreground(page));
-      return t.includes(COPY_CONFIRM_MARK) || COPY_TOAST.every((w) => t.includes(w));
-    },
-    { timeout: 8000, interval: 300 }
-  );
-  if ((await base.pageText(await base.foreground(page))).includes(COPY_CONFIRM_MARK)) {
-    const dialogText = await base.pageText(await base.foreground(page));
-    const feeMatch = dialogText.match(/花费积分\s*[:：]?\s*(\d+)/);
-    console.log(
-      `  [提示] 这是付费案例：弹出确认框「${COPY_CONFIRM_MARK}？花费积分：${feeMatch ? feeMatch[1] : "?"}」` +
-        ` —— 点「确定」继续（**这一步会真的扣积分**，积分在中台记账，本动作不复位积分）`
+  /** 点一次「复制案例」并等结果：返回 "toast"（提示已出现）/ "none"（既没确认框也没提示） */
+  const tapAndWait = async () => {
+    await base.tapText(await base.foreground(page), SEL.copyButtonText, `「${SEL.copyButtonText}」按钮`);
+
+    // 免费案例直接出提示、付费案例先弹确认框 —— 所以这里等"两者之一先出现"，
+    // 而不是死等确认框（免费案例根本没有它，死等会白花几秒）
+    await base.waitUntil(
+      async () => {
+        const t = await base.pageText(await base.foreground(page));
+        return t.includes(COPY_CONFIRM_MARK) || COPY_TOAST.every((w) => t.includes(w));
+      },
+      { timeout: 8000, interval: 300 }
     );
-    await base.tapSelector(await base.foreground(page), SEL.dialogConfirm, "确认框的「确定」");
+    if ((await base.pageText(await base.foreground(page))).includes(COPY_CONFIRM_MARK)) {
+      const dialogText = await base.pageText(await base.foreground(page));
+      const feeMatch = dialogText.match(/花费积分\s*[:：]?\s*(\d+)/);
+      console.log(
+        `  [提示] 这是付费案例：弹出确认框「${COPY_CONFIRM_MARK}？花费积分：${feeMatch ? feeMatch[1] : "?"}」` +
+          ` —— 点「确定」继续（**这一步会真的扣积分**，积分在中台记账，本动作不复位积分）`
+      );
+      await base.tapSelector(await base.foreground(page), SEL.dialogConfirm, "确认框的「确定」");
+    }
+
+    const ok = await base.waitUntil(
+      async () => {
+        const text = await base.pageText(await base.foreground(page));
+        return COPY_TOAST.every((w) => text.includes(w));
+      },
+      { timeout, interval: 400 }
+    );
+    return ok ? "toast" : "none";
+  };
+
+  let result = await tapAndWait();
+
+  /*
+   * 【点了一次没反应时怎么办 —— 2026/10/15 全量跑里真踩到】
+   * 那次 `复制案例` 的点击**像是没生效**：没弹确认框、没出提示，而且**库里一条记录都没多**
+   * （复位那步 "deleted=0" 就是证据）。单条复跑同一条用例立刻通过 —— 属于偶发。
+   *
+   * 这类"操作没生效"和"提示没出现"必须分开处理，否则就是两种后果：
+   *   · 当成失败 -> 报告里长期躺着一条偶发红（没人再信红）；
+   *   · 无脑重试 -> 万一第一次其实复制成功了，第二次会**又多复制一条**，把"多了 1 条"的断言搞坏。
+   * 所以这里把"到底生效没有"交给**调用方**判断（它有数据库水位，能用记录数说话），
+   * 只有调用方明确说"没生效、可以重试"时才再点一次。
+   */
+  if (result !== "toast" && onNoEffect) {
+    const noEffect = await onNoEffect();
+    if (noEffect) {
+      console.log("  [提示] 第一次点击没生效（调用方查库确认：复制记录没变）—— 重新点一次，再等结果");
+      result = await tapAndWait();
+    } else {
+      console.log("  [提示] 库里其实已经多了一条记录 —— 说明是**提示没出现**（不是点击没生效），不再重试");
+    }
   }
 
-  const ok = await base.waitUntil(
-    async () => {
-      const text = await base.pageText(await base.foreground(page));
-      return COPY_TOAST.every((w) => text.includes(w));
-    },
-    { timeout, interval: 400 }
-  );
-  if (!ok) {
+  if (result !== "toast") {
     const now = await base.pageText(await base.foreground(page));
     const missing = COPY_TOAST.filter((w) => !now.includes(w));
     throw new Error(

@@ -227,13 +227,56 @@ async function tapElement(device, page, locator) {
   const offScreen = (px, py) =>
     px < 0 || py < 0 || (screen.w > 0 && px > screen.w) || (screen.h > 0 && py > screen.h);
 
-  if (offScreen(m.px, m.py)) {
-    console.warn(
-      `  [提示] 目标不在屏幕内（adb tap 坐标 ${m.px},${m.py}，屏幕 ${screen.w}x${screen.h}）—— 先尝试滚动到可视区`
-    );
+  /**
+   * 用**真实手指滑动**把目标拉进可点范围（兜底手段）。
+   *
+   * 【为什么光有 DOM 滚动不够】2026/10/15 真机踩到：答题活动第 2 题的选项在屏幕下方
+   * 2912px（屏幕只有 2583px）。`locator.scrollIntoViewIfNeeded()` 对这个页面**完全无效** ——
+   * 小程序把滚动容器做成 `overflow:hidden` + transform 位移，浏览器那套
+   * "找最近的可滚动祖先"在这里找不到目标，于是它**成功返回、页面一动不动**，
+   * 紧接着这里就报「点不到：目标在屏幕外」；而人手动滑一下明明就能点到。
+   * 所以补这一手：真的发 `adb input swipe`，滑完重新量坐标。
+   *
+   * 方向按目标在哪边定：目标在屏幕**下方** -> 往上滑（把内容顶上来）；
+   * 目标在**上方/被吸顶头压住** -> 往下滑。
+   * （往下滑在"页面已到顶"时会碰到下拉刷新 —— 只在目标确实不在可点位置时才滑，
+   *   而且从屏幕中部起手，尽量避开顶部下拉区。）
+   */
+  const swipeToReveal = async (dir) => {
+    if (screen.w <= 0 || screen.h <= 0) return;
+    const x = Math.round(screen.w / 2);
+    const isUp = dir === "up";
+    const y1 = Math.round(screen.h * (isUp ? 0.72 : 0.5));
+    const y2 = Math.round(screen.h * (isUp ? 0.32 : 0.8));
+    await device.shell(`input swipe ${x} ${y1} ${x} ${y2} 400`);
+    await new Promise((r) => setTimeout(r, 700));
+  };
+
+  /** 目标现在可点吗？（坐标在屏幕内 + 没被别的元素盖住） */
+  const notClickableReason = () =>
+    offScreen(m.px, m.py)
+      ? `坐标在屏幕外（${m.px},${m.py}，屏幕 ${screen.w}x${screen.h}）`
+      : m.found.coveredBy
+        ? `被 ${m.found.coveredBy} 盖着`
+        : "";
+
+  if (notClickableReason()) {
+    console.warn(`  [提示] 目标现在点不到：${notClickableReason()} —— 先尝试滚进可点范围`);
+    // ① DOM 滚动（快，很多页面它管用；小程序里常常无效，所以下面还有兜底）
     await locator.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
     await new Promise((r) => setTimeout(r, 300));
     m = await measure();
+
+    // ② 真实滑动兜底：滑一次、重量一次，最多 4 次
+    for (let i = 1; notClickableReason() && i <= 4; i++) {
+      const aboveViewport = m.py < 0 || (screen.h > 0 && m.py < screen.h * 0.34);
+      const dir = aboveViewport ? "down" : "up";
+      console.log(
+        `  [兜底] 目标仍然点不到（${notClickableReason()}），真实滑动第 ${i}/4 次（方向=${dir === "up" ? "上" : "下"}）`
+      );
+      await swipeToReveal(dir);
+      m = await measure();
+    }
   }
 
   if (offScreen(m.px, m.py)) {
@@ -260,14 +303,7 @@ async function tapElement(device, page, locator) {
    * 第一版拿"原始元素"去比，误伤了一个正常用例（点「积分商城」时，盖着它的是同一行里的文字节点）
    * —— 这条错也记在坑 25 里。
    */
-  let coveredBy = m.found.coveredBy;
-  if (coveredBy) {
-    console.warn(`  [提示] 目标坐标上被 ${coveredBy} 盖着（adb tap 坐标 ${m.px},${m.py}）—— 先尝试滚动，再量一次`);
-    await locator.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
-    await new Promise((r) => setTimeout(r, 400));
-    m = await measure();
-    coveredBy = m.found.coveredBy;
-  }
+  const coveredBy = m.found.coveredBy; // 上面那轮"滚动 + 真实滑动"已经尽力把它从遮挡里拉出来了
 
   if (coveredBy) {
     throw new Error(

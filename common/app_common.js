@@ -754,6 +754,49 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
   const alive = aliveRaw.filter((a) => isUsableForegroundCandidate({ count: a.count }));
   if (!alive.length) alive.push(...aliveRaw);
 
+  /*
+   * 4.6) 【单个候选不能轻信 —— 2026/10/15 补】
+   *
+   * 真机事故：手机停在小程序**二级页（答题页）**，框架却挑了后台的**首页信息流**，
+   * 之后整条用例都在"错的页面上"操作，最后报出一句看不懂的「找不到底部 tab 我的」。
+   * 复核发现：微信里**每页都在以 ~60fps 出帧**（实测答题页 61 帧/秒、后台首页 60 帧/秒），
+   * 所以"还出不出帧"这个二值判据分不出谁在屏幕上；能分出的是**输入归属**
+   * （发一次 ESC，只有屏幕上那页收到 keydown，实测后台页 0 次）。
+   *
+   * 但输入归属只在"多候选"分支里用得上。事故那次偏偏只剩**一个**候选 ——
+   * 屏幕上那页的探测**超时了一次**（500ms 没等到帧）就被判成"没在出帧"，直接踢出候选，
+   * 于是没有歧义、也没人去问输入归属，就这么挑了后台页。
+   *
+   * 所以这里加一道复核：**候选不止一个、却只剩一个出帧时，把落选的那些用更长的超时再探一次**。
+   * 探不回来 -> 维持原判（不改变原来的行为）；探回来了 -> 进入多候选判定，
+   * 由输入归属这条硬信号来定（见 pickByInputOwnership）。
+   */
+  if (alive.length === 1 && candidates.length > 1) {
+    const alivePages = new Set(alive.map((a) => a.page));
+    const retry = await Promise.all(
+      candidates
+        .filter((p) => !alivePages.has(p))
+        .map(async (p) => {
+          try {
+            return (await p.evaluate(RAF_PROBE, 1200)) ? p : null;
+          } catch (e) {
+            return null;
+          }
+        })
+    );
+    const back = retry.filter(Boolean);
+    if (back.length) {
+      console.log(
+        `  [提示] 前台页复核：第一轮只探到 1 个在出帧的页面，但用更长的超时又探到 ${back.length} 个` +
+          ` —— 交给「输入归属」判定谁在屏幕上（微信里前后台页面都会出帧，单靠出帧分不出来）`
+      );
+      for (const p of back) {
+        const count = await p.locator("*").count().catch(() => 0);
+        if (isUsableForegroundCandidate({ count })) alive.push({ page: p, count });
+      }
+    }
+  }
+
   // 记录"每个页面是什么时候开始出帧的"（多候选时用它挑：刚出帧的那个 = 刚跳过去的页面）
   const nowTs = Date.now();
   const aliveSet = new Set(alive.map((a) => a.page));

@@ -294,6 +294,43 @@ const HANDLERS = {
     },
   },
 
+  /* ---------- 2026/10/14 追加：积分余额对账（读"用户看到的数"）----------
+   * 为什么读页面不读库：小程序显示的是「本地余额 + 还没同步进来的中台流水」（表字典：
+   * point_daily_sync_record 是 T+1 副本），用户看到的是前者；库里的 user.points 会落后一截。
+   * 为什么每次都"回首页再进商城"：导航是幂等的（已在那一页就不动），不强制重进就会读到旧渲染
+   * —— 这条是 2026/10/14 验分类夹具时踩出来的（坑 43）。
+   */
+
+  记住积分余额: {
+    run: async (page, _p1, _p2, ctx) => {
+      const r = await pointsMall.readVisiblePoints(page);
+      if (ctx) ctx.set("积分余额", r.points);
+      console.log(`  记住当前积分余额：${r.points}（后续「检查积分增加」拿它当基准）`);
+      return r.page;
+    },
+  },
+
+  检查积分增加: {
+    run: async (page, expectedDelta, _p2, ctx) => {
+      const want = Number(expectedDelta);
+      if (!Number.isFinite(want)) throw new Error(`「检查积分增加」的参数1 要填数字（分），现在填的是 ${expectedDelta}`);
+      const before = ctx ? ctx.require("积分余额") : null;
+      const r = await pointsMall.readVisiblePoints(page);
+      const now = r.points;
+      const delta = now - before;
+      if (delta !== want) {
+        throw new Error(
+          `断言失败: 积分余额从 ${before} 变成 ${now}（增加 ${delta}），期望增加 ${want}。\n` +
+            `  常见原因：① 发放没落账（业务表有记录、总账没加 —— 见 docs/踩坑记录.md 坑 42）；\n` +
+            `  ② 这一步之前没写「记住积分余额」；③ 期间别处也有积分变动（换了账号/点了别的任务）。\n` +
+            `  想再核对一遍：python tools/points_credit_check.py --user <账号>`
+        );
+      }
+      console.log(`断言通过: 积分余额 ${before} → ${now}（增加 ${delta}，与期望一致）`);
+      return r.page;
+    },
+  },
+
   检查文字出现次数: {
     run: async (page, text, expected) => {
       const want = Number(expected);

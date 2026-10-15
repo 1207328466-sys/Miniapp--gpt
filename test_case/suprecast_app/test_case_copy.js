@@ -86,6 +86,24 @@ async function assertDbChanged(page) {
   return page;
 }
 
+/**
+ * 「刚才那次点击到底生效没有？」—— 给 `copyCurrentCase` 判断要不要重试用。
+ *
+ * 为什么问数据库而不是问页面：点击"没生效"的表现和"提示没出现"**长得一样**（页面上都没字）。
+ * 只有库里那条复制记录能分清：记录没变 = 点击没生效（可以重试）；记录变了 = 复制成功、
+ * 只是提示没出现（**那是需求没满足，不能靠重试掩盖**）。
+ */
+async function copyDidNotTakeEffect() {
+  if (!caseTitle || !baseline) return false;
+  const now = caseCopy.readState(caseTitle);
+  const same = now.records === baseline.records && now.copyCount === baseline.copyCount;
+  console.log(
+    `  查库判断：记录 ${baseline.records} -> ${now.records}、copy_count ${baseline.copyCount} -> ${now.copyCount}` +
+      `（${same ? "没变 = 点击没生效" : "变了 = 复制已成功"}）`
+  );
+  return same;
+}
+
 /** 复位：按水位只删这次造的那条记录 */
 async function resetCopy(page) {
   if (!caseTitle || !baseline) return page;
@@ -101,7 +119,7 @@ async function resetCopy(page) {
     [openFirstCaseAndRemember, null],
     [crossCheckTitle, null],
     [readBaseline, null],
-    [caseLibrary.copyCurrentCase, { ctx: null }],
+    [caseLibrary.copyCurrentCase, { ctx: null, onNoEffect: copyDidNotTakeEffect }],
     [assertDbChanged, null],
     [resetCopy, null],
     [pages.qaPage.ensureOnHomeFeed, null],

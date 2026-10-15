@@ -6,19 +6,27 @@
  *
  * 实测结构（2026/10/10）：
  *
- * 首页活动卡区（**横向列表，不自动轮播**）：
+ * 首页活动卡区（**轮播 swiper，一次只显示一张**）：
  *   [class*="qa-activity-flow-item--card"]      卡片本体（实测 163x217，css 约 (7,313)）
  *   [class*="qa-activity-flow-item__tag"]       角标 —— 判断是哪张卡靠它，
  *                                               文本形如「答题·官方」「链接·官方」
- *   [class*="qa-activity-flow-item__swiper"]    横向容器（卡多时 scrollWidth > clientWidth）
+ *   [class*="qa-activity-flow-item__swiper"]    轮播容器（下面有 .wx-swiper-dot 圆点）
  *   ⚠️ 卡片数量会随活动上下线变化：实测同一位置先后见过「答题·官方」和「链接·官方」，
  *      也见过只渲染 1 张（scrollWidth == clientWidth，此时无需横滑）。
+ *   ⚠️ **2026/10/15 纠正（坑 44 定稿）**：首页**只有一张活动卡**（= 一条活动）。
+ *      卡里那个带 5 个圆点的 swiper 是**这条活动自己的 5 张图片**在自转
+ *      （`autoplay` / `circular` / `interval=4000`），`current` 是"第几张图片"。
+ *      角标（类型·来源）**会闪一下就没**（异步渲染，实测前 2 秒有、之后十几秒空）。
+ *      位移是 transform（`scrollWidth == clientWidth` 恒成立）。
+ *      详见 `readCardState` / `openQuizCard`。
  *
  * 答题活动页：
  *   .activity-quiz-page                         整页根容器（只出现在答题页，比文案可靠）
  *     .custom-navbar                            标题「Z-B4-答题角标」+ 返回
  *     .activity-quiz-card__title                活动标题
- *     [class*="quiz-option--row"]               选项行（「A 正确」「B 错误」）
+ *     .quiz-option                              选项（**两套样式共用基类**）：
+ *                                               单选 .quiz-option--row / 多选 .quiz-option--grid
+ *                                               （2026/10/15 补齐：只写 --row 会漏掉多选题）
  *     [class*="activity-quiz-submit"]           提交（未选答案时灰色禁用）
  *   提交前后的状态变化（可作断言依据）：
  *     进度 已答：0/1 -> 1/1 ；题号标签 未答 -> 已答 ；提交按钮 灰色禁用 -> 红色可用
@@ -66,7 +74,16 @@ const SEL = {
   // 按子串匹配就会读到包裹元素的 class —— 这正是"禁用态判定失效"的原因，
   // 也**和账本根因 11（[class*=header-tab] 命中容器）是同一个坑，我又踩了一次**。
   // 教训：命中数量是信号；用例里对结构用 assertSelectorCount(期望 1) 能把这类坑当场抓住。
-  option: ".quiz-option--row",
+  /*
+   * ⚠️ 选项**有两套类名**，必须用公共基类 `.quiz-option`：
+   *   · 单选题：`quiz-option quiz-option--row quiz-option--normal|--selected`（容器 .quiz-options--row）
+   *   · 多选题：`quiz-option quiz-option--grid quiz-option--normal`（容器 .quiz-options--grid，选项里带图）
+   * 2026/10/15 实测踩到：只写 `--row` 时，多选题的选项**一个都命中不到**
+   * （活动「M1-六选项六图」第 2 题是多选，count 恒为 0，于是"点了没反应"）。
+   * 用基类 `.quiz-option` 两边都覆盖；旁边那些 `quiz-option__badge / __text / __img`
+   * 是**另外的类名**（双下划线），不会被 `.quiz-option` 选中。
+   */
+  option: ".quiz-option",
   submit: ".activity-quiz-submit",
 };
 
@@ -78,7 +95,8 @@ const SEL = {
  *   .quiz-card                     一道题（实测 333x465）—— **这就是题目边界**
  *     .quiz-card__head             题号 / 分值 / 状态（形如「1．单选题 1 积分 未答」）
  *     .quiz-options                这道题的选项容器
- *       .quiz-option--row          选项行（**只属于它所在的那个 .quiz-card**）
+ *       .quiz-option               选项（**.quiz-option--row 单选 / .quiz-option--grid 多选**；
+ *                                  只属于它所在的那个 .quiz-card）
  * 另一套是"活动信息卡"，名字像但别混：`.activity-quiz-card__title` 是**活动标题**，
  * `.quiz-card` 才是**题目**。
  */
@@ -238,100 +256,140 @@ async function findCard(page, { tagContains = CARD_TAG_QUIZ } = {}) {
   return { cards: list, hit: list.find((c) => c.tag.includes(tagContains)) || null };
 }
 
-/** 活动卡区能不能横向滑动（scrollWidth 明显大于 clientWidth） */
-async function cardListScrollable(page) {
+/**
+ * 活动卡区现在是**第几张卡**（读轮播圆点）+ 当前这张的角标文本。
+ *
+ * 【为什么要读圆点】2026/10/14 实测（答题卡"消失"那次）：
+ *   卡区是一个 swiper（5 个圆点 = 5 张活动卡），但它
+ *     ① **只把当前这张卡的角标渲染出来**（所以按角标只能认出一张）；
+ *     ② `scrollWidth == clientWidth` —— 它是 **transform 位移**，不是滚动，
+ *        所以「scrollWidth 比 clientWidth 大」这个判据**永远为假**（旧版就卡在这里，
+ *        它以为"没有可滑的卡"，只能干等卡自己变，于是 30 秒后误报"活动没上线"）。
+ *   唯一可靠的做法：**滑一下、看圆点动没动**，再看圆点停在哪、角标写了什么。
+ *
+ * @returns {Promise<{tag: string, index: number, total: number, box: {x:number,y:number,width:number,height:number}|null}|null>}
+ *   index = 圆点是第几个（读不到 -1）；total = 圆点总数（0 表示读不到圆点）
+ */
+async function readCardState(page) {
   const fg = await base.foreground(page);
   return fg
-    .evaluate((sel) => {
-      const el = document.querySelector(sel);
-      if (!el) return false;
-      return el.scrollWidth > el.clientWidth + 20;
-    }, SEL.cardSwiper)
-    .catch(() => false);
+    .evaluate(
+      (sel) => {
+        const wrap = document.querySelector(sel.card);
+        if (!wrap) return null;
+        const dots = Array.from(wrap.querySelectorAll(".wx-swiper-dot"));
+        const tagEl = wrap.querySelector(sel.cardTag);
+        const sw = wrap.querySelector(sel.swiper);
+        const r = wrap.getBoundingClientRect();
+        return {
+          tag: String((tagEl && tagEl.innerText) || "").replace(/\s+/g, " ").trim(),
+          index: dots.findIndex((d) => String(d.className).includes("active")),
+          total: dots.length,
+          autoplay: sw ? sw.hasAttribute("autoplay") : false,
+          intervalMs: sw ? Number(sw.getAttribute("interval")) || 0 : 0,
+          box: { x: r.x, y: r.y, width: r.width, height: r.height },
+        };
+      },
+      { card: SEL.card, cardTag: SEL.cardTag, swiper: SEL.cardSwiper }
+    )
+    .catch(() => null);
 }
 
 /**
- * 点「答题」活动卡进入答题页；卡不在当前屏内时，尝试横向滑动活动卡区再找。
- * 点击一律走 `tapElement`（读 boundingBox 换算物理坐标），**不写死坐标** ——
+ * 等「答题」角标出现（连着读，最多等 timeoutMs）。
+ *
+ * 为什么不能"读一次没有就判死"：角标**只渲染当前那一张**，而且**会闪一下就没**
+ * （2026/10/15 实测：前 2 秒读到「答题·官方」，之后十几秒读到的都是空串）。
+ * @returns {Promise<string|null>} 含「答题」的角标文本；等不到就返回 null
+ */
+async function waitForQuizTag(page, { timeoutMs = 4000, seenTags = null } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const st = await readCardState(page);
+    const tag = (st && st.tag) || "";
+    if (tag && seenTags) seenTags.add(tag);
+    if (tag.includes(CARD_TAG_QUIZ)) return tag;
+    if (Date.now() >= deadline) return null;
+    await base.sleep(700);
+  }
+}
+
+/**
+ * 点「答题」活动卡进入答题页。
+ *
+ * 【怎么找卡 —— 2026/10/15 真机实测定的口径】
+ *   ① 首页**只有一张活动卡**（`qa-activity-flow-item--card`）：它代表**一条活动**，
+ *      卡里那个带 5 个圆点的 swiper 是**这条活动自己的 5 张图片**在自转（`autoplay` 4 秒一次），
+ *      **不是"5 张活动卡"**。（这一条我先后判错过两次，最后是打开卡片 HTML + 数 slide 的封面地址
+ *      确认的：5 个 slide 的封面是同一个地址、角标只有一个。）
+ *   ② 所以"首页有没有答题卡"= "前端挑中的那条活动是不是答题活动"。
+ *      库里"在时间窗内 + 显示中"的活动可能有好几条，前端只挑一条放在这里。
+ *   ③ 判据按可靠程度排：
+ *      · **角标**（`qa-activity-flow-item__tag`，形如「答题·官方」）—— 最直接，但它是异步渲染的、
+ *        会闪一下就没，实测最长见过 45 秒都不出现；
+ *      · **落地页** —— 点一次卡，看有没有进 `.activity-quiz-page`。角标读不到时靠它定论。
+ *   ④ 角标写着别的类型（例如「图文·官方」）就直接记跳过：点别的活动卡只会打开它自己的页面。
+ *      实测还有**点了完全没反应**的活动卡（「新人首帖奖励」那张，三个位置都点不动，
+ *      而同一屏的搜索栏一点就开 —— 是那张卡自己没配跳转，不是框架点不中）。
+ *
+ * 点击一律走 `tapLocator`（读 boundingBox 换算物理坐标），**不写死坐标** ——
  * 写死坐标在屏幕内容变化时会点到无关位置（另一份副本踩过这个坑，见其坑 13）。
  */
-async function openQuizCard(page, { timeout = 15000, maxSwipes = 4, waitForCard = 30000 } = {}) {
-  const waitDeadline = Date.now() + waitForCard;
-  let lastTags = [];
+async function openQuizCard(page, { timeout = 15000 } = {}) {
+  const seenTags = new Set();
 
-  for (let attempt = 1; attempt <= maxSwipes; attempt++) {
+  // ① 先等角标（异步渲染、会闪一下就没；实测最长见过 45 秒都不渲染）
+  const tag = await waitForQuizTag(page, { timeoutMs: 6000, seenTags });
+  const st = await readCardState(page);
+  if (!st) {
     const fg = await base.foreground(page);
-    const { cards, hit } = await findCard(fg);
-    lastTags = cards.map((c) => c.tag);
-
-    console.log(
-      `  [第 ${attempt} 次] 本页活动卡 ${cards.length} 张：${JSON.stringify(cards.map((c) => c.tag))}`
+    throw preconditionError(
+      `当前页面上没有活动卡（${SEL.card}）。可能在别的页面，或活动卡区未加载。` +
+        `当前页面前 120 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 120))}`
     );
+  }
+  console.log(
+    `  首页活动卡：角标=${JSON.stringify(tag || st.tag)}（这一张卡内部的图片轮播 第 ${st.index + 1}/${st.total} 张）`
+  );
 
-    if (hit) {
-      console.log(`  命中「${CARD_TAG_QUIZ}」卡：角标=${JSON.stringify(hit.tag)}`);
-      await base.tapLocator(fg, fg.locator(SEL.card).nth(hit.index), `活动卡「${hit.tag}」`);
-      const ok = await base.waitUntil(async () => isOn(page), { timeout });
-      if (!ok) {
-        const now = await base.foreground(page);
-        throw new Error(
-          `点击「${CARD_TAG_QUIZ}」卡后没有进入答题页（未出现 ${SEL.quizPage}）。` +
-            `当前页面前 120 字: ${JSON.stringify((await base.pageText(now)).slice(0, 120))}`
-        );
-      }
-      console.log("  已进入答题活动页");
-      return base.foreground(page);
-    }
-
-    if (cards.length === 0) {
-      throw preconditionError(
-        `当前页面上没有活动卡（${SEL.card}）。可能在别的页面，或活动卡区未加载。` +
-          `当前页面前 120 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 120))}`
-      );
-    }
-
-    if (!(await cardListScrollable(fg))) {
-      // 实测：卡区的角标会随时间变化（同一位置先后见过「答题·官方」「链接·官方」「图文·官方」），
-      // 且只渲染 1 张（该状态下 scrollWidth == clientWidth，无卡可滑）。
-      // 所以这里**等一等再看**，而不是立刻判死。
-      if (Date.now() < waitDeadline) {
-        console.log(`    当前不是「${CARD_TAG_QUIZ}」卡且无可滑动空间，等待卡变化后重试...`);
-        await base.sleep(4000);
-        page = await base.foreground(page);
-        attempt -= 1; // 等待不算一次滑动尝试
-        continue;
-      }
-      throw preconditionError(
-        `等了 ${Math.round(waitForCard / 1000)} 秒仍未出现「${CARD_TAG_QUIZ}」活动卡。\n` +
-          `  实测到的卡：${JSON.stringify(lastTags)}\n` +
-          `  这是**前置条件不满足**（活动未上线/已换卡），不是框架缺陷 —— 用例应记为跳过。`
-      );
-    }
-
-    // 横向滑动：按卡片实际位置算起止点，滑完**核对卡是否真的变了**
-    const card = cards[0];
-    if (!card.box) throw new Error("读不到卡片坐标，无法滑动");
-    const dpr = await fg.evaluate(() => window.devicePixelRatio || 1);
-    const y = Math.round((card.box.y + card.box.height / 2) * dpr);
-    const x1 = Math.round((card.box.x + card.box.width - 10) * dpr);
-    const x2 = Math.round((card.box.x + 10) * dpr);
-    const device = await base.getDevice();
-    const tagsBefore = cards.map((c) => c.tag).join("|");
-    console.log(`  滑动活动卡区 (${x1},${y}) -> (${x2},${y})`);
-    await device.shell(`input swipe ${x1} ${y} ${x2} ${y} 500`);
-    await base.sleep(2500);
-
-    const after = await findCard(page);
-    const tagsAfter = after.cards.map((c) => c.tag).join("|");
-    if (tagsAfter === tagsBefore) {
-      throw new Error(
-        `横向滑动后卡片没有变化（${tagsBefore}）。滑动很可能没作用在活动卡区上。\n` +
-          `  这是"操作没生效"，不是"没找到卡" —— 两者原因不同，别混为一谈。`
-      );
-    }
+  // ② 角标明确写着别的类型（例如「图文·官方」）-> 首页这张卡就不是答题活动，直接记跳过。
+  //    为什么不硬点：点别的活动卡会打开它自己的页面（有些还会带来副作用），而结论不会变。
+  if (st.tag && !st.tag.includes(CARD_TAG_QUIZ)) {
+    throw preconditionError(
+      `首页这张活动卡不是答题活动（角标=${JSON.stringify(st.tag)}）。\n` +
+        `  这张卡背后是一条活动：库里"在时间窗内 + 显示中"的活动有好几条，前端只会挑一条放在这里。\n` +
+        `  想跑这条用例：把答题活动**设为显示中**、并让它在时间窗内（测试环境可以直接在管理后台改），` +
+        `  或者把当前这条活动的显示状态关掉。\n` +
+        `  这是**前置条件不满足**，不是框架缺陷 —— 用例应记为跳过。`
+    );
   }
 
-  throw new Error(`滑动 ${maxSwipes} 次后仍未找到「${CARD_TAG_QUIZ}」活动卡`);
+  // ③ 角标是空的（异步渲染还没来得及显示）：点一次、看落地页 —— 用"落地页"当最终判据。
+  const fg = await base.foreground(page);
+  await base.tapLocator(fg, fg.locator(SEL.card).first(), tag ? `活动卡「${tag}」` : "首页活动卡");
+  const ok = await base.waitUntil(async () => isOn(page), { timeout: Math.min(timeout, 8000) });
+  if (ok) {
+    console.log("  已进入答题活动页");
+    return base.foreground(page);
+  }
+
+  const now = await base.foreground(page);
+  const where = JSON.stringify((await base.pageText(now)).slice(0, 60));
+  if (tag) {
+    // 角标说是答题卡、点下去却没进答题页 —— 这是"操作没生效/产品侧问题"，该报红让人看一眼
+    throw new Error(
+      `角标写着「${st.tag}」（答题卡），但点下去没进答题页（当前页面前 60 字：${where}）。\n` +
+        `  角标（类型·来源）是前端按活动类型渲染的，指着它却打不开，说明这张卡的行为跟角标对不上。\n` +
+        `  下一步：截图 + 这条输出发给开发；若活动刚下线/到点，也会是这个样子。`
+    );
+  }
+  throw preconditionError(
+    `首页这张活动卡点下去没有进入答题页（角标空、落地页还是：${where}）。\n` +
+      `  两种可能：① 这张卡背后不是答题活动（库里好几条在窗活动，前端挑了一条放在这里）；\n` +
+      `  ② 它是答题活动，但这条活动没配跳转 —— 实测「新人首帖奖励」那张就是点了没反应。\n` +
+      `  这是**前置条件不满足**，不是框架缺陷 —— 用例应记为跳过；` +
+      `  想跑就先让答题活动成为首页这张卡（管理后台设显示中 / 关掉别的活动）。`
+  );
 }
 
 /**
@@ -631,6 +689,71 @@ async function readQuestions(page) {
  *   allowInteract 默认 false：虽然是"只改前端"的操作，仍然要显式声明 ——
  *   免得它被顺手塞进一条只读用例里。
  */
+/**
+ * 点「第 i 题的第 1 个选项」—— **点哪里要按选项样式决定**。
+ *
+ * 【为什么不能一律点"元素中心"】2026/10/15 实测（活动「M1-六选项六图」第 2 题，多选）：
+ *   选项长这样（CSS 尺寸 149x156）：
+ *     .quiz-option--grid
+ *       .quiz-option__grid-img      图片区 142x108（占了大半）
+ *       .quiz-option__grid-row      下面一行：角标 A + 文字
+ *   点**格子中心**（正好落在图片上）→ 毫无反应：class 还是 --normal、进度也不动；
+ *   点**下面那一行**（角标/文字）→ 立刻变成 --selected、进度 1/2 → 2/2。
+ *   （单选 `.quiz-option--row` 没有这个问题：它整行都是文字，点行中心就是点到了。）
+ *
+ * 所以：格子型选项按"角标那一行"的真实坐标点；其它情况仍走 `tapLocator`（它带
+ * "目标在屏幕外就先滚进来"和"被盖住就报错"的保护）。
+ *
+ * @returns {Promise<Object>} page（框架的链条要求返回 page）
+ */
+async function tapQuestionFirstOption(page, i) {
+  const fg = await base.foreground(page);
+  const opt = fg.locator(SEL_Q.card).nth(i).locator(SEL.option).first();
+  const gridRow = opt.locator(".quiz-option__grid-row").first();
+  const isGrid = (await gridRow.count().catch(() => 0)) > 0;
+
+  if (!isGrid) {
+    await base.tapLocator(fg, opt, `第 ${i + 1} 题的选项`);
+    return fg;
+  }
+
+  // 格子型：用"角标+文字"那一行的中心坐标点。
+  // 不走 tapElement 的"往上找可点祖先"—— 那会爬到整个格子、又落回图片那一块（实测点不动）。
+  const device = await base.getDevice();
+  const dpr = await fg.evaluate(() => window.devicePixelRatio || 1);
+  const readPoint = async () => {
+    const box = await gridRow.boundingBox().catch(() => null);
+    if (!box) return null;
+    return {
+      css: { x: box.x, y: box.y, w: box.width, h: box.height },
+      x: Math.round((box.x + box.width / 2) * dpr),
+      y: Math.round((box.y + box.height / 2) * dpr),
+    };
+  };
+
+  let p = await readPoint();
+  if (!p) throw new Error(`第 ${i + 1} 题的选项取不到坐标（角标那一行读不到）`);
+  const screen = await fg.evaluate(() => ({
+    h: Math.round((window.innerHeight || 0) * (window.devicePixelRatio || 1)),
+  }));
+  // 不在屏幕里就先滑上来（多题活动下面几道题常常在屏幕外）
+  for (let k = 0; k < 4 && (p.y < 0 || p.y > screen.h); k++) {
+    console.log(`  第 ${i + 1} 题的选项在屏幕外（y=${p.y}，屏高 ${screen.h}）—— 先滑上来`);
+    const { swipeUpEx } = require("../android");
+    const res = await swipeUpEx(page, {});
+    if (!res.moved) break;
+    await base.sleep(600);
+    p = await readPoint();
+    if (!p) break;
+  }
+  if (!p || p.y < 0 || p.y > screen.h) {
+    throw new Error(`第 ${i + 1} 题的选项滑不进屏幕（最后量到 y=${p ? p.y : "读不到"}，屏高 ${screen.h}）`);
+  }
+  console.log(`  点第 ${i + 1} 题的选项：角标那一行 adb tap(${p.x}, ${p.y})`);
+  await device.shell(`input tap ${p.x} ${p.y}`);
+  return fg;
+}
+
 async function answerAllQuestions(page, { allowInteract = false, ctx = null } = {}) {
   if (!allowInteract) {
     throw new Error(
@@ -671,7 +794,7 @@ async function answerAllQuestions(page, { allowInteract = false, ctx = null } = 
     const firstText = String(await opts.first().innerText().catch(() => ""))
       .replace(/\s+/g, " ")
       .trim();
-    await base.tapLocator(fg, opts.first(), `第 ${i + 1} 题的选项「${firstText}」`);
+    await tapQuestionFirstOption(page, i);
 
     // 动作结果断言：点完必须真的变成"选中态"，否则后面那句"答完了"就是空话
     const ok = await base.waitUntil(
@@ -776,8 +899,9 @@ module.exports = {
   findQuizPage,
   state,
   readQuestions,
+  tapQuestionFirstOption,
   findCard,
-  cardListScrollable,
+  readCardState,
   openQuizCard,
   ensureOn,
   assertQuizPageRules,

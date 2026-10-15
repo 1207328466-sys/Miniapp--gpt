@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-14 18:20:13",
+  "generated_at": "2026-10-15 10:41:14",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
   "warnings": [],
@@ -339,6 +339,24 @@
       "p1_optional": false,
       "p2_optional": false,
       "desc": "读出输入框里真实的值再比较。这是表格里唯一能「读出来再比较」的检查，例如 wx-input.search-input / test",
+      "choices": {}
+    },
+    {
+      "name": "记住积分余额",
+      "p1": "",
+      "p2": "",
+      "p1_optional": false,
+      "p2_optional": false,
+      "desc": "**记住用户现在看到的积分余额**（自己先回首页再进积分商城、强制重新取数，读页面上的「当前积分」）。和「检查积分增加」配成一对用：写数据前后各来一次，就能验证「发多少到账多少」。⚠️ 读的是**页面上的数**（用户看到的），不是库里那个 `user.points` —— 两者会差一批「还没从中台同步进来的流水」（见 docs/踩坑记录.md 坑 42）。只读",
+      "choices": {}
+    },
+    {
+      "name": "检查积分增加",
+      "p1": "期望增加（分）",
+      "p2": "",
+      "p1_optional": false,
+      "p2_optional": false,
+      "desc": "读一次当前积分余额，断言它比上一步「记住积分余额」记下的多**正好这么多分**。例：提交答卷后写 1021 —— 少发、多发、没发都能抓出来。只读（但要先有「记住积分余额」）",
       "choices": {}
     },
     {

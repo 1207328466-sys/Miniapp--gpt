@@ -125,6 +125,17 @@ for (const [name, dirRaw, maxRaw] of [
   check(`反例：${name}`, bad, true);
 }
 
+// ---- 从页面文字里读"用户看到的积分余额"（2026/10/14：给「记住积分余额」「检查积分增加」用）----
+// 为什么值得盯：读不到时必须返回 null（**不能猜 0**）——猜 0 会让"余额 0"这种假通过溜过去；
+// 而页面上同一屏还有「积分明细 / 积分获取」等入口名，正则写松了会读错数。
+const pp = base.parsePointsFromText;
+check("实测原样：当前积分 30326", pp("积分商城 当前积分 30326 积分明细 积分获取"), 30326);
+check("带冒号也认", pp("当前积分：1234"), 1234);
+check("前后有别的字也认", pp("xxx 当前积分  88 yyy"), 88);
+check("读不到就返回 null（不猜 0）", pp("积分明细 积分获取 兑换记录"), null);
+check("空串也是 null", pp(""), null);
+check("「积分明细 500」不该被读成余额", pp("积分明细 500"), null);
+
 console.log();
 if (failed.length) {
   console.log(`有 ${failed.length} 项不符合预期：`);

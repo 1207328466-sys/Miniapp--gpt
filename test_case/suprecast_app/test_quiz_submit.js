@@ -3,7 +3,13 @@
  * @cur_file: test_quiz_submit.js
  * @create_date: 2026/10/12
  *
- * 用例：答题的**写链路** —— 复位 -> 逐题作答 -> 提交 -> 界面断言 -> 数据库校验 -> 再复位
+ * 用例：答题的**写链路** —— 记余额 -> 复位 -> 逐题作答 -> 提交 -> 界面断言 -> 数据库校验
+ *      + 余额对账 -> 再复位
+ *
+ * 【对账以"页面上的数"为准（2026/10/14 改的口径）】
+ * 「发多少分、用户到底到账多少」看的是**积分商城首页上那句「当前积分」**，不是库里 `user.points`
+ * —— 后者是本地余额，会落后于还没同步进来的中台流水（实测同一天：页面 30326、库里 28331）。
+ * 库里那个数仍然读出来，但只当参考信息打日志（docs/踩坑记录.md 坑 42）。
  *
  * 【为什么这条用例值得单独存在】
  * 到 2026/10/12 为止，框架能自动化的都是「只读」的需求。需求 713594985 里那段
@@ -36,6 +42,7 @@ const pages = require("../../app_sub_function/suprecast_app/pages");
 
 const base = pages.base;
 const quizPage = pages.quizPage;
+const pointsMall = pages.pointsMall;
 
 const photosPath = path.join(__dirname, "..", "..", "report", "photo_app");
 
@@ -152,8 +159,31 @@ async function assertDbHasSubmit(page) {
   return page;
 }
 
-/** 提交前快照：记下账号余额（对账时要比"这一笔到底到账多少"） */
-let pointsBefore = null;
+/**
+ * 三个余额快照（2026/10/14 起，对账的口径**以页面上看到的数为准**）。
+ *
+ * 为什么改口径：库里 `user.points` 是**本地余额**，小程序显示的是「本地余额 + 还没同步进来的
+ * 中台流水」—— 用户看到的是后者（实测同一天：页面 30326、库里 28331，见 docs/踩坑记录.md 坑 42）。
+ * 「发多少、用户到底到账多少」这件事，只能拿**页面上的数**来算；库里那个数降级成参考信息。
+ */
+let visiblePointsBefore = null; // 页面上看到的余额（答题前）
+let visiblePointsAfter = null; // 页面上看到的余额（提交后）
+let dbPointsBefore = null; // 库里 user.points（参考，会落后）
+
+/**
+ * 答题前：记住"用户现在看到的积分余额"。
+ *
+ * 放在**打开答题页之前**跑：这一步要"回首页 -> 进积分商城 -> 读当前积分"，
+ * 如果等答完题再做，就会把答题页上已选好的选项洗掉。
+ */
+async function rememberVisiblePointsBefore(page) {
+  const r = await pointsMall.readVisiblePoints(page);
+  visiblePointsBefore = r.points;
+  console.log(`  答题前：页面上看到的积分余额 ${visiblePointsBefore}（对账以这个数为准）`);
+  return r.page;
+}
+
+/** 提交前快照：记下库里 `user.points` —— **只当参考**（它落后于中台流水，别拿它对账） */
 async function snapshotBeforeSubmit(page) {
   const out = runTool("quizScore", ["--activity-name", activityTitle, "--mode", "points"]);
   const line = (out.match(/^\[QUIZSCORE\].*$/m) || [""])[0];
@@ -161,11 +191,15 @@ async function snapshotBeforeSubmit(page) {
   if (!m) {
     throw new Error(
       `读不到提交前的账号余额（工具输出里没有 points=…）。\n` +
-        `  这一句很关键：没有它就没法验证"发多少到账多少"和"答错扣没扣分"。\n  拿到的是：${line}`
+        `  库里这个数只是参考：没有它也能对账（页面上的数已经记住了），但少了它就没法看出` +
+        `"库里的本地余额和页面上的数差多少"。\n  拿到的是：${line}`
     );
   }
-  pointsBefore = Number(m[1]);
-  console.log(`  提交前快照：账号余额 ${pointsBefore}`);
+  dbPointsBefore = Number(m[1]);
+  console.log(
+    `  提交前快照：库里 user.points=${dbPointsBefore}（参考）；页面上看到的是 ${visiblePointsBefore}` +
+      `（两者相差 ${visiblePointsBefore - dbPointsBefore}，差的就是"还没同步进来的中台流水"，坑 42）`
+  );
   return page;
 }
 
@@ -208,7 +242,8 @@ async function assertRetakeable(page) {
  *
  * 真正能钉死的四条：
  *   1. **不会多发**：实得 <= 应得；
- *   2. **到账一致**：提交后余额 − 提交前余额 == 实得（发多少、到账多少）；
+ *   2. **到账一致**：提交后**页面上看到的**余额 − 提交前**页面上看到的**余额 == 实得
+ *      （发多少、用户到账多少；库里 `user.points` 只当参考 —— 它落后于中台流水，见坑 42）；
  *   3. **答错不扣分**：答对 0 题时，实得 == 0 且余额**不得减少**；
  *   4. **截断是看得见的**：实得 < 应得时，明确打出"发生了截断"（这是 C 那条需求的观察点）。
  */
@@ -225,8 +260,19 @@ async function assertScoreAccounting(page) {
   }
   const n = (k) => Number(kv[k]);
   const problems = [];
-  const pointsAfter = n("points");
-  const gained = pointsAfter - pointsBefore;
+  if (!Number.isFinite(visiblePointsBefore)) {
+    throw new Error(
+      "对账失败：没有「答题前页面余额」这个基准（用例开头的「记住答题前余额」没跑到）。\n" +
+        "  没有基准就算不出「这一笔到账多少」-> 直接停，不拿一个假的基准往下算。"
+    );
+  }
+
+  // 读"用户现在看到的余额"（回首页 -> 进积分商城，强制重新取数；坑 43）
+  const snap = await pointsMall.readVisiblePoints(page);
+  page = snap.page;
+  visiblePointsAfter = snap.points;
+  const dbPointsAfter = n("points");
+  const gained = visiblePointsAfter - visiblePointsBefore;
 
   // ① 不会多发
   if (n("actual") > n("should")) {
@@ -264,12 +310,15 @@ async function assertScoreAccounting(page) {
     );
   }
 
-  // ② 到账一致：余额增量必须等于这一笔的实得
+  // ② 到账一致：**页面上看到的**余额增量必须等于这一笔的实得
   if (!Number.isFinite(gained) || gained !== n("actual")) {
     problems.push(
-      `到账对不上：提交前余额 ${pointsBefore}、提交后余额 ${pointsAfter}，增量 ${gained}，` +
+      `到账对不上：页面上看到的余额 提交前 ${visiblePointsBefore} -> 提交后 ${visiblePointsAfter}，` +
+        `增量 ${gained}，` +
         `但库里这一笔的实得是 ${kv.actual}\n` +
         `    （若增量比实得多，可能是这期间有别的收益；比实得少或为负，就是这一笔没按实得发放）\n` +
+        `    （库里 user.points 参考：${dbPointsBefore} -> ${dbPointsAfter} —— 它落后于页面上的数，` +
+        `不能拿它对账，见 docs/踩坑记录.md 坑 42）\n` +
         `    排查口径（2026/10/14 真遇到过一次"发放记录有、余额一分没动"）：\n` +
         `      python tools/points_credit_check.py --user <账号>   # 只读，看余额最后变动时间 + 今天发了多少\n` +
         `      若"余额最后变动"不在今天、而"今天连任务分也没进余额"，那是**环境/产品侧的发放链路**没生效，\n` +
@@ -305,7 +354,8 @@ async function assertScoreAccounting(page) {
   }
   console.log(
     `  断言通过: 答对 ${kv.correct}/${kv.questions} 题，应得 ${kv.should}、实得 ${kv.actual}，` +
-      `余额 ${pointsBefore} → ${pointsAfter}（增量与实得一致）` +
+      `页面上看到的余额 ${visiblePointsBefore} → ${visiblePointsAfter}（增量与实得一致；` +
+      `库里 user.points 参考 ${dbPointsBefore} → ${dbPointsAfter}）` +
       `${n("correct") === 0 ? "，且没有扣分" : ""}`
   );
   return page;
@@ -315,6 +365,11 @@ async function assertScoreAccounting(page) {
   const funcList = [
     // 0. 开关没开就跳过（先看开关，别先动手机）
     [requireSubmitSwitch, null],
+
+    // 0b. 答题前先记住"用户看到的余额" —— 对账以**页面上的数**为准（库里 user.points 落后，坑 42）
+    //     必须放在打开答题页**之前**：这一步要回首页、进积分商城，
+    //     答到一半再做会把已选好的选项洗掉。
+    [rememberVisiblePointsBefore, null],
 
     // 1. 打开答题活动页（自导航，幂等）
     [quizPage.ensureOn, null],
@@ -337,7 +392,8 @@ async function assertScoreAccounting(page) {
     [quizPage.submitAnswers, { allowSubmit: true }],
     [assertSubmittedState, null],
 
-    // 6. 数据库交叉验证 + 复位（把这次跑出来的记录清掉，手机与数据都交还）
+    // 6. 数据库交叉验证 + 对账 + 复位（把这次跑出来的记录清掉，手机与数据都交还）
+    //    （对账这一步会再进一次积分商城读"当前积分"，跑完停在商城；下一步回首页）
     [assertDbHasSubmit, null],
     [assertScoreAccounting, null],
     [cleanupAnswers, null],

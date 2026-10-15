@@ -69,3 +69,6 @@ opencv-python
 #    所以它们必须显式列在这里，而不是指望"机器上本来就有"。
 allure-pytest
 openpyxl
+#      · 缺 Pillow        → `python scripts/selftest-allure-shots.py`（离线闸门之一）直接崩；
+#        Allure 报告里贴截图的那条路也走不了（conftest 降级成"压不了就贴原图"）
+Pillow

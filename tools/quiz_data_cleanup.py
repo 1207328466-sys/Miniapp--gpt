@@ -20,12 +20,18 @@
     python tools/quiz_data_cleanup.py --activity 347 --yes              # 真删
     python tools/quiz_data_cleanup.py --activity 347 --expect-submits 0 # 跑完校验：现在剩几条
 
+⚠️ **默认只动"我们这个账号"的数据**（账号来自 `config/env.yaml` 的 `user_id`，run.py 会设成
+   `UITEST_USER_ID`）。理由见下面 `--all-users` 那段：写链路只需要"让我们这个账号重新可答"，
+   而**清空整条活动会删到别人的记录**（2026/10/15 实际遇到过：一条活动下积了 26 条别人的提交）。
+   要清整条活动，显式加 `--all-users`；那时"超过 50 行"的闸门照旧生效。
+
 输出里带 [CLEANUP] 前缀的那一行是给机器读的（用例侧靠它判断"确实清干净了"）。
 
 退出码: 0 = 正常（含"本来就没得删"）；1 = 读配置/连库失败；2 = 被安全闸门挡下（没删任何东西）
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -143,7 +149,25 @@ def main(argv=None):
     parser.add_argument("--force", action="store_true", help="放行「超过上限」的大批量删除")
     parser.add_argument("--force-db", action="store_true", help="放行「库名不像测试库」的情况")
     parser.add_argument("--expect-submits", type=int, help="只做校验：读到的提交数不等于这个值就以退出码 2 结束")
+    parser.add_argument("--all-users", action="store_true",
+                        help="连别的账号的记录一起清（默认只清本环境的登录账号）")
     args = parser.parse_args(argv)
+
+    # 谁的数据？—— 默认收窄到「本环境的登录账号」（config/env.yaml 的 user_id，
+    # run.py 会把它设成 UITEST_USER_ID）。
+    #
+    # 【为什么把默认改成这样】2026/10/15 实际踩到：拿一条"别人也在用"的活动跑写链路时，
+    # 该活动下积了 26 条提交 / 440 条明细（别的账号、别的日期）：
+    #   ① 安全闸门按"超过 50 行"拦下（拦得对）；
+    #   ② 就算放行，那也是**删别人的数据** —— owner 授权的是"删我们自己的记录"，不是"清空一条活动"。
+    # 而写链路真正需要的只有一件事：**让我们这个账号重新可答**（"已参加"是记在账号上的）。
+    # 所以要清整条活动，请显式写 --all-users。
+    if args.user is None and not args.all_users:
+        env_user = os.environ.get("UITEST_USER_ID")
+        if env_user:
+            args.user = int(env_user)
+            print("限定账号：%s（来自环境档案 config/env.yaml 的 user_id；要清整条活动请显式加 --all-users）"
+                  % args.user)
 
     if args.activity and args.activity_name:
         print("--activity 和 --activity-name 只能给一个（同时给不知道该听谁的）")
