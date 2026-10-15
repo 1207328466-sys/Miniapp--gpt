@@ -148,6 +148,7 @@ for p in sorted(WRITE_CASE_DIR.glob('test_*.js')):
     #   ②「答题」用 `--yes` 直接删（quiz_data_cleanup.py，没有 --reset 这种参数）
     #   ③「置顶帖」用 `--unpin` 取消置顶（tools/post_top_tool.py，2026/10/15 新增；
     #      这条夹具走的是管理后台接口，不是数据库，所以复位痕迹就是取消置顶本身）
+    #   ④「案例带图评论」用 `--remove` 把造的那条评论删掉（tools/case_comment_tool.py，2026/10/15 新增）
     # 所以认"Do 调过数据工具"这件事本身：`--reset` 或 `runDbTool(`。
     # 最早写成"含「复位」两个字"—— 注释里写「复位」就能骗过它（判据太松，等于没查）。
     has_reset = (
@@ -155,6 +156,7 @@ for p in sorted(WRITE_CASE_DIR.glob('test_*.js')):
         or ('runDbTool(' in text)
         or ('.reset(' in text)
         or ('--unpin' in text)
+        or ('--remove' in text)
     )
     if not has_reset:
         no_reset.append(p.name)

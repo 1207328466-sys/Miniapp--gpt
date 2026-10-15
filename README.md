@@ -886,6 +886,7 @@ $env:UITEST_DEVICE_SERIAL = "你的设备序列号"   # adb devices 里那一串
 │       ├── test_quiz_submit.js      # ★ 答题**写链路**：复位→逐题作答→提交→界面断言→库里校验→再复位
 │       ├── test_case_copy.js        # ★ 案例复制**写链路**：记水位→复制→断言提示→库里校验→复位
 │       ├── test_top_post.js         # ★ 置顶帖**自摆自收**：后台置顶→等小程序端出现「置顶」→取消置顶（缺陷 713367194）
+│       ├── test_case_comment.js     # ★ 案例带图评论**自摆自收**：造一条带图评论→断言图渲染出来→删掉（缺陷 713369819）
 │       └── test_switch_to_user_center.js   # 切用户中心（带真实验证）
 └── report/                          # 测试产物（已 gitignore）
     ├── photo_app/                   # 用例截图
