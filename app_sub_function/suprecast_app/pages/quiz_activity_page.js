@@ -315,6 +315,32 @@ async function waitForQuizTag(page, { timeoutMs = 4000, seenTags = null } = {}) 
 }
 
 /**
+ * 把活动卡滑到「下一张 / 上一张」（自己动手，不等它 4 秒一次的自转）。
+ *
+ * 源码（`src/pages/qa/components/activity-flow-item/index.tsx`）：卡片态是个 **Swiper**，
+ * `activities` 一页一条活动；角标只渲染"当前页"的类型。所以要找答题那页就得**逐页翻**。
+ *
+ * @returns {Promise<number>} 滑动后的页码（-1 = 读不到）
+ */
+async function swipeCardNext(page, { dir = "next" } = {}) {
+  const st = await readCardState(page);
+  if (!st || !st.box) return -1;
+  const fg = await base.foreground(page);
+  const dpr = await fg.evaluate(() => window.devicePixelRatio || 1);
+  const y = Math.round((st.box.y + st.box.height / 2) * dpr);
+  const left = Math.round((st.box.x + st.box.width * 0.15) * dpr);
+  const right = Math.round((st.box.x + st.box.width * 0.85) * dpr);
+  const x1 = dir === "next" ? right : left;
+  const x2 = dir === "next" ? left : right;
+  const device = await base.getDevice();
+  console.log(`  滑「${dir === "next" ? "下一页" : "上一页"}」：(${x1},${y}) -> (${x2},${y})`);
+  await device.shell(`input swipe ${x1} ${y} ${x2} ${y} 400`);
+  await base.sleep(1200);
+  const after = await readCardState(page);
+  return after ? after.index : -1;
+}
+
+/**
  * 点「答题」活动卡进入答题页。
  *
  * 【怎么找卡 —— 2026/10/15 真机实测定的口径】
@@ -336,60 +362,79 @@ async function waitForQuizTag(page, { timeoutMs = 4000, seenTags = null } = {}) 
  * 写死坐标在屏幕内容变化时会点到无关位置（另一份副本踩过这个坑，见其坑 13）。
  */
 async function openQuizCard(page, { timeout = 15000 } = {}) {
+  /*
+   * 【2026/10/15 按小程序前端源码重写（源码：src/pages/qa/components/activity-flow-item/index.tsx）】
+   *   ① 这张卡是**多条活动的轮播**：`activities` 由后端按 sort 排好，一页一条活动；
+   *   ② 角标**不参与轮播**、但内容跟着当前页走：
+   *        ACTIVITY_TAG = { 答题: "答题·官方", 图文: "图文·官方", 链接: "链接·官方" }
+   *      —— 所以"角标写着答题"= **当前这一页**是答题活动；
+   *   ③ 点击处理挂在**封面图**上（`__cover` 的 onClick → jump(item)）。
+   * 结论：找答题卡的正确姿势是**逐页翻**（翻一页、读一次角标、是答题就点它、点完核实落地页），
+   * 翻遍所有页都没有才判"前置条件不满足"。角标读不到时（异步渲染会闪一下就没）**也点**，
+   * 用落地页定论 —— 两条判据合起来才稳。
+   */
   const seenTags = new Set();
+  const seenSlides = new Set();
+  const swipesMax = 8; // 兜底：滑太多次还没翻遍就停（正常活动数 < 8）
+  let swipes = 0;
 
-  // ① 先等角标（异步渲染、会闪一下就没；实测最长见过 45 秒都不渲染）
-  const tag = await waitForQuizTag(page, { timeoutMs: 6000, seenTags });
-  const st = await readCardState(page);
-  if (!st) {
+  for (;;) {
+    // ① 等角标（异步渲染、会闪一下就没）；顺带读"现在是第几页"
+    const tag = await waitForQuizTag(page, { timeoutMs: swipes === 0 ? 5000 : 2500, seenTags });
+    const st = await readCardState(page);
+    if (!st) {
+      const fg = await base.foreground(page);
+      throw preconditionError(
+        `当前页面上没有活动卡（${SEL.card}）。可能在别的页面，或活动卡区未加载。` +
+          `当前页面前 120 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 120))}`
+      );
+    }
+    const total = st.total || 1;
+    if (st.index >= 0) seenSlides.add(st.index);
+    console.log(
+      `  [活动卡 第 ${st.index + 1}/${total} 页] 角标=${JSON.stringify(tag || st.tag)}` +
+        (tag ? " —— 角标说是答题活动，点它" : " —— 角标没读到，先点一次用落地页定论")
+    );
+
+    // ② 点一次（无论角标读没读到），用**落地页**定论
     const fg = await base.foreground(page);
-    throw preconditionError(
-      `当前页面上没有活动卡（${SEL.card}）。可能在别的页面，或活动卡区未加载。` +
-        `当前页面前 120 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 120))}`
-    );
-  }
-  console.log(
-    `  首页活动卡：角标=${JSON.stringify(tag || st.tag)}（这一张卡内部的图片轮播 第 ${st.index + 1}/${st.total} 张）`
-  );
+    await base.tapLocator(fg, fg.locator(SEL.card).first(), tag ? `活动卡「${tag}」` : "首页活动卡");
+    const ok = await base.waitUntil(async () => isOn(page), { timeout: Math.min(timeout, 8000) });
+    if (ok) {
+      console.log("  已进入答题活动页");
+      return base.foreground(page);
+    }
 
-  // ② 角标明确写着别的类型（例如「图文·官方」）-> 首页这张卡就不是答题活动，直接记跳过。
-  //    为什么不硬点：点别的活动卡会打开它自己的页面（有些还会带来副作用），而结论不会变。
-  if (st.tag && !st.tag.includes(CARD_TAG_QUIZ)) {
-    throw preconditionError(
-      `首页这张活动卡不是答题活动（角标=${JSON.stringify(st.tag)}）。\n` +
-        `  这张卡背后是一条活动：库里"在时间窗内 + 显示中"的活动有好几条，前端只会挑一条放在这里。\n` +
-        `  想跑这条用例：把答题活动**设为显示中**、并让它在时间窗内（测试环境可以直接在管理后台改），` +
-        `  或者把当前这条活动的显示状态关掉。\n` +
-        `  这是**前置条件不满足**，不是框架缺陷 —— 用例应记为跳过。`
-    );
+    // ③ 不是答题页：角标说答题却没进 -> 那是"跟角标对不上"的异常，报红让人看；
+    //    否则翻下一页（源码：一页一条活动），翻遍了才判跳过。
+    const now = await base.foreground(page);
+    const where = JSON.stringify((await base.pageText(now)).slice(0, 60));
+    if (tag) {
+      throw new Error(
+        `角标写着「${tag}」（答题活动），但点下去没进答题页（当前页面前 60 字：${where}）。\n` +
+          `  角标按当前页的 activityType 渲染（前端源码 ACTIVITY_TAG），指着它却打不开，说明行为跟角标对不上。\n` +
+          `  下一步：截图 + 这条输出发给开发；若活动刚下线/到点，也会是这个样子。`
+      );
+    }
+    if (swipes >= swipesMax || seenSlides.size >= total) {
+      throw preconditionError(
+        `首页活动卡一共 ${total} 页，翻遍/点遍都没进答题页（角标一直读不到）。\n` +
+          `  看过的角标：${JSON.stringify([...seenTags])}；最后落地页前 60 字：${where}\n` +
+          `  这是**前置条件不满足**（这几页里没有答题活动，或答题活动没配跳转），不是框架缺陷 —— 用例应记为跳过。`
+      );
+    }
+    // ④ 回首页、滑到下一页（源码：swiper 的 N 页 = N 条活动）
+    const qaPage = require("./qa_page");
+    page = await qaPage.ensureOnHomeFeed(page);
+    const before = (await readCardState(page)) || { index: -1 };
+    let after = await swipeCardNext(page, { dir: "next" });
+    if (after === before.index) after = await swipeCardNext(page, { dir: "prev" });
+    if (after === before.index) {
+      console.log("  [提示] 两次滑动页码都没变，等它自转一拍再看");
+      await base.sleep(4500);
+    }
+    swipes += 1;
   }
-
-  // ③ 角标是空的（异步渲染还没来得及显示）：点一次、看落地页 —— 用"落地页"当最终判据。
-  const fg = await base.foreground(page);
-  await base.tapLocator(fg, fg.locator(SEL.card).first(), tag ? `活动卡「${tag}」` : "首页活动卡");
-  const ok = await base.waitUntil(async () => isOn(page), { timeout: Math.min(timeout, 8000) });
-  if (ok) {
-    console.log("  已进入答题活动页");
-    return base.foreground(page);
-  }
-
-  const now = await base.foreground(page);
-  const where = JSON.stringify((await base.pageText(now)).slice(0, 60));
-  if (tag) {
-    // 角标说是答题卡、点下去却没进答题页 —— 这是"操作没生效/产品侧问题"，该报红让人看一眼
-    throw new Error(
-      `角标写着「${st.tag}」（答题卡），但点下去没进答题页（当前页面前 60 字：${where}）。\n` +
-        `  角标（类型·来源）是前端按活动类型渲染的，指着它却打不开，说明这张卡的行为跟角标对不上。\n` +
-        `  下一步：截图 + 这条输出发给开发；若活动刚下线/到点，也会是这个样子。`
-    );
-  }
-  throw preconditionError(
-    `首页这张活动卡点下去没有进入答题页（角标空、落地页还是：${where}）。\n` +
-      `  两种可能：① 这张卡背后不是答题活动（库里好几条在窗活动，前端挑了一条放在这里）；\n` +
-      `  ② 它是答题活动，但这条活动没配跳转 —— 实测「新人首帖奖励」那张就是点了没反应。\n` +
-      `  这是**前置条件不满足**，不是框架缺陷 —— 用例应记为跳过；` +
-      `  想跑就先让答题活动成为首页这张卡（管理后台设显示中 / 关掉别的活动）。`
-  );
 }
 
 /**

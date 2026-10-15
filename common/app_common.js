@@ -799,6 +799,29 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
 
   // 记录"每个页面是什么时候开始出帧的"（多候选时用它挑：刚出帧的那个 = 刚跳过去的页面）
   const nowTs = Date.now();
+  /*
+   * 4.7) 【输入归属优先 —— 2026/10/15 修复真机事故】
+   *
+   * 事故：手机**停在首页信息流**，框架却把后台的**案例库页**当成前台页，
+   * 于是那一步断言"首页上没有「最新提问」"红得莫名其妙（`ZW_007` / `ZW_008`）。
+   * 根因是多页同时出帧：微信里**每一页都在 60fps**，"谁在屏幕上"用出帧根本分不出来（坑 46）。
+   *
+   * 能分出来的只有**输入归属**：发一次 ESC，只有屏幕上那页会收到 keydown（实测：可见页 1 次、后台页 0 次）。
+   * 所以只要候选不止一个，就先问它 —— 不再等"多候选都还在出帧"那个分支（那分支还要求第二次探测后仍然 ≥2，
+   * 而**一次探测超时**就能让正确的页面提前掉队，正是这次事故的形态）。
+   *
+   * 代价：一次 `dumpsys input_method` + 各页取数 + ESC + 250ms，约 0.5~0.8 秒/次；
+   * **输入法开着时不发 ESC**（ESC 会收键盘，可能打断正在进行的输入）——那时退回原来的判据。
+   */
+  if (candidates.length > 1) {
+    const byInput = await pickByInputOwnership(candidates);
+    if (byInput) {
+      const count = await byInput.locator("*").count().catch(() => 0);
+      log.debug(`前台页判定：按「输入归属」（ESC 只到了这一页；元素数=${count}）`);
+      return byInput;
+    }
+  }
+
   const aliveSet = new Set(alive.map((a) => a.page));
   for (const { page: p, count } of alive) {
     if (rafAliveState.get(p) !== true) {
@@ -921,6 +944,18 @@ async function pickByInputOwnership(candidates) {
     device = await require("../app_sub_function/suprecast_app/android").getDevice();
   } catch (e) {
     return null;
+  }
+
+  // 【输入法开着就别发 ESC】ESC 会把软键盘收起来，正在输入时收键盘可能把输入打断。
+  // 那种场景调用方一般就在输入那一页，退回原来的判据即可（见 android.js 的 isKeyboardShown）。
+  try {
+    const { isKeyboardShown } = require("../app_sub_function/suprecast_app/android");
+    if (await isKeyboardShown(device)) {
+      log.debug("前台页输入归属判定：软键盘开着，跳过 ESC 探针（免得打断输入）");
+      return null;
+    }
+  } catch (e) {
+    /* 问不出来就继续按原逻辑走 */
   }
 
   const sentAt = Date.now();

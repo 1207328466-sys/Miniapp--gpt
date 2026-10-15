@@ -166,9 +166,23 @@ async function findClickableAncestor(locator) {
  * @param {import('playwright').AndroidDevice} device
  * @returns {Promise<boolean>} 是否真的收过一次
  */
-async function hideKeyboardIfShown(device) {
+/**
+ * 软键盘（输入法）现在开着吗？
+ *
+ * 为什么要单独一个函数：**"用输入归属认前台页"这件事必须先问它**（2026/10/15）——
+ * 那个判据要发一次 ESC，而 ESC 会把输入法收起来。正在输入的时候收键盘，可能把输入打断。
+ * 所以：**输入法开着就不发 ESC**，退回别的判据（那时候调用方一般就在输入那一页）。
+ *
+ * @param {import('playwright').AndroidDevice} device
+ * @returns {Promise<boolean>}
+ */
+async function isKeyboardShown(device) {
   const out = await device.shell("dumpsys input_method").catch(() => "");
-  if (!/mInputShown=true|mIsInputViewShown=true/.test(String(out))) return false;
+  return /mInputShown=true|mIsInputViewShown=true/.test(String(out));
+}
+
+async function hideKeyboardIfShown(device) {
+  if (!(await isKeyboardShown(device))) return false;
   await device.shell("input keyevent 111");
   await new Promise((r) => setTimeout(r, 600));
   console.log("  [提示] 软键盘正开着（会盖住屏幕底部）—— 已先收起它再继续");
@@ -1046,6 +1060,7 @@ async function dumpElements(page, { tag, onlyText = false, maxLines = 300, save 
 
 module.exports = {
   getDevice,
+  isKeyboardShown,
   getForegroundPage,
   waitImeShown,
   assertTextVisible,

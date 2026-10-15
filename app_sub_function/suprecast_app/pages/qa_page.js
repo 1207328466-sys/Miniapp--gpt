@@ -237,8 +237,19 @@ async function readFeedTabs(page) {
 
       const rows = tabs.map((t) => {
         const hits = Array.from(bar.querySelectorAll("*")).filter((el) => norm(el.innerText) === t);
-        if (!hits.length) return { tab: t, found: false, alpha: null, weight: null, selected: false };
+        if (!hits.length) return { tab: t, found: false, alpha: null, weight: null, selected: false, activeClass: false };
         const el = hits[hits.length - 1]; // 最内层那个（外层包裹元素的 innerText 也等于 tab 名）
+        /*
+         * 选中态有两路判据，**都看**（2026/10/15 按小程序前端源码补第一路）：
+         *   ① class：源码 `src/components/eco-tabs-bar/index.tsx` 里写的是
+         *      `tab-item eco-tab-item${activeV === tab.value ? " active eco-tab-item-active" : ""}`
+         *      —— 选中那一项身上会多出 `active eco-tab-item-active` 两个类 ✅ 最直接；
+         *   ② 计算样式：颜色 alpha ≥ 0.8 且 字重 ≥ 500（坑 18 的判据，留着当兜底 ——
+         *      万一哪天源码换成"只改样式不加类"，这条还能用）。
+         * 两路取"或"：只要有一路说是选中，就算选中（宁可容忍另一种写法，也不漏判）。
+         */
+        const cls = String(el.getAttribute("class") || "");
+        const activeClass = /(^|\s)(active|eco-tab-item-active|tab-item-active)(\s|$)/.test(cls);
         const cs = getComputedStyle(el);
         const m = cs.color.match(/rgba?\(([^)]+)\)/);
         const nums = m ? m[1].split(",").map((x) => parseFloat(x)) : [];
@@ -250,7 +261,9 @@ async function readFeedTabs(page) {
           alpha,
           weight,
           color: cs.color,
-          selected: alpha >= minAlpha && weight >= minWeight,
+          cls,
+          activeClass,
+          selected: activeClass || (alpha >= minAlpha && weight >= minWeight),
         };
       });
       const hit = rows.find((r) => r.selected);

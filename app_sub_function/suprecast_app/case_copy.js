@@ -78,6 +78,25 @@ function assertCopied(title, baseline) {
   return now;
 }
 
+/**
+ * 「刚才那次点击到底生效没有？」—— 给 `copyCurrentCase` 判断要不要重试用。
+ *
+ * 为什么问数据库而不是问页面：点击"没生效"和"提示没出现"**长得一样**（页面上都没新字）。
+ * 只有库里那条复制记录能分清：记录没变 = 点击没生效（可以安全重试）；记录变了 = 复制成功、
+ * 只是提示没出现（**那是需求没满足，不能靠重试掩盖** —— 这一层判断在 copyCurrentCase 里）。
+ *
+ * @returns {boolean} true = 没生效（可以安全重试）
+ */
+function copyNotEffective(title, baseline) {
+  const now = readState(title);
+  const same = now.records === baseline.records && now.copyCount === baseline.copyCount;
+  console.log(
+    `  查库判断：记录 ${baseline.records} -> ${now.records}、copy_count ${baseline.copyCount} -> ${now.copyCount}` +
+      `（${same ? "没变 = 点击没生效" : "变了 = 复制已成功"}）`
+  );
+  return same;
+}
+
 /** 从案例详情页读出当前案例的标题（复位要靠它定位） */
 async function readTitleFromPage(page) {
   const fg = await base.foreground(page);
@@ -116,7 +135,7 @@ async function runCopyChain(page, { ctx = null } = {}) {
 
   let ok = false;
   try {
-    page = await caseLibrary.copyCurrentCase(page, { ctx });
+    page = await caseLibrary.copyCurrentCase(page, { ctx, onNoEffect: () => copyNotEffective(title, baseline) });
     assertCopied(title, baseline);
     ok = true;
   } finally {
@@ -132,4 +151,12 @@ async function runCopyChain(page, { ctx = null } = {}) {
   return base.foreground(page);
 }
 
-module.exports = { parseCopyLine, readState, reset, assertCopied, readTitleFromPage, runCopyChain };
+module.exports = {
+  parseCopyLine,
+  readState,
+  reset,
+  assertCopied,
+  copyNotEffective,
+  readTitleFromPage,
+  runCopyChain,
+};
