@@ -371,6 +371,49 @@ const HANDLERS = {
     },
   },
 
+  /* ---------- 2026/10/15 追加：元素"在不在视口里"（缺陷 713581859 要的判据）----------
+   * 「检查元素存在」只能说明"在 DOM 里"——**滚出屏幕的元素依然存在**，
+   * 所以"切了 tab 有没有回到顶部"这类问题它抓不到，得量位置（见 base_page.elementInViewport）。
+   */
+  检查元素在视口里: {
+    run: async (page, selector) => {
+      const info = await base.elementInViewport(page, selector);
+      const fg = await base.foreground(page);
+      if (!info.found) throw await base.notFound(`${selector}（要检查它有没有完整显示在屏幕里）`, fg, selector);
+      if (!info.inViewport) {
+        throw new Error(
+          `断言失败: ${selector} 没有完整显示在屏幕里（top=${info.top}、bottom=${info.bottom}、` +
+            `视口高=${info.vh}、元素高=${info.h}）。\n` +
+            `  判据：上下左右都在视口内才算（只露一半 = 没回到顶部 / 被顶出去了）。\n` +
+            `  当前页面前 120 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 120))}`
+        );
+      }
+      console.log(
+        `断言通过: ${selector} 完整显示在屏幕里（top=${info.top}、bottom=${info.bottom}、视口高=${info.vh}）`
+      );
+      return fg;
+    },
+  },
+
+  检查元素不在视口里: {
+    run: async (page, selector) => {
+      const info = await base.elementInViewport(page, selector);
+      const fg = await base.foreground(page);
+      if (!info.found) throw await base.notFound(`${selector}（要检查它"已经被滚出屏幕"）`, fg, selector);
+      if (info.inViewport) {
+        throw new Error(
+          `断言失败: ${selector} 仍然完整显示在屏幕里（top=${info.top}、bottom=${info.bottom}、` +
+            `视口高=${info.vh}）—— 这一步期望它已经被滚出去了。\n` +
+            `  当前页面前 120 字: ${JSON.stringify((await base.pageText(fg)).slice(0, 120))}`
+        );
+      }
+      console.log(
+        `断言通过: ${selector} 已经不在屏幕里（top=${info.top}、bottom=${info.bottom}、视口高=${info.vh}）`
+      );
+      return fg;
+    },
+  },
+
   /* ---------- 2026/10/12 追加：答题的写链路 ----------
    * owner 当天拍板「可以测会改数据的操作」（docs/待owner拍板.md Q2/Q3）。
    * 开关是**环境变量** UITEST_ALLOW_SUBMIT=1：跑的人决定"这次要不要写数据"，

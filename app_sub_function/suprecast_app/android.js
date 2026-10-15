@@ -319,9 +319,32 @@ async function tapElement(device, page, locator) {
    */
   const coveredBy = m.found.coveredBy; // 上面那轮"滚动 + 真实滑动"已经尽力把它从遮挡里拉出来了
 
-  if (coveredBy) {
+  /*
+   * 【蒙层自愈：2026/10/15 补】
+   *
+   * 现象：上一条用例把"评论/回复面板"开着没收（面板占满下半屏），下一条用例点顶部返回按钮时
+   * 被 `wx-view.overlay-mask` 盖住 —— 框架如实报"点不到"（没静默点错，这是对的），但整条用例就卡住了。
+   *
+   * 源码依据（`src/components/reply-input/index.tsx`）：
+   *     <View className="overlay-mask" onClick={onBlur} />
+   * —— **蒙层就是"点一下关掉"**。所以这里补一手：被蒙层盖着时**先点一下蒙层**（点目标坐标即可，
+   * 那一下本来就落在蒙层上），等它收起来，再重新量、继续点目标。
+   *
+   * 为什么只认 overlay-mask：别的"遮挡"未必点得掉（可能是另一个真页面盖着），
+   * 那种情况还是该按坑 25 报错让人看，而不是乱点。
+   */
+  let covered = m.found.coveredBy;
+  if (covered && /overlay-mask/i.test(covered)) {
+    console.log(`  [自愈] 目标被蒙层盖着（${covered}）—— 点一下蒙层把它关掉（源码里蒙层就是点一下关）`);
+    await device.shell(`input tap ${m.px} ${m.py}`);
+    await new Promise((r) => setTimeout(r, 900));
+    m = await measure();
+    covered = m.found.coveredBy;
+  }
+
+  if (covered) {
     throw new Error(
-      `点不到：目标被 ${coveredBy} 盖住了（adb tap 坐标 ${m.px},${m.py}）。\n` +
+      `点不到：目标被 ${covered} 盖住了（adb tap 坐标 ${m.px},${m.py}）。\n` +
         `  这种情况 adb 照样会"执行"点击，但点到的是盖在上面的那个元素 —— 页面不会动，也不会报错，\n` +
         `  属于最坑的一类静默失败。命中测试（document.elementFromPoint）就是专门用来抓它的。\n` +
         `  常见原因：页面被滚上去了一段，目标虽然还在布局里，但被吸顶的头部压住了。\n` +

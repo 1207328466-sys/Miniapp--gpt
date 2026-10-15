@@ -207,6 +207,50 @@ async function selectorMissHint(page, selector) {
   );
 }
 
+/**
+ * 元素**完整在视口里**吗？—— 只"量一量"，不点不改。
+ *
+ * 【为什么要这个动作（2026/10/15 补）】缺陷 713581859「切换标签时，没有自动回顶部」要断言的是
+ * "切完 tab 之后列表**回到了顶部**"，而框架原来只有「检查元素存在/不存在」——**滚出屏幕的元素
+ * 依然"存在"**，那种断言抓不到"没回顶部"。
+ *
+ * 判据（都按 CSS 像素算）：
+ *   · 元素存在且**有尺寸**（宽高 > 0 —— 隐藏元素也有 rect，不能只看 rect）；
+ *   · 上下左右**都在视口内**（`top >= -1`、`bottom <= 视口高 + 1`，容 1px 的舍入）。
+ *     要的是"**完整**可见"：只露一半 = 没回顶部，就该判不通过。
+ *
+ * @returns {Promise<{found:boolean, inViewport?:boolean, w?:number, h?:number, top?:number, bottom?:number, vh?:number}>}
+ */
+async function elementInViewport(page, selector) {
+  const s = rejectIdSelector(selector);
+  const fg = await foreground(page);
+  return fg.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return { found: false };
+    const r = el.getBoundingClientRect();
+    const vw = window.innerWidth || 0;
+    const vh = window.innerHeight || 0;
+    const rounded = {
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+      top: Math.round(r.top),
+      bottom: Math.round(r.bottom),
+      left: Math.round(r.left),
+      right: Math.round(r.right),
+      vw: Math.round(vw),
+      vh: Math.round(vh),
+    };
+    const inViewport =
+      r.width > 0 &&
+      r.height > 0 &&
+      r.top >= -1 &&
+      r.bottom <= vh + 1 &&
+      r.left >= -1 &&
+      r.right <= vw + 1;
+    return { found: true, inViewport, ...rounded };
+  }, s);
+}
+
 /** 统一的"找不到"错误：只报"找不到元素"没法定位，必须把页面上有什么一起带上 */
 async function notFound(what, page, selector) {
   return new Error(
@@ -531,6 +575,7 @@ module.exports = {
   countOf,
   countOfText,
   notFound,
+  elementInViewport,
   parseIndex,
   parsePointsFromText,
   parseScrollSpec,
