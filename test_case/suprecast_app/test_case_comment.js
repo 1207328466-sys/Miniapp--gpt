@@ -77,6 +77,8 @@ async function pickCase(page) {
 
 /** 步骤 2：造一条带图评论（夹具"摆"上去） */
 async function addCommentFixture(page) {
+  // 先删一遍（幂等）：上次跑挂了、或有人手工造过，都会留下"我们那条"，直接 --add 会被工具拒绝
+  runCaseComment(["--case-title", caseTitle, "--remove", "--yes"]);
   const r = runCaseComment(["--case-title", caseTitle, "--add", "--yes"]);
   const m = r.out.match(/\[CASECMT\] mode=add case=(\d+) comment=(\d+) image=yes/);
   if (!m) {
