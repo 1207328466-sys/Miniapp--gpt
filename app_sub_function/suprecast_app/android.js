@@ -360,6 +360,37 @@ async function tapElement(device, page, locator) {
     }
   }
 
+  /*
+   * 【点击前等它停】2026/10/16 补。
+   *
+   * 为什么需要：**量坐标**和**adb 真的点下去**之间隔着一小段时间，这期间元素要是还在动，
+   * 点到的就是它刚才待过的地方 —— 页面没反应，而且不报错（跟坑 20「坐标在屏幕外」、
+   * 坑 25「被盖住」是同一族"静默失败"）。
+   *
+   * 页面为什么会动？源码里写得很清楚，不是猜的：
+   *   · `components/eco-tabs-bar/index.tsx`：点完 tab 会 `scrollTo({ left, duration: 200 })`
+   *     —— **一次点击之后，那条栏自己要滚 200ms**；
+   *   · 页面切换（Taro navigateTo）本身也是动画，切的过程中两页的坐标都在动。
+   *
+   * 怎么做的（**不留白等**）：点之前再量一次 —— 两次量到同一个坐标就直接点（页面没动的话，
+   * 代价只是多一次几毫秒的读取）；不一样说明还在动，就等 180ms 再量，最多 4 轮。
+   * 4 轮还没停也不硬等：用最后一次量的坐标点，并把"它一直在动"打出来 ——
+   * 真有这种情况（列表自动滚动、跑马灯），人需要知道，但框架不该无限期等着。
+   */
+  for (let i = 1; i <= 4; i++) {
+    const now = await measure();
+    if (now.px === m.px && now.py === m.py) break; // 两次都是同一个坐标 = 停了
+    console.log(
+      `  [等它停] 目标在动（${m.px},${m.py} -> ${now.px},${now.py}）—— 等它稳定再点（第 ${i}/4 次）`
+    );
+    m = now;
+    if (i === 4) {
+      console.log("  [等它停] 一直没停（页面在自动滚动或动画中）—— 用最后一次量的坐标点，不再等");
+    } else {
+      await sleep(180);
+    }
+  }
+
   await device.shell(`input tap ${m.px} ${m.py}`);
   console.log(`adb tap(${m.px}, ${m.py})  目标=${m.found.selector}  ${m.found.reason}`);
   return {

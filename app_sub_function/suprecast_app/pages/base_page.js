@@ -40,6 +40,19 @@ const { getDevice, tapElement, goBack } = require("../android");
  */
 const BOTTOM_TAB_TEXTS = ["有问必答", "学习中心", "设计专区", "我的"];
 
+/**
+ * 底部 tab 栏的容器选择器（Taro 的 `custom-tab-bar`）。
+ *
+ * 【为什么值得单独拎出来】2026/10/16 真机实测：
+ *   · `[class*="custom-tab-bar"]` 命中 **1 个**，它的 class 是 `custom-tab-bar index--custom-tab-bar`
+ *     （业务类名原样在，`index--` 那半是编译器噪声）；
+ *   · 而「我的」这个词**整页命中 2 个** —— 一个是底部 tab，一个是首页筛选栏的「我的关注」
+ *     （`getByText` 默认是"包含"匹配）。也就是说"点底部 tab 我的"一直是在**赌 DOM 顺序**
+ *     （账本根因 3 那次 strict mode 报错就是这个撞名）。
+ * 圈进这条栏再点，就从"赌"变成"确定"：实测同一个词在栏里只命中 1 个。
+ */
+const BOTTOM_TAB_BAR = '[class*="custom-tab-bar"]';
+
 /** 纯等待。不依赖 page 对象：page 被销毁后 page.waitForTimeout 会抛错 */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -163,6 +176,70 @@ function suggestJoinedSelector(selector) {
  * 只有**实测能命中**才敢给确定建议（"写成 X，命中 N 个"）；命不中就只讲规则、不乱指路 ——
  * 宁可少说一句，也不要给一个同样错的答案。
  */
+/**
+ * 「这个选择器写的是原子类吗？」—— **纯函数**，方便离线自检。命中就返回那个词，否则空串。
+ *
+ * 【为什么要它】2026/10/15 owner 把小程序前端源码给了我们。源码里能一眼看出两类 class：
+ *   · **业务类名**（`eco-tab-item`、`case-list-card`、`overlay-mask`）：写页面时自己起的，
+ *     看得懂、稳（实测运行时 DOM 里原样保留）；
+ *   · **原子类**（`fs-28`、`text-_h3D3D3D_`、`whitespace-nowrap`）：样式系统编译出来的**样式名**，
+ *     一屏上到处都是、换个设计稿就变。
+ * 填表的人**分不出**这两类（都长得像 class），最常干的事就是照抄原子类 —— 踩坑记录里那条
+ * 「`.fs-28 text-blacks28 ml-2` 找不到选择器」就是这么来的。所以这里认出来、提醒一句，
+ * 并告诉他去哪儿找业务类名（`tools/scan_anchors.py --find`）。
+ *
+ * 判据**只用来提醒，不用来拦截**（宁可漏报，也别把正常选择器说成原子类）：
+ *   · 颜色/尺寸被编译成 hex 的：`text-_h3D3D3D_`
+ *   · 前缀+数字的：`fs-28`、`ml-2`、`w-4`、`z-10`
+ *   · 常见的布局/排版关键字：见 ATOMIC_EXACT
+ *
+ * @param {string} selector 表里填的选择器
+ * @returns {string} 命中的那个原子类名；没认出来返回 ""
+ */
+function looksLikeAtomicClass(selector) {
+  const tokens = String(selector == null ? "" : selector).match(/[A-Za-z_][\w-]*/g) || [];
+  for (const t of tokens) {
+    if (ATOMIC_PATTERNS.some((re) => re.test(t))) return t;
+    if (ATOMIC_EXACT.has(t)) return t;
+  }
+  return "";
+}
+
+/** 原子类的形状（正则） */
+const ATOMIC_PATTERNS = [
+  /_[0-9A-Za-z]{3,10}_/, // 颜色/尺寸被编译成一串杂名字：text-_h3D3D3D_
+  /^[a-z]{1,4}-\d+$/, // 前缀+数字：fs-28 / ml-2 / w-4 / z-10
+  /^(text|bg|border|fill|stroke)-(gray|grey|blue|red|green|white|black|yellow|orange|purple|pink|slate|zinc)-\d+$/,
+  /^(text|bg|border|fill|stroke)-[a-z]+\d+$/, // bg-blacks38 / text-blacks28（色号被编成名字+数字）
+  /^(font|leading|tracking)-(normal|medium|semibold|bold|extrabold|light|thin|relaxed|tight|snug|loose|none)$/,
+  /^(whitespace|overflow|object)-(nowrap|normal|hidden|visible|auto|scroll|cover|contain|fill)$/,
+];
+
+/** 原子类里那些"不带数字"的常见货 */
+const ATOMIC_EXACT = new Set([
+  "inline-flex", "flex-1", "flex-auto", "flex-none", "flex-grow", "flex-shrink-0", "flex-col",
+  "items-center", "items-start", "items-end", "items-baseline", "justify-center", "justify-start",
+  "justify-end", "justify-between", "justify-around", "shrink-0", "grow-0", "self-center",
+  "truncate", "ellipsis", "rounded-xs", "rounded-sm", "rounded-md", "rounded-lg", "rounded-full",
+  "shadow-lg", "shadow-sm", "border-b", "border-t", "border-l", "border-r", "border-none",
+  "border-solid", "border-dashed", "box-border", "w-full", "h-full", "min-h-screen", "max-h-full",
+  "max-w-full", "min-w-0", "text-sm", "text-xs", "text-lg", "bg-white", "bg-black", "bg-transparent",
+  "bg-red", "text-blue", "text-red", "text-white", "text-black", "object-cover", "object-contain",
+  "select-none", "pointer-events-none", "antialiased", "break-keep", "break-words", "break-all",
+  "font-weight-500", "font-weight-600", "overflow-y-auto", "overflow-x-hidden", "leading-normal",
+  "leading-relaxed", "font-semibold", "font-medium", "font-bold", "font-normal",
+]);
+
+/** 认出原子类时的那段人话提醒 */
+function atomicAdvice(name) {
+  return (
+    `\n  [提示] 「${name}」看着是**原子类**（样式系统编译出来的名字）—— 这种名字一屏上到处都是，` +
+    `而且换个设计稿就变，不适合当定位锚点。\n` +
+    `    源码里的**业务类名**更稳（eco-tab-item / case-list-card / overlay-mask 这种）。\n` +
+    `    怎么找：python tools/scan_anchors.py --find <关键词>，或看 knowledge/前端源码与选择器对照.md`
+  );
+}
+
 async function selectorMissHint(page, selector) {
   // 按 id 找、没找到时的专属提示。
   // 2026/10/14：按 id 定位已经从框架里删掉了（动作删了、选择器参数写了也会在导出时被拦，
@@ -181,7 +258,12 @@ async function selectorMissHint(page, selector) {
     );
   }
   const joined = suggestJoinedSelector(selector);
-  if (!joined) return "";
+  // 没有"空格抄错"的问题时，也还有一件常见的事要提醒：**抄的是原子类**。
+  // （2026/10/15 起有源码可查，能把这句话说出来，并指路去哪儿找业务类名）
+  if (!joined) {
+    const atomicOnly = looksLikeAtomicClass(selector);
+    return atomicOnly ? atomicAdvice(atomicOnly) : "";
+  }
   let n = 0;
   try {
     n = await page.locator(joined).count();
@@ -189,6 +271,8 @@ async function selectorMissHint(page, selector) {
     n = 0;
   }
   const rule = `  [提示] CSS 里**空格表示「里面的」**（后代），不是「同时满足」。`;
+  const atomic = looksLikeAtomicClass(joined);
+  const tail = atomic ? atomicAdvice(atomic) : "";
   if (n > 0) {
     const first = joined.split(".")[1] ? "." + joined.split(".")[1] : joined;
     return (
@@ -197,13 +281,15 @@ async function selectorMissHint(page, selector) {
       `    ${joined}（实测能命中 ${n} 个，可以直接照抄）\n` +
       `    也可以只留最有辨识度的那一个，例如 ${first}。\n` +
       `    想确认页面上到底有哪些 class：用表格动作「打印页面结构」，或跑\n` +
-      `    node test_case/diagnostic/dump_page.js --only-text`
+      `    node test_case/diagnostic/dump_page.js --only-text` +
+      tail
     );
   }
   return (
     `\n${rule}\n` +
     `    如果这几个名字是**同一个元素上的多个 class**，要连着写：${joined}；\n` +
-    `    如果确实是「里面的」（例如 .hot-topics .inline-flex），那要检查两半分别写对没有。`
+    `    如果确实是「里面的」（例如 .hot-topics .inline-flex），那要检查两半分别写对没有。` +
+    tail
   );
 }
 
@@ -355,6 +441,40 @@ function parseScrollSpec(dirRaw, maxRaw) {
   return { dir, max: Number(m), maxRaw: m };
 }
 
+/**
+ * 命中多个时，把**候选**一个个念出来（标签 / class / 坐标 / 前 20 字）。
+ *
+ * 【为什么值得打这几行】点击"点错了地方"这种事故，在报告里长得跟"点对了"一模一样：
+ * 步骤 OK、截图也没错得离谱。2026/10/16 实测到过具体例子：`点文字「推荐」` 在首页
+ * **命中 2 处**（筛选 tab 上有一处，信息流某张卡片的标题也恰好是「推荐」），
+ * 框架按 DOM 顺序点了第 1 个 —— 这次对了，但换个数据/换个排序就可能点到卡片上。
+ * 把候选打出来，报告里就能一眼看出"它挑的是哪一个、还有哪些没被挑"。
+ *
+ * @param {import('playwright').Locator} locator
+ * @param {number} limit 最多念几个
+ * @returns {Promise<string[]>}
+ */
+async function describeMatches(locator, limit = 5) {
+  const rows = [];
+  for (let i = 0; i < limit; i++) {
+    const row = await locator
+      .nth(i)
+      .evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const txt = String(el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 20);
+        const cls = String(el.getAttribute("class") || "").trim().split(/\s+/).slice(0, 3).join(".");
+        return (
+          `<${el.tagName.toLowerCase()}${cls ? " class=" + JSON.stringify(cls) : ""}>` +
+          ` @${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}×${Math.round(r.height)} ` +
+          JSON.stringify(txt)
+        );
+      })
+      .catch(() => "(读不到这个候选)");
+    rows.push(row);
+  }
+  return rows;
+}
+
 async function tapLocator(page, locator, what, index = 1) {
   const count = await locator.count().catch(() => 0);
   if (count === 0) throw await notFound(what, page);
@@ -362,6 +482,17 @@ async function tapLocator(page, locator, what, index = 1) {
     throw new Error(
       `${what}：要取第 ${index} 个，但只命中了 ${count} 个（「第几个」不能超出命中数）。\n` +
         `  当前页面前 120 字: ${JSON.stringify((await pageText(page)).slice(0, 120))}`
+    );
+  }
+  if (count > 1) {
+    const rows = await describeMatches(locator, Math.min(count, 5));
+    console.log(`  [留意] 这一步命中了 ${count} 处，实际点第 ${index} 个 —— 候选如下：`);
+    rows.forEach((r, i) => {
+      console.log(`      ${i + 1 === index ? "→" : " "} ${i + 1}. ${r}`);
+    });
+    if (count > rows.length) console.log(`      （还有 ${count - rows.length} 个没显示）`);
+    console.log(
+      `      点错了的话：参数2 填「第几个」挑，或者改用「范围内点文字」（参数1 填范围选择器、参数2 填文字）圈定范围。`
     );
   }
   const device = await getDevice();
@@ -379,6 +510,14 @@ async function tapSelector(page, selector, what, index = 1) {
   const label = `${what}（选择器 ${selector}${index > 1 ? `，第 ${index} 个` : ""}）`;
   // 把 selector 一起传进去：没命中时才能给出"空格是「里面的」"那条提示（填表的人最常踩的坑）
   if ((await countOf(page, selector)) === 0) throw await notFound(label, page, selector);
+  // 命中了也提醒一句：抄原子类写用例，今天能跑、改版就烂（判据见 looksLikeAtomicClass）
+  const atomic = looksLikeAtomicClass(selector);
+  if (atomic) {
+    console.log(
+      `  [提示] 选择器里的「${atomic}」是原子类（样式名），建议换业务类名：` +
+        `python tools/scan_anchors.py --find <关键词>`
+    );
+  }
   await tapLocator(page, page.locator(selector), label, index);
 }
 
@@ -394,6 +533,127 @@ async function tapText(page, text, what, index = 1) {
   // 注意用 hasText 精确锁定"包含该文本的那个元素集合"再取第 N 个。
   // 不加 .first() 会在 strict mode 下抛 "resolved to N elements"（账本 根因 3）。
   await tapLocator(page, page.getByText(text), label, index);
+}
+
+/**
+ * 「范围内点文字」的两个参数怎么读 —— **纯函数**，方便离线自检。
+ *
+ * 口径（2026/10/16 定）：**参数1 = 范围（容器选择器）、参数2 = 文字**。
+ * 为什么要有这个动作：同一个词在页面上出现好几处时，「点文字」只能数"第几个"。
+ * 实测（2026/10/16 真机）：首页 `推荐` 这俩字**整页命中 2 处** —— 一处是筛选 tab，
+ * 另一处是信息流里某张卡片的标题；圈定 `.eco-tab-bar-container` 之后就只剩 1 处。
+ *
+ * 这里只做两件事：把两个参数读干净、**把常见的"填反了"当场说清楚**。
+ * 为什么值得为"填反"写一段：参数1 是选择器、参数2 是文字，**看着都不像同一个东西**，
+ * 但表格里两格挨着，新手很容易把文字填到参数1 —— 那时框架会去页面上找名叫"推荐"的标签，
+ * 报一句"找不到范围「推荐」"，人照样看不懂。所以这里直接认出来并告诉他怎么换过来。
+ *
+ * @param {string} scope 参数1：范围（选择器，例如 .eco-tab-bar-container）
+ * @param {string} text 参数2：文字（例如 推荐）
+ * @returns {{scopeSelector: string, wanted: string}}
+ */
+function checkScopeArgs(scope, text) {
+  const s = String(scope == null ? "" : scope).trim();
+  const t = String(text == null ? "" : text).trim();
+  const CJK = /[\u4e00-\u9fa5]/;
+  const looksSelector = (v) => /^[.#[]/.test(v);
+  if (!s && !t) {
+    throw new Error(
+      `「范围内点文字」要填两个参数：参数1 = 范围（容器选择器，例如 .eco-tab-bar-container）、` +
+        `参数2 = 文字（例如 推荐）。现在两格都空着。`
+    );
+  }
+  if (!s) {
+    throw new Error(`「范围内点文字」的参数1（范围）空着 —— 要填一个容器选择器，例如 .eco-tab-bar-container。`);
+  }
+  if (!t) {
+    throw new Error(
+      `「范围内点文字」的参数2（文字）空着 —— 要填想在范围里点的那些字，例如 推荐。`
+    );
+  }
+  if (CJK.test(s) && looksSelector(t)) {
+    throw new Error(
+      `「范围内点文字」两个参数看起来**填反了**：参数1 是**范围**（选择器，例如 .eco-tab-bar-container）、` +
+        `参数2 是**文字**（例如 推荐）。\n` +
+        `  你现在填的是 参数1=${JSON.stringify(s)}、参数2=${JSON.stringify(t)} —— 换过来就行。`
+    );
+  }
+  if (CJK.test(s)) {
+    throw new Error(
+      `「范围内点文字」的参数1 是**范围**，要填一个选择器（例如 .eco-tab-bar-container），` +
+        `现在填的是 ${JSON.stringify(s)} —— 看着像文字。\n` +
+        `  是不是想点「${s}」？那应该：参数1 填范围、参数2 填 ${JSON.stringify(s)}。\n` +
+        `  不知道范围该填什么：python tools/scan_anchors.py --find <关键词>`
+    );
+  }
+  rejectIdSelector(s); // 按 id 定位是框架不允许的（id 会变），这道闸门对所有选择器参数一致生效
+  return { scopeSelector: s, wanted: t };
+}
+
+/**
+ * 在**指定范围里**按文字真实 tap 一下。
+ *
+ * 为什么用 `page.locator(范围).getByText(文字)` 而不是手写 CSS（例如
+ * `.eco-tab-bar-container span:has-text("推荐")`）：2026/10/16 真机实测过两种写法的差别 ——
+ *   · `getByText` 只给**最内层**那个放文字的节点（实测「最新提问」命中 1 个 = 那个 <span>）；
+ *   · `:has-text()` 会把**所有祖先**都算命中（tab 容器、内容区、文字节点全在里面），
+ *     再按"第几个"挑，挑到哪一层全看 DOM 顺序 —— 那是"看着有选择器、其实还在猜"。
+ * 所以范围 + getByText 这一对是**能说清它点了哪个**的写法。
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} scope 范围（容器选择器）
+ * @param {string} text 文字
+ * @param {number} index 范围里第几处（默认 1；圈好范围后一般就一处）
+ * @returns {Promise<import('playwright').Page>}
+ */
+async function tapTextWithin(page, scope, text, index = 1) {
+  const { scopeSelector, wanted } = checkScopeArgs(scope, text);
+  const label = `范围「${scopeSelector}」里的文字「${wanted}」`;
+  const scopeLoc = page.locator(scopeSelector);
+  const scopeCount = await scopeLoc.count().catch(() => 0);
+  if (scopeCount === 0) {
+    throw new Error(
+      `找不到范围「${scopeSelector}」—— 范围要先在页面上存在，才能在里面找文字。\n` +
+        `  当前页面前 120 字: ${JSON.stringify((await pageText(page)).slice(0, 120))}\n` +
+        `  范围选择器从哪来：python tools/scan_anchors.py --find <关键词>（例如 --find tab）`
+    );
+  }
+  const hits = scopeLoc.getByText(wanted);
+  if ((await hits.count().catch(() => 0)) === 0) {
+    throw new Error(
+      `范围「${scopeSelector}」里（命中 ${scopeCount} 个容器）没有文字「${wanted}」。\n` +
+        `  当前页面前 120 字: ${JSON.stringify((await pageText(page)).slice(0, 120))}\n` +
+        `  两层常见原因：① 文字写错了/还没渲染出来；② 范围选小了或选大了（把这个词圈在外面了）。`
+    );
+  }
+  await tapLocator(page, hits, label, index);
+  return page;
+}
+
+/**
+ * 点底部 tab：**优先圈进 tab 栏再按文字点**，栏不在或栏里没这个词才退回整页按文字找。
+ *
+ * 为什么不直接改成"只在栏里找"：真机上万一某个页面/某次改版没有 `custom-tab-bar`
+ * （或 tab 文案变了），一刀切会让所有"切到用户中心"的用例一起红 —— 那种红是框架造成的，
+ * 最误导人。所以这里保底退回老写法，并**打一行日志说明它退回了**（不是静默降级）。
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} tabText 底部 tab 文案
+ * @param {number} index 第几个（默认 1）
+ * @returns {Promise<import('playwright').Page>}
+ */
+async function tapBottomTab(page, tabText, index = 1) {
+  if ((await countOf(page, BOTTOM_TAB_BAR)) > 0) {
+    const inBar = await page.locator(BOTTOM_TAB_BAR).getByText(tabText).count().catch(() => 0);
+    if (inBar > 0) return await tapTextWithin(page, BOTTOM_TAB_BAR, tabText, index);
+    console.log(
+      `  [提示] 底部 tab 栏里没有「${tabText}」—— 退回"整页按文字找"（tab 文案可能变了，留意一下）`
+    );
+  } else {
+    console.log(`  [提示] 这一页上没有 custom-tab-bar 容器 —— 退回"整页按文字找"`);
+  }
+  await tapText(page, tabText, `底部 tab「${tabText}」`, index);
+  return page;
 }
 
 /** 取指定 page 上某选择器第 1 个元素的文本（失败返回空串） */
@@ -429,7 +689,7 @@ async function withBottomTabBar(page) {
   // （"我的期待我委屈委屈我"），旧判据"四个 tab 文案里命中任意一个就算有 tab 栏"当场被骗 ——
   // 于是框架认定"已经在 tab 页上"，不去点返回，接着点底部 tab 就报「找不到底部 tab」。
   // 小程序的底部 tab 栏有稳定类名（custom-tab-bar），拿它当第一判据。
-  if ((await countOf(fg, '[class*="custom-tab-bar"]')) > 0) return fg;
+  if ((await countOf(fg, BOTTOM_TAB_BAR)) > 0) return fg;
 
   // 结构上找不到时才退回文字判据，并且要求**至少两个** tab 文案同时出现：
   // 只命中一个仍然可能只是页面内容里恰好有这两个字（比如评论、帖子标题）。
@@ -461,7 +721,9 @@ async function switchToBottomTab(page, tabText, { isTarget, timeout = 15000, ret
   if (typeof isTarget !== "function") throw new Error("switchToBottomTab 需要 isTarget（判据函数）");
   for (let i = 1; i <= retries; i++) {
     const fg = await foreground(page);
-    await tapText(fg, tabText, `底部 tab「${tabText}」`);
+    // 圈进 tab 栏再点（2026/10/16）：底部 tab 的文案跟页面内容会撞名 ——
+    // 实测「我的」整页命中 2 个（另一个是首页筛选栏的「我的关注」）
+    await tapBottomTab(fg, tabText);
     if (await waitUntil(isTarget, { timeout })) return await foreground(page);
     if (i < retries) {
       console.log(`  [自愈] 点了「${tabText}」但目标页没到（第 ${i}/${retries} 次）—— 再点一次`);
@@ -580,18 +842,23 @@ module.exports = {
   parsePointsFromText,
   parseScrollSpec,
   suggestJoinedSelector,
+  looksLikeAtomicClass,
+  checkScopeArgs,
   selectorMissHint,
   rejectIdSelector,
   waitUntil,
   tapLocator,
   tapSelector,
   tapText,
+  tapTextWithin,
   textOf,
   classOf,
   BOTTOM_TAB_TEXTS,
+  BOTTOM_TAB_BAR,
   withBottomTabBar,
   ensureOnTabPage,
   exitDecision,
   switchToBottomTab,
+  tapBottomTab,
   inputValue,
 };

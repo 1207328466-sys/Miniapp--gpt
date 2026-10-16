@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-15 18:22:31",
+  "generated_at": "2026-10-16 09:10:39",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
   "warnings": [],
@@ -197,6 +197,15 @@
       "p1_optional": false,
       "p2_optional": true,
       "desc": "按页面上看得见的文字点一下。**参数2 可以填「第几个」**（留空 = 第 1 个）——文字重名时用它挑，比写选择器省事。提交/兑换/支付这类会改数据的文字被默认禁止（见「填写说明」）",
+      "choices": {}
+    },
+    {
+      "name": "范围内点文字",
+      "p1": "范围（选择器）",
+      "p2": "文字",
+      "p1_optional": false,
+      "p2_optional": false,
+      "desc": "**在指定的容器里**按文字点一下：参数1 = 范围（容器选择器，例如 .eco-tab-bar-container）、参数2 = 要点的文字（例如 推荐）。**什么时候用它**：同一个词在页面上出现好几处时，用「点文字」只能数「第几个」、容易点错；圈定范围之后就只剩一处。真机实测：首页「推荐」整页命中 2 处（筛选 tab 一处、信息流某张卡片的标题一处），圈到 .eco-tab-bar-container 里只剩 1 处。范围选择器从哪来：`python tools/scan_anchors.py --find <关键词>`，或 `knowledge/前端源码与选择器对照.md`。安全阀同「点文字」",
       "choices": {}
     },
     {
@@ -1914,6 +1923,63 @@
           "action": "检查元素在视口里",
           "param1": ".flow-item",
           "param2": "",
+          "note": "",
+          "num": 6
+        },
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 7
+        }
+      ]
+    },
+    {
+      "id": "ZW_032",
+      "name": "文字重名时用「范围内点文字」精确点中筛选栏",
+      "precondition": "手机在小程序首页；不用登录、不改数据",
+      "note": "为什么有这条：实测（2026/10/16）首页「推荐」整页命中 2 处 —— 筛选 tab 一处、信息流某张卡片的标题一处。只按文字点（点文字）是按 DOM 顺序数第几个，点对是运气；圈定范围之后只剩 1 处。\n第 2 步：动作「范围内点文字」—— 参数1 = 范围 .eco-tab-bar-container、参数2 = 文字 推荐。\n第 3-4 步：断言「推荐」真的成了选中项（源码里选中态是多一个 class：eco-tab-item-active；:has-text 用来确定选中的是哪一个）。\n第 5-6 步：反向走一遍，回到「最新提问」。第 7 步收尾归位。",
+      "steps": [
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "为什么有这条：实测（2026/10/16）首页「推荐」整页命中 2 处 —— 筛选 tab 一处、信息流某张卡片的标题一处。只按文字点（点文字）是按 DOM 顺序数第几个，点对是运气；圈定范围之后只剩 1 处。\n第 2 步：动作「范围内点文字」—— 参数1 = 范围 .eco-tab-bar-container、参数2 = 文字 推荐。\n第 3-4 步：断言「推荐」真的成了选中项（源码里选中态是多一个 class：eco-tab-item-active；:has-text 用来确定选中的是哪一个）。\n第 5-6 步：反向走一遍，回到「最新提问」。第 7 步收尾归位。",
+          "num": 1
+        },
+        {
+          "action": "范围内点文字",
+          "param1": ".eco-tab-bar-container",
+          "param2": "推荐",
+          "note": "",
+          "num": 2
+        },
+        {
+          "action": "检查元素数量",
+          "param1": ".eco-tab-item-active",
+          "param2": "1",
+          "note": "",
+          "num": 3
+        },
+        {
+          "action": "检查元素数量",
+          "param1": ".eco-tab-item-active:has-text(\"推荐\")",
+          "param2": "1",
+          "note": "",
+          "num": 4
+        },
+        {
+          "action": "范围内点文字",
+          "param1": ".eco-tab-bar-container",
+          "param2": "最新提问",
+          "note": "",
+          "num": 5
+        },
+        {
+          "action": "检查元素数量",
+          "param1": ".eco-tab-item-active:has-text(\"最新提问\")",
+          "param2": "1",
           "note": "",
           "num": 6
         },

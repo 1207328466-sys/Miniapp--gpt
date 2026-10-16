@@ -28,6 +28,11 @@ const base = require("./base_page");
 
 const SEL = {
   searchBar: ".search-container", // 有问必答页的搜索栏（点它跳搜索页）
+  // 首页那排筛选 tab 的**容器**（源码 `src/components/eco-tabs-bar/index.tsx` 的
+  // `eco-tab-bar-container`）。为什么要它：tab 的文案跟内容流里的卡片标题**会撞名字** ——
+  // 实测（2026/10/16）「推荐」整页命中 2 处（一处是 tab、一处是某张卡片标题）。
+  // 点 tab 一律**先圈进这条栏**再按文字点，别在整页里找（见 base_page.tapTextWithin）。
+  feedTabBar: ".eco-tab-bar-container",
   searchInput: "wx-input.search-input", // 搜索页的真实输入框
   // 搜索页的「热门话题」区块（需求 713129788）。实测 2026/10/12：
   //   .hot-topics                区块容器；**标题是一张图片**（按文字「热门话题」找不到！）
@@ -103,7 +108,9 @@ async function assertActivityBlockInAllFeedTabs(page, { tabs = FEED_TABS, waitAf
       }
     }
 
-    await base.tapText(fg, tab, `筛选 tab「${tab}」`);
+    // 圈进 tab 栏再点（2026/10/16）：实测「推荐」在整页命中 2 处（另一处是卡片标题），
+    // 整页按文字点等于"赌 DOM 顺序"，圈进 `.eco-tab-bar-container` 之后只剩 1 处
+    await base.tapTextWithin(fg, SEL.feedTabBar, tab);
     await base.sleep(waitAfterTab);
     fg = page;
 
@@ -117,7 +124,7 @@ async function assertActivityBlockInAllFeedTabs(page, { tabs = FEED_TABS, waitAf
       page = await ensureOnHomeFeed(page);
       fg = await base.foreground(page);
       if ((await base.countOfText(fg, tab)) > 0) {
-        await base.tapText(fg, tab, `筛选 tab「${tab}」（重试）`);
+        await base.tapTextWithin(fg, SEL.feedTabBar, tab);
         await base.sleep(waitAfterTab);
         fg = await base.foreground(page);
       }
@@ -362,11 +369,14 @@ async function switchToFeedTab(page, { tab = FEED_DEFAULT_TAB, timeout = 8000, m
       return page;
     }
 
-    // 同样不换页：锚点在哪一页就在哪一页上点（tapText 直接用这一页的坐标）
+    // 同样不换页：锚点在哪一页就在哪一页上点（tapTextWithin 用的是这一页的坐标）
     if ((await base.countOfText(page, tab)) === 0) {
       throw await base.notFound(`筛选 tab「${tab}」`, page);
     }
-    await base.tapText(page, tab, `筛选 tab「${tab}」${attempt > 1 ? "（重试）" : ""}`);
+    if (attempt > 1) console.log(`  [重试] 第 ${attempt} 次点筛选 tab「${tab}」`);
+    // 圈进 tab 栏再点：文案会跟卡片标题撞名（实测「推荐」整页 2 处），
+    // 那样按整页文字点就是"赌 DOM 顺序"（新动作「范围内点文字」用的就是这条路径）
+    await base.tapTextWithin(page, SEL.feedTabBar, tab);
 
     const ok = await base.waitUntil(async () => (await activeFeedTab(page)) === tab, { timeout });
     if (ok) {

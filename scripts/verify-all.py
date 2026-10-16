@@ -26,12 +26,16 @@
   15. `scripts/selftest-quiz-answer-key.py`     判分口径复算（需求 713594985）：
       **多选必须集合完全一致**才算对 —— 少选一个、多选一个都得判错
   16. `scripts/selftest-allure-shots.py`        Allure 截图附件：压缩确实变小、压完还是能打开的图
-  17. `test_case/diagnostic/selftest_selector_hint.js`  选择器与参数规则（37 项）：
+  17. `test_case/diagnostic/selftest_selector_hint.js`  选择器与参数规则（72 项）：
       「多个 class 抄成一串」要认出来并给正确写法，合法的「里面的」写法不许乱改；
       另外盯着「按 id 定位」的写法必须挡住（`#_AQ` / `[id=...]`），合法选择器一个都不许误伤；
-      「滑动」的两个参数（方向 / 最多滑几次）留空走默认、写错要报错
+      「滑动」的两个参数（方向 / 最多滑几次）留空走默认、写错要报错；
+      **原子类 vs 业务类名**要认得准（原子类认出来提醒、业务类名一个都不许误伤）；
+      「范围内点文字」的两个参数（范围 / 文字）要能读出来，**填反了要当场说清楚**
   18. `scripts/selftest-pull-requirements.py`  需求拉取对账的纯逻辑（离线，不联网）：
       解析知识库清单 / 整理拉取结果 / 算「新增·消失·状态变化」—— 这三行是给人看的结论，不能算错
+  19. `tools/scan_anchors.py --check-doc`        文档里教的定位锚点，**源码里是不是真的有**
+      （owner 2026/10/15 给了小程序前端源码；文档教错锚点比不教更坏。源码目录不在时跳过，不算失败）
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -152,6 +156,10 @@ def main():
     run(
         "build_actions_doc --check（动作清单文档是否最新）",
         [sys.executable, os.path.join("tools", "build_actions_doc.py"), "--check"],
+    )
+    run(
+        "scan_anchors --check-doc（文档里的锚点在源码里是真的吗）",
+        [sys.executable, os.path.join("tools", "scan_anchors.py"), "--check-doc"],
     )
 
     print("\n" + "=" * 60)

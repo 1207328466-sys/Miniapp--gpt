@@ -448,7 +448,8 @@ async function ensureOn(page, { timeout = 15000 } = {}) {
   }
 
   page = await base.ensureOnTabPage(page);
-  await base.tapText(page, HOME_TAB_TEXT, `底部 tab「${HOME_TAB_TEXT}」`);
+  // 圈进底部 tab 栏再点（2026/10/16 加固）：见 base.tapBottomTab（文案会跟页面内容撞名）
+  await base.tapBottomTab(page, HOME_TAB_TEXT);
   await base.sleep(2500);
   return openQuizCard(page, { timeout });
 }

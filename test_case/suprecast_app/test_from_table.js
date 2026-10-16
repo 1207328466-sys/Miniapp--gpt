@@ -64,6 +64,24 @@ const BLOCKED_TEXT = [
 ];
 
 /**
+ * 「点文字」类动作共用的安全阀：命中禁止词就当场报错，别让表格里随手一行动了真实数据。
+ * 抽成一个函数是因为 2026/10/16 加了「范围内点文字」——**阀门的口径必须两处一模一样**，
+ * 各写一遍早晚会漏掉一处（那处就成了"表格里随手写一行就能提交答卷"的口子）。
+ * @param {string} actionName 动作名（只用于报错文案）
+ * @param {string} text 要点的文字
+ */
+function blockedTextGuard(actionName, text) {
+  const hit = BLOCKED_TEXT.find((w) => String(text).includes(w));
+  if (hit) {
+    throw new Error(
+      `用例表里的「${actionName}」想点「${text}」，被安全阀挡住了（命中禁止词「${hit}」）。\n` +
+        `  原因：这类操作会改真实数据（提交答卷、消耗积分、下单…）。\n` +
+        `  真要测它，得单独写一条用例并显式打开开关，不能靠表格里写一行就触发。`
+    );
+  }
+}
+
+/**
  * 动作实现表。
  * 每个实现都是 `run(page, 参数1, 参数2, ctx) -> page`。
  * ⚠️ 必须返回 page：runAppSteps 会把返回值当成下一步的 page，返回 undefined 会让下一步直接崩。
@@ -171,17 +189,24 @@ const HANDLERS = {
 
   点文字: {
     run: async (page, text, nth) => {
-      const hit = BLOCKED_TEXT.find((w) => String(text).includes(w));
-      if (hit) {
-        throw new Error(
-          `用例表里的「点文字」想点「${text}」，被安全阀挡住了（命中禁止词「${hit}」）。\n` +
-            `  原因：这类操作会改真实数据（提交答卷、消耗积分、下单…）。\n` +
-            `  真要测它，得单独写一条用例并显式打开开关，不能靠表格里写一行就触发。`
-        );
-      }
+      blockedTextGuard("点文字", text);
       const fg = await base.foreground(page);
       // 参数2 = 第几个（留空 = 第 1 个）：文字重名时用它挑，不用去学 :nth-match 那种写法
       return base.tapText(fg, text, `文字「${text}」`, base.parseIndex(nth));
+    },
+  },
+
+  范围内点文字: {
+    // 2026/10/16 加：**同一个词在页面上出现好几处**时，光靠"第几个"数不牢靠。
+    // 实测依据（真机）：首页「推荐」整页命中 2 处 —— 筛选 tab 一处、信息流某张卡片的标题一处；
+    // 圈定 `.eco-tab-bar-container` 之后只剩 1 处。范围选择器从哪来：动作清单里那份
+    // 「前端源码锚点」说明，或 python tools/scan_anchors.py --find <关键词>
+    run: async (page, scope, text) => {
+      blockedTextGuard("范围内点文字", text);
+      const fg = await base.foreground(page);
+      // 参数1 = 范围（容器选择器）、参数2 = 文字。
+      // 两个参数填反了、或者范围是照 id 写的，都在 checkScopeArgs 里当场报错（带怎么改的说明）
+      return base.tapTextWithin(fg, scope, text);
     },
   },
 

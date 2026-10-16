@@ -136,6 +136,52 @@ check("读不到就返回 null（不猜 0）", pp("积分明细 积分获取 兑
 check("空串也是 null", pp(""), null);
 check("「积分明细 500」不该被读成余额", pp("积分明细 500"), null);
 
+// ---- 原子类 vs 业务类名（2026/10/16：owner 给了前端源码之后）----
+// 为什么值得盯：源码里一眼能看出哪类是"样式系统编译出来的名字"（原子类），哪类是"写页面时自己起的"
+// （业务类名）。原子类抄进用例**今天能跑、改版就烂**（踩坑记录里「.fs-28 text-blacks28 ml-2
+// 找不到选择器」就是这么来的）。这条判据只用来**提醒**，所以两个方向都要钉住：
+//   · 是原子类的必须认出来；
+//   · **业务类名一个都不许误伤** —— 误报会让人把好用的锚点换掉，比不提醒更坏。
+const at = base.looksLikeAtomicClass;
+check("前缀+数字：fs-28", at(".fs-28"), "fs-28");
+check("前缀+数字：ml-2", at(".ml-2"), "ml-2");
+check("色号被编译成 hex：text-_h3D3D3D_", at(".text-_h3D3D3D_"), "text-_h3D3D3D_");
+check("色号被编成名字+数字：bg-blacks38", at(".bg-blacks38"), "bg-blacks38");
+check("带色阶的：text-gray-500", at(".text-gray-500"), "text-gray-500");
+check("布局关键字：whitespace-nowrap", at(".whitespace-nowrap"), "whitespace-nowrap");
+check("组合选择器里也能认出来：.hot-topics .inline-flex", at(".hot-topics .inline-flex"), "inline-flex");
+check("属性选择器里的原子类", at('[class*="fs-28"]'), "fs-28");
+// ↓ 业务类名（实测都在真机 DOM 里原样保留）：一个都不许误伤
+check("业务类名不误伤：.eco-tab-item", at(".eco-tab-item"), "");
+check("业务类名不误伤：.eco-tab-bar-container", at(".eco-tab-bar-container"), "");
+check("业务类名不误伤：.case-list-card", at(".case-list-card"), "");
+check("业务类名不误伤：.overlay-mask", at(".overlay-mask"), "");
+check("业务类名不误伤：.search-container", at(".search-container"), "");
+check("业务类名不误伤：.qa-page", at(".qa-page"), "");
+check("业务类名不误伤：.flow-item", at(".flow-item"), "");
+check("业务类名不误伤：.quiz-option--row", at(".quiz-option--row"), "");
+check("业务类名不误伤：.case-list-card-viewcount", at(".case-list-card-viewcount"), "");
+check("业务类名不误伤：.nut-tabs-titles-item（第三方组件）", at(".nut-tabs-titles-item"), "");
+check("业务类名不误伤：custom-tab-bar", at('[class*="custom-tab-bar"] span'), "");
+check("空串不报", at(""), "");
+
+// ---- 「范围内点文字」的两个参数（2026/10/16 加的动作）----
+// 口径：参数1 = 范围（容器选择器）、参数2 = 文字。盯两件事：
+//   ① 正常填法要能读出来；
+//   ② **填反了要当场说清楚** —— 表格里两格挨着，新手很容易把文字填到参数1，
+//      那时如果只说"找不到范围「推荐」"，人照样看不懂。
+const cs = base.checkScopeArgs;
+const csOk = cs(".eco-tab-bar-container", "推荐");
+check("正常填法：范围 + 文字", csOk.scopeSelector + " | " + csOk.wanted, ".eco-tab-bar-container | 推荐");
+check("英文文字也行", cs(".search-container", "test").wanted, "test");
+check("填反了（范围那格填了文字）要报错", throws(() => cs("推荐", ".eco-tab-bar-container")), true);
+check("参数1 是文字（参数2 空着）要报错", throws(() => cs("推荐", "")), true);
+check("参数2 空着要报错", throws(() => cs(".eco-tab-bar-container", "")), true);
+check("两格都空要报错", throws(() => cs("", "")), true);
+check("范围写成 id 要拦住（id 会变）", throws(() => cs("#_AQ", "推荐")), true);
+check("正常选择器不许误伤：带后代写法", cs(".eco-tabs-bar .eco-tab-item", "推荐").wanted, "推荐");
+check("正常选择器不许误伤：属性选择器", cs('[class*="eco-tab-bar"]', "推荐").wanted, "推荐");
+
 console.log();
 if (failed.length) {
   console.log(`有 ${failed.length} 项不符合预期：`);

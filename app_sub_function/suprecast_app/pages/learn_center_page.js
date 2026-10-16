@@ -176,7 +176,8 @@ async function ensureOnColumnList(page, { maxAttempts = 4, waitAfterTab = 2500 }
       return page;
     }
 
-    await base.tapText(page, BOTTOM_TAB_TEXT, `底部 tab「${BOTTOM_TAB_TEXT}」`);
+    // 圈进底部 tab 栏再点（2026/10/16 加固）：底部 tab 文案会跟页面内容撞名，见 base.tapBottomTab
+    await base.tapBottomTab(page, BOTTOM_TAB_TEXT);
     await base.sleep(waitAfterTab);
   }
 

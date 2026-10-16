@@ -68,11 +68,13 @@ async function switchTo(page, { timeout = 10000, retries = 1, waitBeforeTap = 15
         await base.sleep(waitBeforeTap);
         const fg = await base.foreground(page);
 
-        // 必须 .first()：首页上同时存在「我的」和「我的关注」，
-        // 不加会在 strict mode 下抛 "resolved to 2 elements"（账本 根因 3）。
-        // 另外要用真实 adb tap：合成 .click() 在小程序上会因页面持续重绘
+        // 【2026/10/16 加固】以前这里"按文字点「我的」"+ 取第 1 个顶着：首页上「我的」
+        // （底部 tab）和「我的关注」（筛选栏）会同时命中 2 个（账本根因 3 那次 strict mode
+        // 报错就是这个撞名），取第 1 个等于赌 DOM 顺序。现在用 tapBottomTab：
+        // 先圈进 custom-tab-bar（实测栏里只命中 1 个），栏不在时才退回整页按文字找。
+        // 另外必须用真实 adb tap：合成 .click() 在小程序上会因页面持续重绘
         // 导致 stable 检查永不满足，超时或误报失败（根因 6）。
-        await base.tapText(fg, BOTTOM_TAB_TEXT, "底部 tab「我的」");
+        await base.tapBottomTab(fg, BOTTOM_TAB_TEXT);
 
         // 【关键】点击后必须重新解析前台页再验证：切 tab 会新建 page，
         // 旧 page 内容冻结，在它上面等「积分商城」永远等不到（账本 根因 4）。
