@@ -899,6 +899,58 @@ async function tapTextWithin(page, scope, text, index = 1) {
 }
 
 /**
+ * 开局自愈：**屏幕上有没收起来的评论/回复蒙层（`.overlay-mask`）就先点掉它**。
+ *
+ * 【为什么要它（2026/10/16）】这台手机上不止我一个人在用（owner 提过有别的 AI 一起用），
+ * 加上我自己的一次性探针也会留下状态 —— 结果是"下一条用例从一个半开的评论面板上起步"：
+ * 那一层蒙层盖着整屏，后面不管点哪儿都点在蒙层上（页面一动不动），
+ * 报出来的是"目标在屏幕外""找不到底部 tab"这种**看着像页面坏了**的红。
+ * 实测那次连红 3～4 条，查半天才发现只是面板没收。
+ *
+ * 源码依据（`src/components/reply-input/index.tsx`）：`<View className="overlay-mask" onClick={onBlur} />`
+ * —— 蒙层就是"点一下关"。所以这里点它一下。
+ *
+ * 【点什么位置】不能点蒙层的几何中心：面板浮在蒙层上方，中心有可能落在**面板**上
+ *（那一下会点进评论输入框）。所以先用 `document.elementFromPoint` 找一个"确实命中蒙层"的点
+ *（从上往下试几个候选），找不到命中点就**什么都不做**（宁可不动，也不要乱点）。
+ *
+ * @returns {Promise<boolean>} 真的点掉了返回 true
+ */
+async function dismissOverlayIfAny(page) {
+  const fg = await foreground(page);
+  if ((await countOf(fg, ".overlay-mask")) === 0) return false;
+  const spot = await fg.evaluate(() => {
+    const m = document.querySelector(".overlay-mask");
+    if (!m) return null;
+    const r = m.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const cands = [
+      [r.x + r.width / 2, r.y + 24],
+      [r.x + r.width / 2, r.y + r.height * 0.3],
+      [r.x + 24, r.y + 24],
+      [r.x + r.width / 2, r.y + r.height / 2],
+    ];
+    for (const [x, y] of cands) {
+      const el = document.elementFromPoint(x, y);
+      if (el && (el === m || m.contains(el) || el.contains(m))) {
+        return { x: Math.round(x * dpr), y: Math.round(y * dpr) };
+      }
+    }
+    return null;
+  });
+  if (!spot) {
+    console.log("  [提示] 屏幕上有蒙层，但找不到一个「确实点在蒙层上」的位置 —— 不动它（免得点进面板里）");
+    return false;
+  }
+  const device = await getDevice();
+  await device.shell(`input tap ${spot.x} ${spot.y}`);
+  noteInputSent();
+  await sleep(1000);
+  console.log(`  [自愈] 开局屏幕上有没收的蒙层（评论/回复面板）—— 已点掉（tap ${spot.x},${spot.y}）`);
+  return true;
+}
+
+/**
  * 点底部 tab：**优先圈进 tab 栏再按文字点**，栏不在或栏里没这个词才退回整页按文字找。
  *
  * 为什么不直接改成"只在栏里找"：真机上万一某个页面/某次改版没有 `custom-tab-bar`
@@ -1124,6 +1176,7 @@ module.exports = {
   classOf,
   BOTTOM_TAB_TEXTS,
   BOTTOM_TAB_BAR,
+  dismissOverlayIfAny,
   refreshSwipePoints,
   pullToRefresh,
   readRefresher,

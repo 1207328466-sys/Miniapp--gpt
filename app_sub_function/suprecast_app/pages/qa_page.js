@@ -448,6 +448,10 @@ async function ensureOnHomeFeed(page, { maxAttempts = 3 } = {}) {
   // 延迟 require：本文件与 android.js 互相引用
   const { goBack } = require("../android");
 
+  // 【开局自愈】屏幕上有没收的评论/回复蒙层就先点掉 —— 不然整屏都点在蒙层上，
+  // 报出来的是"目标在屏幕外""找不到底部 tab"这种看着像页面坏了的红（见 base_page 里那段说明）
+  await base.dismissOverlayIfAny(page).catch(() => {});
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     page = await base.ensureOnTabPage(page); // 二级页（搜索页/详情页/答题页）先点返回退出
     page = await ensureOn(page); // 切到「有问必答」tab（幂等）
