@@ -503,6 +503,79 @@ function getCaller() {
   return { fileName: "app", funcName: "unknown" };
 }
 
+/*
+ * 【沉默看门狗 —— 2026/10/16 补】
+ *
+ * 为什么要有它：真机跑批时设备/WebView 掉过一次（`androidDevice.shell: Device is closed`、
+ * `Target page, context or browser has been closed`），而框架那一步**卡了 41 分钟**
+ *（`ZW_028` 的「回到首页」步骤，从 12:49 一直卡到 13:30），期间**一行日志都没有** ——
+ * 卡在某个等不到回音的调用里（adb shell / 已关闭的 page 上的操作）。
+ * 一套用例里出现一次，整轮回归就白跑：人守着屏幕也不知道它在干嘛。
+ *
+ * 判据刻意做得**只看"有没有输出"**，不看时间长短：
+ *   · 正常的长步骤（例如置顶帖那条要轮询 5 分钟）每轮都会打日志 → 永远不会被误杀；
+ *   · 真卡住的步骤一行都不打 → 超过阈值就判这一步失败，并说清"多半是设备/WebView 掉了"。
+ *
+ * 阈值见 `UITEST_SILENCE_TIMEOUT_MS`（默认 5 分钟；设 0 = 关掉这道看门狗）。
+ * 另外**只告警不杀**的第一档在 3 分钟（打一行提示，方便人看着日志知道它在沉默），不打断执行。
+ */
+const SILENCE_WARN_MS = 3 * 60 * 1000;
+let lastOutputAt = Date.now();
+let watchdogInstalled = false;
+
+/** 把 console.log/info/warn/error 都算成"这一步还活着"（幂等，装一次就够） */
+function installSilenceWatchdog() {
+  if (watchdogInstalled) return;
+  watchdogInstalled = true;
+  for (const name of ["log", "info", "warn", "error", "debug"]) {
+    const orig = console[name];
+    if (typeof orig !== "function") continue;
+    console[name] = (...args) => {
+      lastOutputAt = Date.now();
+      return orig.apply(console, args);
+    };
+  }
+}
+
+/** 跑一步，并在它"完全不出声"超过阈值时判它失败（见上面那段说明） */
+function runStepWithWatchdog(fn, stepName) {
+  const limit = Number(process.env.UITEST_SILENCE_TIMEOUT_MS == null ? 5 * 60 * 1000 : process.env.UITEST_SILENCE_TIMEOUT_MS);
+  if (!limit || limit <= 0) return Promise.resolve().then(fn);
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let warned = false;
+    const finish = (err, val) => {
+      if (done) return;
+      done = true;
+      clearInterval(timer);
+      if (err) reject(err);
+      else resolve(val);
+    };
+    const timer = setInterval(() => {
+      const silent = Date.now() - lastOutputAt;
+      if (silent >= limit) {
+        const seconds = Math.round(silent / 1000);
+        finish(
+          new Error(
+            `这一步（${stepName}）已经 ${seconds} 秒**没有任何输出** —— 判它失败，不再等下去。\n` +
+              `  最常见的两种原因：① 设备/WebView 掉了（日志里会有 Device is closed / has been closed）；\n` +
+              `  ② 小程序界面卡死。\n` +
+              `  处理：在手机上确认小程序还在、再跑一次；嫌这个阈值不合适可以设 UITEST_SILENCE_TIMEOUT_MS（毫秒，0=关掉）。`
+          )
+        );
+      } else if (!warned && silent >= SILENCE_WARN_MS) {
+        warned = true;
+        console.warn(
+          `  [看门狗] 「${stepName}」已经 ${Math.round(silent / 1000)} 秒没有输出（还在跑）—— 再沉默到 ${Math.round(limit / 1000)} 秒就判它失败`
+        );
+      }
+    }, 15000);
+    Promise.resolve()
+      .then(fn)
+      .then((v) => finish(null, v), (e) => finish(e));
+  });
+}
+
 /**
  * 按步骤列表执行子函数（同步阻塞式逐步骤执行），参考 __run_appium_test 设计。
  * @param {import('playwright').Page} page 小程序 webview 页面
@@ -517,6 +590,7 @@ function getCaller() {
  * @returns {Promise<import('playwright').Page>} page
  */
 async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { fileName: "app", funcName: "unknown" }, device = null, options = {}) {
+  installSilenceWatchdog();
   const { resolveForeground = true, stepLog = null, ctx = null } = options;
   let savedError = null;
   const totalStart = Date.now();
@@ -549,11 +623,10 @@ async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { 
     try {
       // 第 3 个参数是共享上下文。注意无参分支要显式传 undefined 而不是 null ——
       // 很多步骤写成 `(page, { x = 1 } = {})`，传 null 会触发解构报错，传 undefined 才走默认值。
-      if (kwargs) {
-        page = await func(page, kwargs, ctx);
-      } else {
-        page = await func(page, undefined, ctx);
-      }
+      page = await runStepWithWatchdog(
+        () => (kwargs ? func(page, kwargs, ctx) : func(page, undefined, ctx)),
+        func.name
+      );
     } catch (e) {
       savedError = e;
       log.error(e.message);
