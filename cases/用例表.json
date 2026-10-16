@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-16 09:35:24",
+  "generated_at": "2026-10-16 09:41:54",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
   "warnings": [],
@@ -2034,6 +2034,63 @@
           "param2": "",
           "note": "",
           "num": 4
+        }
+      ]
+    },
+    {
+      "id": "ZW_034",
+      "name": "案例详情页显示「案例标签 / 案例简介」（缺陷 713587133）",
+      "precondition": "手机在小程序首页；不用登录（只读）。案例库首屏往后能翻到案例「亲亲」",
+      "note": "缺陷 713587133（原文：案例详情中缺少显示案例描述信息）。\n源码锚点 src/packageA/pages/case-detail/index.tsx：.meta-block-tags-intro 里两块 ——\n  · 「案例标签：{tags}」·「案例简介：{introduction}」；\n  · **条件渲染**：tags 和 introduction 都为空时整块不显示 —— 所以挑了「有简介」的案例当样本。\n样本（2026/10/16 只读查库）：案例 id=90「亲亲」，introduction='去'、tags='电子与通信'，status=1（上架）。\n第 4 步先证明那块在；第 5-6 步对内容（**文案口径来自库里那两列**；样例数据改了就把这两格一起改）。",
+      "steps": [
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "缺陷 713587133（原文：案例详情中缺少显示案例描述信息）。\n源码锚点 src/packageA/pages/case-detail/index.tsx：.meta-block-tags-intro 里两块 ——\n  · 「案例标签：{tags}」·「案例简介：{introduction}」；\n  · **条件渲染**：tags 和 introduction 都为空时整块不显示 —— 所以挑了「有简介」的案例当样本。\n样本（2026/10/16 只读查库）：案例 id=90「亲亲」，introduction='去'、tags='电子与通信'，status=1（上架）。\n第 4 步先证明那块在；第 5-6 步对内容（**文案口径来自库里那两列**；样例数据改了就把这两格一起改）。",
+          "num": 1
+        },
+        {
+          "action": "打开案例库",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 2
+        },
+        {
+          "action": "打开案例",
+          "param1": "亲亲",
+          "param2": "",
+          "note": "",
+          "num": 3
+        },
+        {
+          "action": "检查元素存在",
+          "param1": ".meta-block-tags-intro",
+          "param2": "",
+          "note": "",
+          "num": 4
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "案例简介：去",
+          "param2": "",
+          "note": "",
+          "num": 5
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "案例标签：电子与通信",
+          "param2": "",
+          "note": "",
+          "num": 6
+        },
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 7
         }
       ]
     }
