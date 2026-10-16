@@ -53,6 +53,139 @@ const BOTTOM_TAB_TEXTS = ["有问必答", "学习中心", "设计专区", "我�
  */
 const BOTTOM_TAB_BAR = '[class*="custom-tab-bar"]';
 
+/**
+ * 下拉刷新在 DOM 里的两个抓手（2026/10/16 真机采样定的，见 docs/踩坑记录.md 坑 53）。
+ *
+ * 小程序的下拉刷新不是"页面级"的（源码里全局搜不到 `enablePullDownRefresh`），
+ * 而是 Taro `<ScrollView refresherEnabled onRefresherRefresh>` —— scroll-view 的**自定义下拉刷新**。
+ * Taro 把它渲染成 WeChat 运行时自带的那套元素：
+ *   · 容器 `wx--refresher--container--private`：**被拉动/回弹时它的 y 会变**（实测 -674 → -557 → 回 -674）；
+ *   · 转圈的点 `wx-refresher-default-dot-*-blink-anim`：**刷新中才有**（实测刷新中 3 个，
+ *     静止时是 `-fold` 那 2 个）。
+ * 所以"刷新开始/结束"不用 sleep 猜，看这两样就行。
+ */
+const REFRESHER_CONTAINER = '[class*="wx--refresher--container--private"]';
+const REFRESHER_LOADING = '[class*="blink-anim"]';
+
+/**
+ * 下拉手势的两个点 —— **纯函数**，方便离线自检。
+ * 起点在内容区偏上（0.34 屏高），往下拖到 0.70 屏高（实测这个距离稳稳越过刷新阈值）。
+ * @param {{w:number,h:number}} screen 设备像素尺寸
+ * @returns {{x:number,y1:number,y2:number,ms:number}}
+ */
+function refreshSwipePoints(screen) {
+  const w = Number(screen && screen.w) || 0;
+  const h = Number(screen && screen.h) || 0;
+  const x = Math.round(w / 2);
+  const y1 = Math.round(h * 0.34);
+  const y2 = Math.min(Math.round(h * 0.7), Math.max(y1 + 200, h - 10));
+  return { x, y1, y2, ms: 400 };
+}
+
+/** 读一眼下拉刷新的现场：有没有 refresher、它现在在什么位置、是不是在转圈 */
+async function readRefresher(p) {
+  try {
+    return await p.evaluate(
+      ({ c, l }) => {
+        const el = document.querySelector(c);
+        const r = el ? el.getBoundingClientRect() : null;
+        return {
+          hasRefresher: !!el,
+          y: r ? Math.round(r.y) : null,
+          loading: document.querySelectorAll(l).length,
+        };
+      },
+      { c: REFRESHER_CONTAINER, l: REFRESHER_LOADING }
+    );
+  } catch (e) {
+    return { hasRefresher: false, y: null, loading: 0 };
+  }
+}
+
+/**
+ * **下拉刷新**（真机验证过：真的会重新取数）。
+ *
+ * 【为什么要有它】owner 2026/10/15 定：需要刷新就刷新，别让"改了数据没反应"变成误判。
+ * 真机实测（2026/10/16，证据见坑 53）：
+ *   · 后台置顶一条帖子 → **一次下拉** → 第一条立刻变成「置顶 兄弟」（约 1 秒内）；
+ *   · 取消置顶 → 再下拉一次 → 「置顶」立刻摘掉；
+ *   · 刷新过程中：`blink-anim` 的点出现（转圈）、信息流卡片数 10 → 0 → 10（**列表真的清空重取**）。
+ *
+ * 【它和"真切 tab"的关系】两种都能刷新，各有各的用处：
+ *   · 下拉刷新：不用离开这一页、任何开了 refresher 的页面都能用（源码里 12 个页面开了）；
+ *   · 真切 tab：只有一级页的筛选栏能这么干（坑 49 验过）。
+ *   两者都**不刷新**的反例也记着：`进用户中心再回首页`、"本来就在这一栏时调切换"（幂等空操作）。
+ *
+ * 【判据不是 sleep】① 等"被拉动/开始转圈"；② 等"转圈没了 + 容器位置回到起始值"连续两次成立。
+ * 页面不在顶部时会先被滚回顶部（那一下不一定触发刷新），所以没看出迹象会**再试一次**并打日志。
+ *
+ * @param {import('playwright').Page} page
+ * @param {{timeout?: number, startTimeout?: number, attempts?: number}} [options]
+ * @returns {Promise<import('playwright').Page>}
+ */
+async function pullToRefresh(page, { timeout = 15000, startTimeout = 2500, attempts = 2 } = {}) {
+  const fg = await foreground(page);
+  const before = await readRefresher(fg);
+  if (!before.hasRefresher) {
+    throw new Error(
+      "这一页没有下拉刷新（DOM 里找不到 wx--refresher--container--private）。\n" +
+        "  源码里开了下拉刷新的页面：首页信息流 / 案例库 / 学习中心 / 我的 / 安全百科 等 12 个列表页；\n" +
+        "  搜索页、帖子详情这类二级页没有。要在这种页面刷新数据，用「返回上一页」重进，或真切一次 tab。"
+    );
+  }
+  const screen = await fg.evaluate(() => ({
+    w: Math.round((window.innerWidth || 0) * (window.devicePixelRatio || 1)),
+    h: Math.round((window.innerHeight || 0) * (window.devicePixelRatio || 1)),
+  }));
+  const g = refreshSwipePoints(screen);
+  const device = await getDevice();
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    await device.shell(`input swipe ${g.x} ${g.y1} ${g.x} ${g.y2} ${g.ms}`);
+
+    // ① 等"真的被拉动/开始转圈"（页面不在顶部时，这一下只是把它滚回顶部）
+    const started = await waitUntil(
+      async () => {
+        const s = await readRefresher(fg);
+        return s.loading > 0 || (s.y !== null && Math.abs(s.y - before.y) > 8);
+      },
+      { timeout: startTimeout, interval: 120 }
+    );
+    if (!started) {
+      console.log(
+        `  [提示] 第 ${attempt}/${attempts} 次下拉没看出刷新迹象（页面可能不在顶部，这一下只是滚回顶部）`
+      );
+      continue;
+    }
+
+    // ② 等"刷完"：转圈的点没了、容器位置回到起始值，连续两次成立才算稳
+    let stable = 0;
+    const done = await waitUntil(
+      async () => {
+        const s = await readRefresher(fg);
+        const back = s.loading === 0 && (s.y === null || Math.abs(s.y - before.y) <= 8);
+        stable = back ? stable + 1 : 0;
+        return stable >= 2;
+      },
+      { timeout, interval: 150 }
+    );
+    if (!done) {
+      throw new Error(
+        `下拉刷新超时（等了 ${timeout}ms 还没回到静止）。\n` +
+          `  最后读到：${JSON.stringify(await readRefresher(fg))}（loading>0 = 还在转圈）`
+      );
+    }
+    console.log(`  下拉刷新完成（第 ${attempt} 次触发，容器 y=${before.y} -> 回到原位，转圈已停）`);
+    return fg;
+  }
+
+  throw new Error(
+    `下拉了 ${attempts} 次都没触发刷新（每次等 ${startTimeout}ms 没看到"被拉动/转圈"）。\n` +
+      `  两种常见原因：① 这一页的下拉刷新被关掉了（源码 refresherEnabled）；\n` +
+      `  ② 手势落点不对（现在是 x=${g.x}, ${g.y1} -> ${g.y2}）—— 手机上手动下拉一次试试，能刷就是落点问题。`
+  );
+}
+
 /** 纯等待。不依赖 page 对象：page 被销毁后 page.waitForTimeout 会抛错 */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -855,6 +988,9 @@ module.exports = {
   classOf,
   BOTTOM_TAB_TEXTS,
   BOTTOM_TAB_BAR,
+  refreshSwipePoints,
+  pullToRefresh,
+  readRefresher,
   withBottomTabBar,
   ensureOnTabPage,
   exitDecision,

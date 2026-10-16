@@ -212,6 +212,13 @@ const HANDLERS = {
 
   返回上一页: { run: (page) => android.goBack(page) },
 
+  下拉刷新: {
+    // 2026/10/16 加：真机验过「下拉刷新真的会重新取数」（证据见 docs/踩坑记录.md 坑 53）。
+    // 以前"改了数据没反应"要绕一大圈（真切 tab、甚至怀疑服务端缓存十几分钟），
+    // 现在同一页上下拉一次就行，而且它自己会验证"刷新真的发生了"（转圈出现又停、容器回原位）。
+    run: (page) => base.pullToRefresh(page),
+  },
+
   等待: {
     run: async (page, ms) => {
       await base.sleep(Number(ms));

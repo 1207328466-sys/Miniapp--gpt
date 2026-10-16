@@ -12,10 +12,12 @@
  * 帖子侧一个置顶字段都没有 —— 它是管理后台的服务在管（详见 knowledge/管理后台接口与夹具.md）。
  * 所以夹具走 `tools/post_top_tool.py`（默认只预览，`--yes` 才真写，跑完必须还原）。
  *
- * 【这条用例为什么慢 —— 不是卡住，是在等缓存】
- * 实测（2026/10/15）：置顶后小程序端**约 5~7 分钟**才变（服务端有缓存）。
- * 所以断言那一步是**轮询**（默认最多等 12 分钟，每 30 秒强制重进一次首页再读），
- * 而不是"改完立刻看"—— 后者会得出"置顶没用"的错误结论（这条记在 docs/踩坑记录.md 坑 49）。
+ * 【刷新怎么做：下拉刷新（2026/10/16 改成这个）】
+ * 置顶是**立刻**生效的（2026/10/16 实测：置顶 → 一次下拉刷新 → 第一条就是「置顶 兄弟」，约 1 秒）。
+ * 以前绕的那一圈（"真切 tab 才刷新"、还一度以为是服务端缓存 5~7 分钟）见 docs/踩坑记录.md 坑 49 与坑 53：
+ * 根因是**我的刷新方式是空操作**，不是服务端慢。
+ * 现在：**每次轮询都先 `base.pullToRefresh`**（真机验过会重新取数；这一页没有 refresher 时自动退回"真切 tab"），
+ * 再读列表。轮询预算留着只为容忍接口偶发慢一拍，不是"等缓存"。
  *
  * 【开关】`UITEST_ALLOW_SUBMIT=1`：不设就**记跳过**（不设 = 这次不测写数据的用例）
  * 跑法：$env:UITEST_ALLOW_SUBMIT="1"; python run.py -k 置顶帖
@@ -40,14 +42,15 @@ const requireWriteSwitch = makeWriteSwitchStep("置顶帖");
 /**
  * 轮询预算：默认 **5 分钟**（每 20 秒一轮）。
  *
- * 【别被"缓存"骗了 —— 2026/10/15 实测纠正】
+ * 【别被"缓存"骗了 —— 2026/10/15 实测纠正，2026/10/16 补完】
  * 一开始我用"进用户中心再回首页"当刷新，结果置顶后**十几分钟**都看不到，以为是"服务端缓存十来分钟"，
- * 还照着那个写了 20 分钟的预算。后来 owner 提醒"可以切 tab 刷新"，一验才发现：
- *   · **真切 tab**（先切到「推荐」再切回「最新提问」）会重新拉这一栏的列表 —— 置顶/取消**立刻**反映出来
- *     （实测：16:18:52 置顶 → 16:20 已经排在第一位；取消置顶也立刻消失）；
- *   · 而"本来就在最新提问"时调切换动作是**幂等的**（"无需切换"）→ 等于**没刷新** ——
- *     我之前那些探针就是这么骗自己的。
- * 所以这里用真切 tab + 短轮询；预算留着是为了容忍"服务端偶尔慢一拍"。
+ * 还照着那个写了 20 分钟的预算。**那是个错误结论**：
+ *   · **真切 tab**（先切到「推荐」再切回「最新提问」）会重新拉这一栏的列表 —— 置顶/取消**立刻**反映
+ *     （2026/10/15 实测：16:18:52 置顶 → 16:20 已经排在第一位）；
+ *   · **下拉刷新**（2026/10/16 实测）：置顶后只下拉一次，第一条立刻变「置顶 兄弟」，全程约 1 秒；
+ *     刷新中的 DOM 证据是"转圈的点出现又停 + 信息流卡片数 10 → 0 → 10"；
+ *   · 而"进用户中心再回首页"、"本来就在最新提问"时调切换动作（幂等"无需切换"）—— **都是空操作**。
+ * 所以预算留着只为容忍"服务端偶尔慢一拍"，不是"等服务端缓存过期"。
  * 可调：`UITEST_TOP_WAIT_MS`（毫秒）、`UITEST_TOP_POLL_MS`（轮询间隔）。
  */
 const WAIT_MS = Number(process.env.UITEST_TOP_WAIT_MS || 5 * 60 * 1000);
@@ -102,20 +105,33 @@ async function readTopCards(page, limit = 6) {
 }
 
 /**
- * 拿到「最新提问」的**新数据**：切到别的筛选 tab 再切回来（owner 2026/10/15 提醒的做法）。
+ * 拿到「最新提问」的**新数据**。三级优先，从便宜到贵：
+ *   ① **下拉刷新**（`base.pullToRefresh`，2026/10/16 起首选）：不用离开这一页，
+ *      原地一次手势约 1~3 秒，而且动作自己会验证"刷新真的发生了"（转圈出现又停、容器回原位）；
+ *   ② **真切 tab**（前两版的写法，owner 2026/10/15 提醒的）：两次点击约 6 秒；
+ *      注意"本来就在这一栏"时切 tab 是**幂等空操作**（坑 49），所以必须真切走再切回；
+ *   ③ 兜底：离开首页再回来（4 次导航约 35 秒，只在上面两种都不灵时用）。
  *
- * 为什么不用"进用户中心再回首页"那套：那要 4 次导航（约 35 秒），而切 tab 只是两次点击
- * （约 6 秒）—— 而且**切 tab 本身就会重新请求这一栏的列表**，够用。
- * 兜底：万一 tab 切换失败（页面不在一级页等），就退回"离开首页再回来"的重办法。
+ * 为什么首选下拉刷新：它最便宜，而且**判据是"刷新发生了"**，不是"我做了个看起来像刷新的动作" ——
+ * 这一点正是坑 49/坑 53 的教训（我的刷新曾经是空操作，却被当成"服务端没生效"）。
  */
 async function backToFreshFeed(page) {
+  try {
+    page = await qaPage.ensureOnHomeFeed(page);
+    page = await base.pullToRefresh(page);
+    // 刷完列表要重新渲染：**等它真的出现卡片**再读，别读到一个空列表
+    // （2026/10/15 实测：切回来 2.5 秒时读到 0 张卡，再等一会儿才有）
+    const fg = await base.foreground(page);
+    await base.waitUntil(async () => (await readTopCards(fg, 1)).length > 0, { timeout: 8000, interval: 500 });
+    return base.foreground(page);
+  } catch (e) {
+    console.log(`  [提示] 下拉刷新没成功（${e.message.split("\n")[0]}）—— 改用"真切 tab"`);
+  }
   try {
     page = await qaPage.ensureOnHomeFeed(page);
     await qaPage.switchToFeedTab(page, { tab: "推荐" });
     await base.sleep(900);
     page = await qaPage.switchToFeedTab(page, { tab: "最新提问" });
-    // 切回来之后列表要重新渲染：**等它真的出现卡片**再读，别读到一个空列表
-    // （2026/10/15 实测：切回来 2.5 秒时读到 0 张卡，再等一会儿才有）
     const fg = await base.foreground(page);
     await base.waitUntil(async () => (await readTopCards(fg, 1)).length > 0, { timeout: 8000, interval: 500 });
     return base.foreground(page);
@@ -138,8 +154,8 @@ async function pickTargetPost(page) {
 
   for (const c of cards) {
     // 卡片文字形如「置顶 兄弟 xiba 1」/「w aaaaaa 0」—— 取第一个空格前的部分当标题
-    // ⚠️ 带「置顶」前缀的卡**直接跳过**：它要么是环境里已有的置顶帖，要么是**缓存的旧置顶**
-    //    （服务端缓存十来分钟，刚跑完上一次用例时会残留）。挑它当目标，后面的轮询会被这份旧缓存
+    // ⚠️ 带「置顶」前缀的卡**直接跳过**：它要么是环境里已有的置顶帖（别人置顶的），要么是
+    //    上一轮用例**还没刷掉**的旧显示。挑它当目标，后面的轮询会被这份旧显示
     //    立刻"满足"，等于假绿。
     if (/^置顶/.test(c.text)) {
       console.log(`  跳过「${c.text.slice(0, 18)}」：它现在带着「置顶」标记（可能是别人置顶的，也可能是上一轮的缓存）`);
@@ -180,7 +196,7 @@ async function pinTargetPost(page) {
   return page;
 }
 
-/** 步骤 3：等小程序端把它显示成第一条 + 带「置顶」（真切 tab 刷新，通常几秒到一两分钟） */
+/** 步骤 3：等小程序端把它显示成第一条 + 带「置顶」（下拉刷新，实测约 1 秒就到位） */
 async function waitAppShowsTop(page) {
   const started = Date.now();
   const deadline = started + WAIT_MS;
@@ -212,18 +228,18 @@ async function waitAppShowsTop(page) {
   }
 
   throw new Error(
-    `等了 ${Math.round(WAIT_MS / 60000)} 分钟（每轮都真切了一次 tab 刷新），` +
+    `等了 ${Math.round(WAIT_MS / 60000)} 分钟（每轮都刷新了一次：下拉刷新，不灵时退回真切 tab），` +
       `小程序「最新提问」第一条仍然没有「置顶」标记。\n` +
       `  期望：id=${target.id} 标题=${JSON.stringify(target.title)} 出现在第一条且带「置顶」\n` +
       `  实测最上面几张卡：${JSON.stringify(lastCards.map((c) => c.text))}\n` +
-      `  排查：① 刷新方式对不对（必须**真切 tab**：先切到别的筛选 tab 再切回来；\n` +
-      `        "本来就在这一栏"时调切换是幂等的、等于没刷新）\n` +
+      `  排查：① 刷新到底有没有发生（日志里有"下拉刷新完成"就是发生了；\n` +
+      `        "本来就在这一栏"时切 tab 是幂等的、等于没刷新 —— 那是坑 49）\n` +
       `        ② 手机上装的小程序版本是否含 713367194 的修复？\n` +
       `        ③ 抓信息流接口的返回，看有没有 isTop 字段（有字段没渲染=前端；没字段=服务端）`
   );
 }
 
-/** 步骤 4：还原之后，再确认小程序端也把「置顶」摘掉了（真切 tab 刷新，正反两个方向都验） */
+/** 步骤 4：还原之后，再确认小程序端也把「置顶」摘掉了（下拉刷新，正反两个方向都验） */
 async function waitAppClearsTop(page) {
   const deadline = Date.now() + WAIT_MS;
   let round = 0;
@@ -245,7 +261,7 @@ async function waitAppClearsTop(page) {
   }
   throw new Error(
     `取消置顶后等了 ${Math.round(WAIT_MS / 60000)} 分钟，小程序端**仍然**把 ` +
-      `${JSON.stringify(target.title)} 显示成置顶（实测真切 tab 之后应当立刻变）。\n` +
+      `${JSON.stringify(target.title)} 显示成置顶（实测下拉刷新之后应当立刻变）。\n` +
       `  实测最上面几张卡：${JSON.stringify(lastCards.map((c) => c.text))}\n` +
       `  注意：如果环境里**别人**也置顶了同标题的帖子，这条断言会误报 —— 先确认这一点。`
   );
@@ -257,7 +273,7 @@ async function unpinTargetPost(page) {
   const r = runPostTop(["--id", String(target.id), "--unpin", "--yes"]);
   if (/\[TOPPOST\] mode=set .*isTop=0/.test(r.out)) {
     pinned = false;
-    console.log(`  已还原：id=${target.id} 取消置顶（下一步会真切一次 tab，确认小程序端也摘掉了「置顶」）`);
+    console.log(`  已还原：id=${target.id} 取消置顶（下一步会刷新一次，确认小程序端也摘掉了「置顶」）`);
   } else {
     console.error(`  [收尾] 取消置顶失败，需要人工看一眼：${r.out.trim().split("\n").slice(-2).join(" / ")}`);
   }
