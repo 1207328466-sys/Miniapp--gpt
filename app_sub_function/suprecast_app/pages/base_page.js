@@ -30,6 +30,7 @@ const {
   findPageContaining,
   pagesContaining,
   waitForPageContaining,
+  noteInputSent,
 } = require("../../../common/app_common");
 const { getDevice, tapElement, goBack } = require("../android");
 
@@ -142,6 +143,7 @@ async function pullToRefresh(page, { timeout = 15000, startTimeout = 2500, attem
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     await device.shell(`input swipe ${g.x} ${g.y1} ${g.x} ${g.y2} ${g.ms}`);
+    noteInputSent(); // 刚下拉过：下一次解析前台页要用"页面可能正在动"的超时
 
     // ① 等"真的被拉动/开始转圈"（页面不在顶部时，这一下只是把它滚回顶部）
     const started = await waitUntil(

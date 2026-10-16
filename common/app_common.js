@@ -653,6 +653,18 @@ async function runAppSteps(page, testSubFunctions, photoPath = null, caller = { 
  * @throws {Error} context 拿不到、或没有任何页面在产出动画帧时抛出
  */
 async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null } = {}) {
+  // 【可开关的计时】`UITEST_DEBUG_FG=1` 时把这次解析的每一段耗时打出来。
+  // 为什么留着它：2026/10/16 查"为什么一整套用例要 90 分钟"就是靠这种数
+  //（`probe_foreground_cost.js` 量到单次 1.79 秒，再由这里的段落计时定位到"那 1.2 秒复核"）。
+  const dbg = process.env.UITEST_DEBUG_FG === "1";
+  const t0 = Date.now();
+  const mark = (label) => dbg && console.log(`    [前台页计时] ${label}: ${Date.now() - t0} ms`);
+  // 【自适应超时】1.8 秒内有过真实输入（点/滑）就把探测超时放长（页面正在换），
+  // 否则用短超时（屏幕上那页 16ms 内就出帧，短的只是在等冻结页放弃）。详见下面第 4 步的说明。
+  const sinceInput = Date.now() - lastInputAtMs;
+  const careful = sinceInput < 1800;
+  const probeTimeout = careful ? 1700 : 250;
+  if (dbg && careful) console.log(`    [前台页计时] 距上次输入 ${sinceInput}ms -> 用"刚点过"的超时 ${probeTimeout}ms`);
   // 【安全阀】期望的 appid：优先用显式传入的，其次用进程级默认值（appTest 解析过一次）
   const expected = expectedAppId || activeExpectedAppId || null;
   // 1) 取浏览器 context：page 可用时优先从它取，已销毁则退回缓存
@@ -732,13 +744,57 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
   });
   if (byUrl.length) candidates = byUrl;
 
+  /*
+   * 3.8) 【输入归属：候选不止一个就先问它 —— 2026/10/16 挪到这里（原来在 RAF 探测之后）】
+   *
+   * 为什么挪：owner 2026/10/16 反馈"怎么跑得这么慢"。实测（`probe_foreground_cost.js`）：
+   *   · **单次解析 1793 ms**（连量 5 次：1805/1806/1794/1760/1799）；
+   *   · 一次「回到首页」12.5 秒 ≈ 解析 7 次；一整套用例从 34 项 / 24:48 变成 43 项 / 约 90 分钟。
+   * 钱花在哪儿（都是等出来的，不是算出来的）：
+   *   ① 并行 RAF 探测要等**不出帧**的那些页到超时 —— 500 ms；
+   *   ② 只有 1 个在出帧、候选却不止一个时，把落选的用 **1200 ms** 超时再探一次（10/15 为修坑 46 加的）。
+   * 而微信里**背景页本来就不出帧**（只有屏幕上那页在出），所以 ② 这条贵路径**几乎每次都会走**：
+   * 500 + 1200 ≈ 1.7 秒/次 —— 这正是那 1793 ms。
+   *
+   * 为什么可以先用输入归属：**它是硬信号**（发一次 ESC，只有屏幕上那页收到 keydown；实测后台页 0 次），
+   * 本来就被当成"比出帧更可信"的判据（见下面 4.7 的说明）。它只要一次 `dumpsys` + ESC + 250 ms，
+   * 比 ① + ② 便宜得多。**问得出来就直接返回**；问不出来（软键盘开着 / 多页都收到 / 页不可用）
+   * 再走原来那套 RAF 逻辑 —— 一条判据都没丢，只是把便宜且更硬的那条挪到前面。
+   * 注意：ESC 该不该发、什么时候不发（软键盘开着时不发）这些规矩都在 pickByInputOwnership 里，
+   * 这次只挪顺序，那些规矩一个字没改。
+   */
+  if (candidates.length > 1) {
+    const byInput = await pickByInputOwnership(candidates);
+    mark("输入归属探针之后");
+    if (byInput) {
+      const count = await byInput.locator("*").count().catch(() => 0);
+      log.debug(`前台页判定：按「输入归属」（ESC 只到了这一页；元素数=${count}）`);
+      return byInput;
+    }
+  }
+
   // 4) 并行探测：只有还在产出动画帧的才是前台页。
   //    这里必须并行——串行探测每个页面最多要等一个 timeout，
   //    7 个页面就是 3.5 秒的纯等待，放到每一步之前会严重拖慢用例。
+  //
+  //    【2026/10/16：探测超时改成"看刚才有没有真的点过"】
+  //    实测把这个解析从 1.79 秒压到 0.25 秒的做法（`UITEST_DEBUG_FG=1` 有段落计时）：
+  //      · 空闲时（1.8 秒内没有输入）：超时 250 ms —— 屏幕上那页 16 ms 内就出帧，
+  //        这段超时只是**在等"冻结的页"放弃**，没必要等 1.7 秒；
+  //      · **刚点过/刚滑过**（1.8 秒内有过 input）：超时 1700 ms —— 页面正在换，
+  //        新页要几百毫秒才建好并出帧，等短了就会把**旧页**当成前台页
+  //        （这正是原来"第 1 轮 500ms + 复核 1200ms"两轮加起来要等的 1.7 秒，
+  //        现在合成**一枪等够**；复核那一轮因此删掉了 —— 它实测在空闲状态下 13/13 次
+  //        "一页都没救回来"，而在"刚点过"的情况下这一枪已经等够了）。
+  //    ⚠️ 这条规矩必须守住：**别把"刚点过"那段的超时调短**。我 2026/10/16 试过一条
+  //      "60ms 快路径"（唯一在出帧的就是调用方那页就直接返回），ZW_013/ZW_027 当场红：
+  //      点完帖子卡之后**详情页还没开始出帧**，而旧的信息流页还在出帧 → 快路径返回了旧页，
+  //      于是"点了没进详情页"（截图里其实已经在详情页了）。
+  //      想再优化这一段，先看 ZW_013 的日志（它专门盯这件事）。
   const probes = await Promise.all(
     candidates.map(async (p) => {
       try {
-        const alive = await p.evaluate(RAF_PROBE, timeout);
+        const alive = await p.evaluate(RAF_PROBE, probeTimeout);
         if (!alive) return null;
         const count = await p.locator("*").count().catch(() => 0);
         return { page: p, count };
@@ -748,6 +804,7 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
       }
     })
   );
+  mark("第 1 轮并行 RAF 探测之后");
   const aliveRaw = probes.filter(Boolean);
   // 4.5) 【空壳页再剔一遍】这次按元素数（实测真实页面 74~747，空壳页 9~11）。
   //      同样：剔完一个不剩就不过滤。
@@ -755,73 +812,26 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
   if (!alive.length) alive.push(...aliveRaw);
 
   /*
-   * 4.6) 【单个候选不能轻信 —— 2026/10/15 补】
+   * 4.6) 【原来这里有一轮"复核"（2026/10/15 加，2026/10/16 删）—— 留个记录，别再走回去】
    *
-   * 真机事故：手机停在小程序**二级页（答题页）**，框架却挑了后台的**首页信息流**，
-   * 之后整条用例都在"错的页面上"操作，最后报出一句看不懂的「找不到底部 tab 我的」。
-   * 复核发现：微信里**每页都在以 ~60fps 出帧**（实测答题页 61 帧/秒、后台首页 60 帧/秒），
-   * 所以"还出不出帧"这个二值判据分不出谁在屏幕上；能分出的是**输入归属**
-   * （发一次 ESC，只有屏幕上那页收到 keydown，实测后台页 0 次）。
+   * 它当年是干嘛的：事故（坑 46）里"屏幕上那页的探测超时了一次（500ms 没等到帧）就被判成没在出帧"，
+   * 于是只剩后台页一个候选、被当成前台页。当时加的补救是：候选不止一个却只剩一个出帧时，
+   * **把落选的用 1200ms 超时再探一次**，探回来就交给输入归属判。
    *
-   * 但输入归属只在"多候选"分支里用得上。事故那次偏偏只剩**一个**候选 ——
-   * 屏幕上那页的探测**超时了一次**（500ms 没等到帧）就被判成"没在出帧"，直接踢出候选，
-   * 于是没有歧义、也没人去问输入归属，就这么挑了后台页。
-   *
-   * 所以这里加一道复核：**候选不止一个、却只剩一个出帧时，把落选的那些用更长的超时再探一次**。
-   * 探不回来 -> 维持原判（不改变原来的行为）；探回来了 -> 进入多候选判定，
-   * 由输入归属这条硬信号来定（见 pickByInputOwnership）。
+   * 为什么删：2026/10/16 量了 13 次解析，这一轮 **13/13 都是"救回来 0 页"**，
+   * 却每次固定花掉 1200ms（单次解析因此 1.79 秒、一次「回到首页」12.5 秒）。
+   * 它想解决的问题现在由**第 4 步的自适应超时**解决，而且更直接：
+   *   · 刚点过（1.8 秒内有过输入）→ 一枪就按 **1700ms** 等（= 原来那 500 + 1200 的总时长）；
+   *   · 空闲 → 250ms（屏幕上那页 16ms 内就出帧，这段只是在等冻结的页放弃）。
+   * 一句话：**"再探一轮"换成了"第一枪等够"，等信息量一样、不再白等。**
    */
-  if (alive.length === 1 && candidates.length > 1) {
-    const alivePages = new Set(alive.map((a) => a.page));
-    const retry = await Promise.all(
-      candidates
-        .filter((p) => !alivePages.has(p))
-        .map(async (p) => {
-          try {
-            return (await p.evaluate(RAF_PROBE, 1200)) ? p : null;
-          } catch (e) {
-            return null;
-          }
-        })
-    );
-    const back = retry.filter(Boolean);
-    if (back.length) {
-      console.log(
-        `  [提示] 前台页复核：第一轮只探到 1 个在出帧的页面，但用更长的超时又探到 ${back.length} 个` +
-          ` —— 交给「输入归属」判定谁在屏幕上（微信里前后台页面都会出帧，单靠出帧分不出来）`
-      );
-      for (const p of back) {
-        const count = await p.locator("*").count().catch(() => 0);
-        if (isUsableForegroundCandidate({ count })) alive.push({ page: p, count });
-      }
-    }
-  }
 
   // 记录"每个页面是什么时候开始出帧的"（多候选时用它挑：刚出帧的那个 = 刚跳过去的页面）
   const nowTs = Date.now();
-  /*
-   * 4.7) 【输入归属优先 —— 2026/10/15 修复真机事故】
-   *
-   * 事故：手机**停在首页信息流**，框架却把后台的**案例库页**当成前台页，
-   * 于是那一步断言"首页上没有「最新提问」"红得莫名其妙（`ZW_007` / `ZW_008`）。
-   * 根因是多页同时出帧：微信里**每一页都在 60fps**，"谁在屏幕上"用出帧根本分不出来（坑 46）。
-   *
-   * 能分出来的只有**输入归属**：发一次 ESC，只有屏幕上那页会收到 keydown（实测：可见页 1 次、后台页 0 次）。
-   * 所以只要候选不止一个，就先问它 —— 不再等"多候选都还在出帧"那个分支（那分支还要求第二次探测后仍然 ≥2，
-   * 而**一次探测超时**就能让正确的页面提前掉队，正是这次事故的形态）。
-   *
-   * 代价：一次 `dumpsys input_method` + 各页取数 + ESC + 250ms，约 0.5~0.8 秒/次；
-   * **输入法开着时不发 ESC**（ESC 会收键盘，可能打断正在进行的输入）——那时退回原来的判据。
-   */
-  if (candidates.length > 1) {
-    const byInput = await pickByInputOwnership(candidates);
-    if (byInput) {
-      const count = await byInput.locator("*").count().catch(() => 0);
-      log.debug(`前台页判定：按「输入归属」（ESC 只到了这一页；元素数=${count}）`);
-      return byInput;
-    }
-  }
-
+  /* 4.7) 输入归属这条路已经在上面（3.8）先问过一遍了 —— 能定论就不会走到这里；
+   *      走到这里说明它没定论（软键盘开着 / 多页都收到 / 取不到），下面按出帧信息继续判。
+   *      事故背景（2026/10/15 修的坑 46）：多页同时出帧时"谁在屏幕上"用出帧分不出来，
+   *      只有输入归属能分；所以它在两处都是**优先**判据，只是第一次探测挪到了最前面。 */
   const aliveSet = new Set(alive.map((a) => a.page));
   for (const { page: p, count } of alive) {
     if (rafAliveState.get(p) !== true) {
@@ -909,6 +919,25 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
  *   实测**只有显示中的那一页**收到了 keydown；而且 ESC 只收输入法、不改界面（零副作用）。
  */
 const inputProbeReady = new WeakSet();
+/** 输入归属探针的熔断状态（只在当前进程里有效，见 pickByInputOwnership 的说明） */
+let inputProbeStrikes = 0;
+let inputProbeDisabled = false;
+
+/**
+ * 「上一次真的往手机上发输入」的时刻（毫秒）。
+ *
+ * 谁在用：`resolveForegroundPage` 靠它决定探测超时用长的还是短的 ——
+ * **刚点过 = 页面可能正在换，要等够**；空闲 = 屏幕上那页早就稳定了，短等即可。
+ * 谁负责更新：真正发 `input tap/swipe/keyevent` 的地方（android.js 的 tapElement / swipe / goBack、
+ * base_page 的 pullToRefresh）。**新加"会改屏幕"的动作时记得也调一下 noteInputSent()** ——
+ * 漏了不会报错，只会让那一步之后的解析回到"短超时"，在页面切换的窗口里有认错页的风险。
+ */
+let lastInputAtMs = 0;
+
+/** 记一次"刚往手机发了输入"（见 lastInputAtMs 的说明） */
+function noteInputSent() {
+  lastInputAtMs = Date.now();
+}
 
 /** 给一页装"输入到达"监听（每页只装一次） */
 async function installInputProbe(p) {
@@ -935,6 +964,13 @@ async function installInputProbe(p) {
  * @returns {Promise<import('playwright').Page|null>} 恰好一页收到输入就返回它；否则 null（交给原判据）
  */
 async function pickByInputOwnership(candidates) {
+  // 【熔断】实测（2026/10/16）：这台设备上 `input keyevent 111` **送不到任何页面**
+  // （6 个候选页的 keydown 计数全是 0，见 test_case/diagnostic/probe_esc_ownership.js）。
+  // 那么这条探针每次都白花 ~400 ms（dumpsys + ESC + 250ms 等待 + 各页取数）。
+  // 所以连续 3 次"一页都没收到"就**在本次运行里关掉它** —— 不改变任何判据的优先级，
+  // 只是不再为一个已知无效的问题反复掏钱。哪天换了设备/ROM 它又能用，这里会自动恢复
+  //（熔断状态只活在当前进程里）。
+  if (inputProbeDisabled) return null;
   const installed = await Promise.all(candidates.map(installInputProbe));
   if (!installed.some(Boolean)) return null;
 
@@ -976,8 +1012,21 @@ async function pickByInputOwnership(candidates) {
     }
   }
   if (seen.length === 1) {
+    inputProbeStrikes = 0;
     log.debug("前台页输入归属判定：只有一页收到输入（ESC）");
     return seen[0];
+  }
+  if (seen.length === 0) {
+    inputProbeStrikes += 1;
+    if (inputProbeStrikes >= 3) {
+      inputProbeDisabled = true;
+      console.log(
+        '  [提示] 输入归属探针连续 3 次「一页都没收到 ESC」—— 本次运行里不再用它' +
+          "（实测这台设备上 ESC 送不到 webview；它在别的设备/ROM 上可能有用，所以只是停用、没删掉）"
+      );
+    }
+  } else {
+    inputProbeStrikes = 0; // 多页都收到：判据本身是活的，只是这次定不了论
   }
   log.debug(`前台页输入归属判定：${seen.length} 页收到输入（无法据此定论）`);
   return null;
@@ -1205,6 +1254,7 @@ module.exports = {
   pickForegroundCandidate,
   isUsableForegroundCandidate,
   getWxWebviewPage,
+  noteInputSent,
   pickForegroundPage,
   resolveForegroundPage,
   findPageContaining,

@@ -12,7 +12,7 @@
  * 只有需要设备级能力的 switchToWxWebview 以 device 作为第一个参数。
  */
 
-const { getWxWebviewPage } = require("../../common/app_common");
+const { getWxWebviewPage, noteInputSent } = require("../../common/app_common");
 const { _android: android } = require("playwright");
 
 /** 纯等待。不依赖 page 对象：page 被销毁后 page.waitForTimeout 会抛错 */
@@ -177,8 +177,32 @@ async function findClickableAncestor(locator) {
  * @returns {Promise<boolean>}
  */
 async function isKeyboardShown(device) {
-  const out = await device.shell("dumpsys input_method").catch(() => "");
-  return /mInputShown=true|mIsInputViewShown=true/.test(String(out));
+  /*
+   * 【2026/10/16 修正：以前认 mIsInputViewShown，那是个**永远为 true** 的字段】
+   *
+   * 真机对照（`test_case/diagnostic/probe_ime_fields.js`，同一台机器三个状态）：
+   *
+   *   状态            mInputShown   mIsInputViewShown   mImeWindowVis
+   *   键盘关          false         **true（误导）**      0
+   *   键盘开          true          true                3
+   *   ESC 收起来之后   false         **true（误导）**      0
+   *
+   * `mIsInputViewShown` 说的是"输入视图被挂上了"，**不是"现在看得见"** —— 在这台机器上恒为 true。
+   * 代价（我一开始就是这么被骗的）：`pickByInputOwnership` 里那句"软键盘开着就跳过 ESC 探针"
+   * 一直在误判，于是**最便宜、最硬的判据（输入归属）**被整个关掉，每次解析只剩
+   * "并行 RAF 探测 500ms + 单候选复核 1200ms" 那条贵路径 —— 实测单次 1.79 秒、
+   * 一次「回到首页」12.5 秒、一整套用例从 34 项 / 24:48 变成 43 项 / 约 90 分钟。
+   *
+   * 现在按"实测能区分状态"的两个字段判：
+   *   ① `mInputShown`（权威：输入法窗口是否显示）—— 能读到就用它；
+   *   ② 读不到时退到 `mImeWindowVis` 的最低位（bit0 = 可见；实测 开=3、关=0）。
+   */
+  const out = String(await device.shell("dumpsys input_method").catch(() => ""));
+  if (/mInputShown=true/.test(out)) return true;
+  if (/mInputShown=false/.test(out)) return false;
+  const vis = /mImeWindowVis=(\d+)/.exec(out);
+  if (vis) return (parseInt(vis[1], 10) & 1) === 1;
+  return false; // 什么都问不出来：按"没开"处理（与修之前的行为一致 —— 那时正则也匹配不上）
 }
 
 async function hideKeyboardIfShown(device) {
@@ -393,6 +417,9 @@ async function tapElement(device, page, locator) {
 
   await device.shell(`input tap ${m.px} ${m.py}`);
   console.log(`adb tap(${m.px}, ${m.py})  目标=${m.found.selector}  ${m.found.reason}`);
+  // 告诉"前台页解析"：刚往手机上发过输入 —— 页面可能正在换，下一次解析要把探测超时放长
+  // （否则新页还没出帧、旧页还在出帧，就会把旧页当成前台页。2026/10/16 实测过这个坑，见 resolveForegroundPage 第 4 步）
+  noteInputSent();
   return {
     x: m.px,
     y: m.py,
@@ -746,6 +773,7 @@ async function swipeUpEx(page, { duration = 500, startRatio = 0.75, endRatio = 0
     const swipeOnce = async () => {
       const before = await probe();
       await device.shell(`input swipe ${x} ${y1} ${x} ${y2} ${duration}`);
+      noteInputSent(); // 刚滑过：下一次解析前台页要用"页面可能正在动"的超时
       // 等页面滚动动画结束，再确认是否真的滚了
       const deadline = Date.now() + timeout;
       let after = await probe();
@@ -914,6 +942,7 @@ async function goBack(page, { timeout = 10000, selectors = BACK_BUTTON_SELECTORS
       // 小程序对 keyevent 4 的处理和按钮不一定等价，所以仍然要校验结果。
       console.warn(`未找到返回按钮（试过 ${selectors.join(" / ")}），改用安卓返回键 input keyevent 4`);
       await device.shell("input keyevent 4");
+      noteInputSent();
     }
 
     // 校验：内容或元素数发生变化，才算真的返回了
