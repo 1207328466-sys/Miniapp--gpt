@@ -41,6 +41,8 @@ const SEL = {
   topTabs: ".cases-top-tabs",
   topTab: ".cases-top-tab",
   topBanner: ".cases-top-banner",
+  // 需求 713556982：「搜索框下移出导航栏、作为单独的一行」—— 判定要量"搜索行"的 y
+  searchRow: ".nav-search-row",
   bizTabs: ".cases-biz-tabs-wrap",
   categoryRow: ".cases-category-row",
   categoryItem: ".cases-category-item",
@@ -213,6 +215,13 @@ async function readList(page) {
  *      —— 断言：每张卡片的右下角有**复制图标**（class 含 icon-base-fuzhi）+ 一个数字；
  *         并且整页**找不到评论图标**（class 里带 comment/pinglun 的都被视为"评论图标还在"）
  *   3. 页面上确实有案例卡片（否则前面两条会"因为没东西可查"而假通过）
+ *
+ * 另外把**需求 713556982（压铸护航和案例库整合）**里跟这一页有关的两条也一起验了
+ *（同一个页面、同一次读取，没必要再开一条用例）：
+ *   4. 「页面顶部分为**仿真案例库（默认）**和压铸护航服务两个 tab」—— 断言 `.cases-top-tab` 恰好 2 个、
+ *      且带 `active` 的那个是「仿真案例库」
+ *   5. 「原仿真案例库的**搜索框下移出导航栏，作为单独的一行**」—— 几何断言：搜索行（`.nav-search-row`）
+ *      的 y **在顶部 tab 栏的下边缘之下**（实测 tab 栏底 83、搜索行 y=86）。"单独一行"不能只看存在。
  */
 async function assertListRules(page, kwargs, ctx) {
   const fg = (await findCasePage(page)) || (await base.foreground(page));
@@ -230,9 +239,20 @@ async function assertListRules(page, kwargs, ctx) {
         bannerY: box(document.querySelector(sel.topBanner)),
         categoryY: box(document.querySelector(sel.categoryRow)),
         commenty: Array.from(new Set(commenty)).slice(0, 5),
+        // 需求 713556982 的三样：顶部 tab 的个数/选中态、tab 栏下边缘、搜索行的 y
+        topTabCount: document.querySelectorAll(sel.topTab).length,
+        activeTopTab: (() => {
+          const el = document.querySelector(sel.topTab + ".active");
+          return el ? String(el.innerText || "").replace(/\s+/g, " ").trim() : "";
+        })(),
+        tabsBottom: (() => {
+          const el = document.querySelector(sel.topTabs);
+          return el ? Math.round(el.getBoundingClientRect().bottom) : null;
+        })(),
+        searchRowY: box(document.querySelector(sel.searchRow)),
       };
     },
-    { topBanner: SEL.topBanner, categoryRow: SEL.categoryRow }
+    { topBanner: SEL.topBanner, categoryRow: SEL.categoryRow, topTab: SEL.topTab, topTabs: SEL.topTabs, searchRow: SEL.searchRow }
   );
 
   if (geo.bannerY === null) {
@@ -259,6 +279,26 @@ async function assertListRules(page, kwargs, ctx) {
   });
   if (geo.commenty.length) {
     problems.push(`页面上还有"评论"相关的图标/元素（${JSON.stringify(geo.commenty)}）—— 需求要求改成复制图标+复制数`);
+  }
+
+  // ---- 需求 713556982（压铸护航和案例库整合）----
+  if (geo.topTabCount !== 2) {
+    problems.push(
+      `顶部 tab 应当是 2 个（仿真案例库 / 压铸护航服务），实测 ${geo.topTabCount} 个 —— 需求 713556982 第 2 条`
+    );
+  }
+  if (geo.activeTopTab !== "仿真案例库") {
+    problems.push(
+      `顶部 tab 默认应当是「仿真案例库」，实测选中的是 ${JSON.stringify(geo.activeTopTab)} —— 需求 713556982 第 2 条`
+    );
+  }
+  if (geo.searchRowY === null) {
+    problems.push("找不到搜索行（.nav-search-row）—— 需求 713556982 要求搜索框下移成单独一行");
+  } else if (geo.tabsBottom !== null && geo.searchRowY < geo.tabsBottom - 2) {
+    problems.push(
+      `搜索框没有在 tab 栏下方单独成行：搜索行 y=${geo.searchRowY}，顶部 tab 栏下边缘 y=${geo.tabsBottom} —— ` +
+        `需求 713556982 第 2 条要求「搜索框下移出导航栏，作为单独的一行」`
+    );
   }
 
   if (problems.length) {
