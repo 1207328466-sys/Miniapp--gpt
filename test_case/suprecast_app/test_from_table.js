@@ -553,6 +553,89 @@ const HANDLERS = {
     run: (page, _p1, _p2, ctx) => caseLibrary.assertListRules(page, {}, ctx),
   },
 
+  检查案例库复制数对账: {
+    // 缺陷 713453275「复制数的查看无数据返回」的回归断言（2026/10/16 补）。
+    // 为什么不能只断言"卡片上有数字"：源码里是 `copyCount ?? 0`（case-list/index.tsx），
+    // **永远有个数字** —— 那种断言必然假绿。所以这里拿**库里的 copy_count** 对账：
+    // 卡片上显示的数必须等于库里那条案例的 copy_count。
+    // 参数1（可不填）= 最多比几张（默认 3）。
+    run: async (page, maxCards) => {
+      const raw = String(maxCards == null ? "" : maxCards).trim();
+      const want = raw === "" ? 3 : Number(raw);
+      if (!Number.isInteger(want) || want < 1 || want > 20) {
+        throw new Error(
+          `「检查案例库复制数对账」的参数1（最多比几张）只能填 1~20 的整数（留空=3），现在填的是 ${JSON.stringify(maxCards)}`
+        );
+      }
+      page = await caseLibrary.ensureOn(page);
+      const cards = await caseLibrary.readList(page);
+      if (!cards.length) {
+        throw new Error(`案例库里一张卡片都没读到（${caseLibrary.SEL.card}）—— 这条断言没法做，不是通过`);
+      }
+
+      // 只挑"有标题 + 复制数是个数字"的卡（别的形态的卡跳过，别硬比）
+      const picked = cards.filter((c) => c.title && /^\d+$/.test(c.count)).slice(0, want);
+      if (!picked.length) {
+        throw new Error(
+          `读到的 ${cards.length} 张卡片里，一张"有标题且复制数是数字"的都没有 —— 这条断言没法做，不是通过`
+        );
+      }
+
+      const out = runTool("caseCopyCounts", ["--titles", picked.map((c) => c.title).join(",")]);
+      if (dbUnreachable(out)) throw dbUnreachableError("「检查案例库复制数对账」");
+      const m = out.match(/\[CASE_COPY\][^\n]*counts=(\{.*?\}) dup=(\[.*?\])/);
+      if (!m) {
+        throw new Error(
+          `读不到库里那份复制数（工具输出里没有 [CASE_COPY] ... counts={} dup=[]）。\n  输出末尾：${out.trim().slice(-200)}`
+        );
+      }
+      let counts = {};
+      let dup = [];
+      try {
+        counts = JSON.parse(m[1]);
+        dup = JSON.parse(m[2]);
+      } catch (e) {
+        throw new Error(`库里那份复制数解析失败：${e.message}；原文：${m[1]}`);
+      }
+      console.log(`  库里（上架未删）拿到 ${Object.keys(counts).length} 条唯一标题的复制数；重名 ${dup.length} 个`);
+
+      const problems = [];
+      let compared = 0;
+      for (const c of picked) {
+        if (dup.includes(c.title)) {
+          console.log(`  跳过「${c.title}」：库里同名案例不止一条，无法确定卡片对的是哪一条`);
+          continue;
+        }
+        if (!(c.title in counts)) {
+          problems.push(`卡片「${c.title}」在上架未删的案例里找不到（界面上有、库里没有）`);
+          continue;
+        }
+        compared += 1;
+        if (Number(c.count) !== Number(counts[c.title])) {
+          problems.push(
+            `卡片「${c.title}」显示的复制数是 ${c.count}，库里 copy_count=${counts[c.title]}` +
+              `（缺陷 713453275：这两个数必须一致）`
+          );
+        }
+      }
+      if (compared < 1) {
+        throw new Error(
+          "一张都没能对上账（全被「库里找不到」或「重名」跳过了）—— 这条断言等于没做，不能当通过。\n" +
+            "  挑中的卡片：" + JSON.stringify(picked.map((c) => [c.title, c.count]))
+        );
+      }
+      if (problems.length) {
+        throw new Error("案例库列表的复制数与库里对不上（缺陷 713453275）：\n  - " + problems.join("\n  - "));
+      }
+      console.log(
+        `断言通过: ${compared} 张卡片的复制数与库里 copy_count 一致（` +
+          picked.map((c) => `「${c.title}」=${c.count}`).join("，") +
+          `）`
+      );
+      return page;
+    },
+  },
+
   打开第一个案例: {
     run: (page) => caseLibrary.openFirstCase(page),
   },

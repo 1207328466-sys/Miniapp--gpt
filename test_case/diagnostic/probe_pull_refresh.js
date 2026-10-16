@@ -30,6 +30,7 @@
 
 const { appTest, resolveForegroundPage } = require("../../common/app_common");
 const { getDevice } = require("../../app_sub_function/suprecast_app/android");
+const pages = require("../../app_sub_function/suprecast_app/pages");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -67,6 +68,11 @@ async function snap(fg, label) {
 
 async function probe(page) {
   const device = await getDevice();
+  // `--page case`：先打开案例库再测（下拉刷新在那一页的表现跟首页不一样，2026/10/16 遇到超时）
+  if (process.argv.includes("--page") && (process.argv[process.argv.indexOf("--page") + 1] || "") === "case") {
+    page = await pages.caseLibrary.ensureOn(page);
+    console.log("已打开案例库（--page case）");
+  }
   const fg = await resolveForegroundPage(page);
   const argv0 = process.argv.slice(2);
   const wi = argv0.findIndex((a) => a.replace(/^--/, "").split("=")[0] === "watch");
@@ -79,6 +85,31 @@ async function probe(page) {
   console.log(`屏幕（设备像素）${screen.w}x${screen.h}，CSS 视口高 ${screen.cssH}`);
 
   await snap(fg, "下拉之前");
+
+  // `--scrollinfo`：把"能滚的容器"各自滚到哪儿了打出来（判断"是不是真的到顶了"）
+  if (process.argv.includes("--scrollinfo")) {
+    const info = await fg.evaluate(() => {
+      const out = [];
+      document.querySelectorAll("div, wx-view, wx-scroll-view").forEach((el) => {
+        const over = el.scrollHeight - el.clientHeight;
+        if (over > 20) {
+          out.push({
+            cls: String(el.getAttribute("class") || "").slice(0, 40),
+            top: Math.round(el.scrollTop),
+            sh: el.scrollHeight,
+            ch: el.clientHeight,
+          });
+        }
+      });
+      return out.sort((a, b) => b.sh - b.ch - (a.sh - a.ch));
+    });
+    console.log(`能滚的容器 ${info.length} 个（按可滚距离排序）：`);
+    info.slice(0, 8).forEach((r) => {
+      console.log(
+        `   scrollTop=${String(r.top).padStart(6)}  可滚 ${r.sh - r.ch}px  class=${JSON.stringify(r.cls)}`
+      );
+    });
+  }
 
   /**
    * 采样模式：每 200ms 读一次"刷新中"的判据，用来定"刷新开始/结束"到底看什么。
@@ -107,15 +138,23 @@ async function probe(page) {
         };
       });
     const x = Math.round(screen.w / 2);
-    const y1 = Math.round(screen.h * 0.34);
-    const y2 = Math.round(screen.h * 0.7);
+    // 起手/落点比例可以调：某些页面（案例库那种上面有吸顶分类区的）在 0.34 屏高起手会被挡住
+    const argvW = process.argv.slice(2);
+    const num = (name, def) => {
+      const i = argvW.findIndex((a) => a.replace(/^--/, "").split("=")[0] === name);
+      const v = i >= 0 ? (argvW[i].includes("=") ? argvW[i].split("=")[1] : argvW[i + 1]) : def;
+      return Number(v == null || v === "" ? def : v);
+    };
+    const y1 = Math.round(screen.h * num("from", 0.34));
+    const y2 = Math.round(screen.h * num("to", 0.7));
     const t0 = Date.now();
     let fired = false;
     while (Date.now() - t0 < watchMs) {
       const t = Date.now() - t0;
+      const msG = num("ms", 400);
       if (!fired && t >= 1200) {
-        console.log(`  t=${t}ms  >>> 发手势 input swipe ${x} ${y1} ${x} ${y2} 400`);
-        device.shell(`input swipe ${x} ${y1} ${x} ${y2} 400`).catch(() => {});
+        console.log(`  t=${t}ms  >>> 发手势 input swipe ${x} ${y1} ${x} ${y2} ${msG}`);
+        device.shell(`input swipe ${x} ${y1} ${x} ${y2} ${msG}`).catch(() => {});
         fired = true;
       }
       const s = await read();

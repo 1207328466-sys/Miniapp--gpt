@@ -19,6 +19,8 @@ const { execFileSync } = require("child_process");
 const TOOLS = {
   cleanup: path.join(__dirname, "..", "tools", "quiz_data_cleanup.py"),
   caseCopy: path.join(__dirname, "..", "tools", "case_copy_reset.py"),
+  // 案例「复制数」对账（只读）——缺陷 713453275 的回归用例要用
+  caseCopyCounts: path.join(__dirname, "..", "tools", "case_copy_counts.py"),
   courseList: path.join(__dirname, "..", "tools", "course_list_report.py"),
   quizScore: path.join(__dirname, "..", "tools", "quiz_score_report.py"),
   quizAnswerKey: path.join(__dirname, "..", "tools", "quiz_answer_key_report.py"),

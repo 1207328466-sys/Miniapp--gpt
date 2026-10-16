@@ -70,7 +70,16 @@ const REFRESHER_LOADING = '[class*="blink-anim"]';
 
 /**
  * 下拉手势的两个点 —— **纯函数**，方便离线自检。
- * 起点在内容区偏上（0.34 屏高），往下拖到 0.70 屏高（实测这个距离稳稳越过刷新阈值）。
+ *
+ * 口径：**0.25 屏高 → 0.75 屏高**（跟框架里滑动用的那对比例一致，见 `android.swipeToEdge`）。
+ *
+ * 【为什么是这两个数（2026/10/16 实测校准）】一开始用的是 0.34 → 0.70：
+ *   · 首页信息流上能刷（那页比较宽松）；
+ *   · 但**案例库上完全喂不进去** —— 库里的复制数从 14 改成 15，界面一直显示 14；
+ *     换成 0.25 → 0.75、800ms 之后一次就刷出来了（界面变 15）。
+ *   同一页上连续采样的证据（`probe_refresher_signal.js`）：下拉过程中刷新容器 y 从 -632 走到 -462、
+ *   `blink-anim` 出现 3 个点、`eco-loading-status` 摘掉 `is-hidden` —— 三个信号齐全，
+ *   说明"手势到位了"，之前只是**起手点落在一个不吃下拉的区域**。
  * @param {{w:number,h:number}} screen 设备像素尺寸
  * @returns {{x:number,y1:number,y2:number,ms:number}}
  */
@@ -78,9 +87,9 @@ function refreshSwipePoints(screen) {
   const w = Number(screen && screen.w) || 0;
   const h = Number(screen && screen.h) || 0;
   const x = Math.round(w / 2);
-  const y1 = Math.round(h * 0.34);
-  const y2 = Math.min(Math.round(h * 0.7), Math.max(y1 + 200, h - 10));
-  return { x, y1, y2, ms: 400 };
+  const y1 = Math.round(h * 0.25);
+  const y2 = Math.min(Math.round(h * 0.75), Math.max(y1 + 200, h - 10));
+  return { x, y1, y2, ms: 800 };
 }
 
 /** 读一眼下拉刷新的现场：有没有 refresher、它现在在什么位置、是不是在转圈 */
@@ -124,7 +133,7 @@ async function readRefresher(p) {
  * @param {{timeout?: number, startTimeout?: number, attempts?: number}} [options]
  * @returns {Promise<import('playwright').Page>}
  */
-async function pullToRefresh(page, { timeout = 15000, startTimeout = 2500, attempts = 2 } = {}) {
+async function pullToRefresh(page, { timeout = 15000, startTimeout = 1500, attempts = 5 } = {}) {
   const fg = await foreground(page);
   const before = await readRefresher(fg);
   if (!before.hasRefresher) {
@@ -145,28 +154,46 @@ async function pullToRefresh(page, { timeout = 15000, startTimeout = 2500, attem
     await device.shell(`input swipe ${g.x} ${g.y1} ${g.x} ${g.y2} ${g.ms}`);
     noteInputSent(); // 刚下拉过：下一次解析前台页要用"页面可能正在动"的超时
 
-    // ① 等"真的被拉动/开始转圈"（页面不在顶部时，这一下只是把它滚回顶部）
+    /*
+     * ① 等"真的被拉动/开始转圈"。
+     *
+     * ⚠️ 两个坑（2026/10/16 都在真机上碰到过，第一个差点让这条判据变成假的）：
+     *   · **"容器位置变了"不等于"刷新了"**：把列表往上滚，容器 y 也会变；如果只认这个，
+     *     就会报"刷新完成"而其实什么都没刷（在案例库那页真踩到了：它那一下只是把列表滚到顶，
+     *     容器 y 从 -2726 变到 -632 就稳住了，于是被判成"刷新完成"）。
+     *     **所以"开始刷新"的唯一证据是：转圈的点出现了（`blink-anim`）**。
+     *   · **页面可能不在顶部**（列表被上一条用例滚下去了）—— 那一下只是把它滚回顶部，
+     *     所以这里允许"多试几次"，一次不成就再拉一次，别一次不成就报错。
+     */
     const started = await waitUntil(
       async () => {
         const s = await readRefresher(fg);
-        return s.loading > 0 || (s.y !== null && Math.abs(s.y - before.y) > 8);
+        return s.loading > 0;
       },
       { timeout: startTimeout, interval: 120 }
     );
     if (!started) {
       console.log(
-        `  [提示] 第 ${attempt}/${attempts} 次下拉没看出刷新迹象（页面可能不在顶部，这一下只是滚回顶部）`
+        `  [提示] 第 ${attempt}/${attempts} 次下拉没看出刷新迹象（页面多半不在顶部，这一下只是在把它滚回顶部）`
       );
       continue;
     }
 
-    // ② 等"刷完"：转圈的点没了、容器位置回到起始值，连续两次成立才算稳
+    /*
+     * ② 等"刷完"：转圈的点没了 **+ 容器位置连续两次不动**。
+     *
+     * 这里**不能**要求"回到下拉前那一刻的位置"：页面是滚着的，下拉前后基准根本不是一个
+     * （实测：案例库列表滚到 -2726 时下拉，回弹之后停在 -1971…-10 这种位置，
+     * 死等原基准会 15 秒超时 —— 首页那次"回到 -674"只是因为它本来就在顶部）。
+     */
+    let last = null;
     let stable = 0;
     const done = await waitUntil(
       async () => {
         const s = await readRefresher(fg);
-        const back = s.loading === 0 && (s.y === null || Math.abs(s.y - before.y) <= 8);
-        stable = back ? stable + 1 : 0;
+        const still = s.loading === 0 && last !== null && Math.abs(s.y - last) <= 4;
+        last = s.y;
+        stable = still ? stable + 1 : 0;
         return stable >= 2;
       },
       { timeout, interval: 150 }
@@ -177,14 +204,15 @@ async function pullToRefresh(page, { timeout = 15000, startTimeout = 2500, attem
           `  最后读到：${JSON.stringify(await readRefresher(fg))}（loading>0 = 还在转圈）`
       );
     }
-    console.log(`  下拉刷新完成（第 ${attempt} 次触发，容器 y=${before.y} -> 回到原位，转圈已停）`);
+    console.log(`  下拉刷新完成（第 ${attempt} 次下拉触发的；转圈已停、位置稳定在 y=${last}）`);
     return fg;
   }
 
   throw new Error(
-    `下拉了 ${attempts} 次都没触发刷新（每次等 ${startTimeout}ms 没看到"被拉动/转圈"）。\n` +
-      `  两种常见原因：① 这一页的下拉刷新被关掉了（源码 refresherEnabled）；\n` +
-      `  ② 手势落点不对（现在是 x=${g.x}, ${g.y1} -> ${g.y2}）—— 手机上手动下拉一次试试，能刷就是落点问题。`
+    `下拉了 ${attempts} 次都没触发刷新（每次等 ${startTimeout}ms 没看到"被往下拉/转圈"）。\n` +
+      `  三种常见原因：① 这一页的下拉刷新被关掉了（源码 refresherEnabled）；\n` +
+      `  ② 手势落点不对（现在是 x=${g.x}, ${g.y1} -> ${g.y2}）—— 手机上手动下拉一次试试，能刷就是落点问题；\n` +
+      `  ③ 列表被滚得太深，${attempts} 次都还只够滚回顶部 —— 先加一步「滑动」（方向=下）把它滚到顶，再下拉。`
   );
 }
 
