@@ -36,6 +36,9 @@
       解析知识库清单 / 整理拉取结果 / 算「新增·消失·状态变化」—— 这三行是给人看的结论，不能算错
   19. `tools/scan_anchors.py --check-doc`        文档里教的定位锚点，**源码里是不是真的有**
       （owner 2026/10/15 给了小程序前端源码；文档教错锚点比不教更坏。源码目录不在时跳过，不算失败）
+  20. `test_case/diagnostic/selftest_foreground_dead.js`  小程序 WebView 没了时**要立刻报错**
+      （2026/10/16 真机踩到：设备掉线后框架拿着死页面重试，**一个步骤耗掉 19 分钟**才报错；现在直接抛，
+      message 里说清"这是环境问题，重开小程序再跑"。反向那条同时钉住"别的解析失败仍然沿用当前 page"）
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -160,6 +163,10 @@ def main():
     run(
         "scan_anchors --check-doc（文档里的锚点在源码里是真的吗）",
         [sys.executable, os.path.join("tools", "scan_anchors.py"), "--check-doc"],
+    )
+    run(
+        "selftest-foreground-dead（WebView 没了要立刻报错）",
+        ["node", os.path.join("test_case", "diagnostic", "selftest_foreground_dead.js")],
     )
 
     print("\n" + "=" * 60)

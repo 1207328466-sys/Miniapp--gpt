@@ -323,11 +323,35 @@ async function openFirstCase(page, { timeout = 15000 } = {}) {
   const list = await readList(page);
   if (!list.length) throw await base.notFound("案例卡片（列表是空的，没法点进详情页）", await base.foreground(page));
 
-  const fg = await base.foreground(page);
-  await base.tapLocator(fg, fg.locator(SEL.card).first(), `第一张案例卡片「${list[0].title}」`);
-  const ok = await base.waitUntil(async () => (await base.countOf(await base.foreground(page), SEL.detailPage)) > 0, {
-    timeout,
-  });
+  /*
+   * 【点 + 验证 + 重试一次 —— 2026/10/16 补】
+   *
+   * 真机证据：一天里"点第一张案例卡片后没进详情页"**偶发两次**（`.js` 的案例评论用例、
+   * 以及 ZW_027 第一次跑），两次的共同点是紧接着之前有过写数据/页面重渲染 ——
+   * 失败截图里人还在列表页（页面没坏），失败信息里 `page.screenshot` 还超时了 10 秒
+   *（说明那一会儿 webview 正忙）。单条复跑都过。
+   *
+   * 这种情况不该让整条用例红：跟 `switchToBottomTab` 一个口径 ——
+   * **再点一次并重新验证**（每次都重新取坐标，不闭眼重复同一个坐标）。
+   * 两次都不成才报错，错误信息里带上当时的页面文字。
+   */
+  let ok = false;
+  for (let attempt = 1; attempt <= 2 && !ok; attempt++) {
+    const fg = await base.foreground(page);
+    const cur = await readList(fg);
+    if (!cur.length) {
+      // 列表在这期间空了（例如页面重新渲染中）：再等一下重读一次
+      await base.sleep(1200);
+      continue;
+    }
+    await base.tapLocator(fg, fg.locator(SEL.card).first(), `第一张案例卡片「${cur[0].title}」${attempt > 1 ? "（重试）" : ""}`);
+    ok = await base.waitUntil(async () => (await base.countOf(await base.foreground(page), SEL.detailPage)) > 0, {
+      timeout,
+    });
+    if (!ok && attempt < 2) {
+      console.log("  [自愈] 点了第一张案例卡片但详情页没出现（偶发的一次点击不生效）—— 重新取坐标再点一次");
+    }
+  }
   if (!ok) {
     const now = await base.foreground(page);
     throw new Error(

@@ -32,7 +32,7 @@ const {
   waitForPageContaining,
   noteInputSent,
 } = require("../../../common/app_common");
-const { getDevice, tapElement, goBack } = require("../android");
+const { getDevice, tapElement, goBack, swipeToEdge } = require("../android");
 
 /**
  * 实测的底部 tab 文案。
@@ -151,6 +151,23 @@ async function pullToRefresh(page, { timeout = 15000, startTimeout = 1500, attem
   const device = await getDevice();
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    /*
+     * 第 2 次之前先**把它滚到顶部**。
+     *
+     * 【为什么要这一步】列表被滚得很深时，"下拉"只是在把它滚回来 —— 一次拖约半个屏，
+     * 案例库那种 30+ 张卡的列表要拖好几次才到顶，`attempts` 用完都还没刷出来。
+     * 真机证据：2026/10/16 的全量里 ZW_035 就是这么红的（上一条用例 `打开案例「亲亲」`
+     * 往下翻了 6 屏），而单独跑它是过的。
+     * 用 `swipeToEdge(dir:"下")`（框架里"滑到页面不动为止"那套，用例天天在用）比"多拖几次"更靠得住：
+     * 它自己会重复滑、并按"页面有没有位移"判断有没有到顶。
+     */
+    if (attempt === 2) {
+      console.log("  [提示] 先把它滚到顶部（下拉刷新的前提是列表在顶部；用框架的「滑动=滑到不动」同一套手势）");
+      await swipeToEdge(fg, { dir: "下", max: 4 }).catch((e) => {
+        console.log(`  [提示] 滚回顶部时出错（${e.message.split("\n")[0]}）—— 继续试着下拉`);
+      });
+      await sleep(600);
+    }
     await device.shell(`input swipe ${g.x} ${g.y1} ${g.x} ${g.y2} ${g.ms}`);
     noteInputSent(); // 刚下拉过：下一次解析前台页要用"页面可能正在动"的超时
 
@@ -209,10 +226,11 @@ async function pullToRefresh(page, { timeout = 15000, startTimeout = 1500, attem
   }
 
   throw new Error(
-    `下拉了 ${attempts} 次都没触发刷新（每次等 ${startTimeout}ms 没看到"被往下拉/转圈"）。\n` +
+    `下拉了 ${attempts} 次都没触发刷新（每次等 ${startTimeout}ms，判据是"转圈的点出现"）。\n` +
+      `  已经试过：第 2 次之前先按框架的「滑动=滑到不动」把它滚到顶部。\n` +
       `  三种常见原因：① 这一页的下拉刷新被关掉了（源码 refresherEnabled）；\n` +
       `  ② 手势落点不对（现在是 x=${g.x}, ${g.y1} -> ${g.y2}）—— 手机上手动下拉一次试试，能刷就是落点问题；\n` +
-      `  ③ 列表被滚得太深，${attempts} 次都还只够滚回顶部 —— 先加一步「滑动」（方向=下）把它滚到顶，再下拉。`
+      `  ③ 这页的刷新指示器是隐形的（转圈的点不出现）—— 那样这条判据认不出来，得换判据（别硬等）。`
   );
 }
 
@@ -229,7 +247,29 @@ async function foreground(page) {
   try {
     return await resolveForegroundPage(page);
   } catch (e) {
-    console.log(`  [提示] 解析前台页失败，沿用当前 page: ${e.message.split("\n")[0]}`);
+    const msg = e.message.split("\n")[0];
+    /*
+     * 【整个小程序没了 ≠ 这一页认不出来 —— 2026/10/16 补】
+     *
+     * 真机证据：一次跑批中设备/WebView 掉了（日志里是 `androidDevice.shell: Device is closed`、
+     * `Target page, context or browser has been closed`）。这时拿着一个**已经死掉的 page**
+     * 继续"沿用当前 page"是没意义的：后面每一步都会各等它自己的超时，
+     * 于是**一个步骤耗掉 19 分钟**才报出「context 里没有任何可用页面」。
+     *
+     * 所以这两种情况直接抛：
+     *   · `context 里没有任何可用页面` —— 一个活着的 webview 都没有了；
+     *   · message 里明说 page/context/device 已关闭。
+     * 其它"解析失败"（例如多候选一时分不清）仍然沿用当前 page —— 那是原来的设计，不动。
+     */
+    if (/没有任何可用页面|has been closed|Device is closed|已关闭/i.test(msg)) {
+      throw new Error(
+        `小程序 WebView 已经不在了（${msg}）。\n` +
+          `  这属于**环境问题**（设备掉线 / 小程序被关掉 / 微信重启了 webview），不是用例写错了：\n` +
+          `  在手机上重新打开小程序，再跑一次即可。\n` +
+          `  （这条判据是 2026/10/16 加的：以前会拿着死页面一路重试，一个步骤能耗掉 19 分钟。）`
+      );
+    }
+    console.log(`  [提示] 解析前台页失败，沿用当前 page: ${msg}`);
     return page;
   }
 }
