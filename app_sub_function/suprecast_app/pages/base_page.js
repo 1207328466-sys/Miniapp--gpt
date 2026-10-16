@@ -540,6 +540,71 @@ async function elementInViewport(page, selector) {
   }, s);
 }
 
+/**
+ * 量一个**放文字的元素**渲染了几行 —— 只读、不点不改。
+ *
+ * 【怎么量的】把元素内容包进 `Range`，**每一行文字会给出一个矩形**（`getClientRects()`），
+ * 数矩形个数就是行数。这是唯一在真机上站得住的量法：
+ *   · 用"高 ÷ 行高"不行 —— 实测很多元素算出来的 `line-height` 是 `normal`，
+ *     读出来是 `NaN`（`.case-list-card-username` 高 12、line-height 读作 0），除法直接崩；
+ *   · 用"数换行符"更不行 —— 文字是被 CSS 折行的，DOM 里没有换行符。
+ *
+ * ⚠️ **只对"放文字的叶子元素"有意义**（例如 `.case-list-card-title`、`.escort-case-desc`）。
+ * 传整页容器进来会把**所有后代**的行数都数进去（实测 `cases-page` 数出 75 个矩形）——
+ * 所以这个函数会顺手把元素自己的 `line-height` 报出来，**读到 normal/0 就说明它多半是容器**。
+ *
+ * 【为什么要它】缺陷 713587136「案例介绍卡片中案例描述显示的行数错误 —— 应该显示 1 行，实际显示了两行」，
+ * 要断言的正是"几行"。配套动作见表格里的「检查元素行数」。
+ *
+ * @param {import('playwright').Page} page
+ * @param {string} selector 选择器（建议指向放文字的元素，别指向容器）
+ * @param {number} index 命中多个时取第几个（默认 1）
+ * @returns {Promise<{found:boolean, lines?:number, height?:number, lineHeight?:string, whiteSpace?:string, text?:string}>}
+ */
+async function elementLines(page, selector, index = 1) {
+  const s = rejectIdSelector(selector);
+  const fg = await foreground(page);
+  // 用 Locator 而不是 document.querySelectorAll：这样 `:has-text("…")` 这类 **Playwright 的写法**也能用
+  // （它是选择器引擎，不是 CSS —— `querySelectorAll` 直接报 "not a valid selector"，2026/10/16 真机踩到）
+  const loc = fg.locator(s);
+  const count = await loc.count().catch(() => 0);
+  if (!count) return { found: false, count: 0 };
+  const info = await loc
+    .nth(Math.max(0, index - 1))
+    .evaluate((el) => {
+      const norm = (x) => String(x || "").replace(/\s+/g, " ").trim();
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const rects = Array.from(range.getClientRects()).filter((x) => x.height > 0);
+      /*
+       * 【关键：按"行的顶边"归并】
+       * 直接把 rects 个数当行数是错的 —— 一个 `<Text>凝固应力</Text>` 会被数成 **2**：
+       * 外层元素框一个矩形、里面的文本节点又一个矩形（顶边几乎相同）。
+       * 真机实测（2026/10/16）：`.case-list-card-title` 高 16、line-height 16px = **明明一行**，
+       * 直接数却得到 2。所以这里把"顶边相差不到半行高"的矩形算作同一行。
+       */
+      const lineHeight = parseFloat(cs.lineHeight) || 0;
+      const tol = Math.max(2, (lineHeight || r.height) * 0.5);
+      const tops = [];
+      for (const x of rects.sort((a, b) => a.top - b.top)) {
+        if (!tops.some((t) => Math.abs(t - x.top) <= tol)) tops.push(x.top);
+      }
+      return {
+        found: true,
+        lines: tops.length,
+        rects: rects.length,
+        height: Math.round(r.height),
+        lineHeight: cs.lineHeight,
+        whiteSpace: cs.whiteSpace,
+        text: norm(el.innerText).slice(0, 40),
+      };
+    })
+    .catch((e) => ({ found: false, error: e.message.split("\n")[0] }));
+  return { count, ...info };
+}
+
 /** 统一的"找不到"错误：只报"找不到元素"没法定位，必须把页面上有什么一起带上 */
 async function notFound(what, page, selector) {
   return new Error(
@@ -1041,6 +1106,7 @@ module.exports = {
   countOfText,
   notFound,
   elementInViewport,
+  elementLines,
   parseIndex,
   parsePointsFromText,
   parseScrollSpec,

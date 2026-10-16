@@ -735,7 +735,16 @@ async function resolveForegroundPage(page, { timeout = 500, expectedAppId = null
   // 【自适应超时】1.8 秒内有过真实输入（点/滑）就把探测超时放长（页面正在换），
   // 否则用短超时（屏幕上那页 16ms 内就出帧，短的只是在等冻结页放弃）。详见下面第 4 步的说明。
   const sinceInput = Date.now() - lastInputAtMs;
-  const careful = sinceInput < 1800;
+  /*
+   * ⚠️ `lastInputAtMs === 0` = **这个进程还一次输入都没发过**（刚起来做第一步）。
+   * 那时我们对现场一无所知：手机可能停在一个二级页上、页面也没在动画，
+   * 用 250ms 去探有可能"屏幕上那页没探到、却把背景页当成了前台页"——
+   * 真机踩到过一次（ZW_036 开跑时手机上停着案例详情页带评论面板，
+   * 框架却在一页**带底部 tab 栏**的页面上点了 tab，页面上什么都没发生）。
+   * 所以第一枪一律按"等够"来（进程内第一条输入之后，就恢复自适应）。
+   */
+  const firstResolve = lastInputAtMs === 0;
+  const careful = firstResolve || sinceInput < 1800;
   const probeTimeout = careful ? 1700 : 250;
   if (dbg && careful) console.log(`    [前台页计时] 距上次输入 ${sinceInput}ms -> 用"刚点过"的超时 ${probeTimeout}ms`);
   // 【安全阀】期望的 appid：优先用显式传入的，其次用进程级默认值（appTest 解析过一次）

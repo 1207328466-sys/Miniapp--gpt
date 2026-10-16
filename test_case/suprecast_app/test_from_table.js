@@ -446,6 +446,57 @@ const HANDLERS = {
     },
   },
 
+  检查元素行数: {
+    /*
+     * 缺陷 713587136「案例介绍卡片中案例描述显示的行数错误 —— 应该显示 1 行，实际显示了两行」
+     * 要的判据就是"这个文字元素渲染了几行"（2026/10/16 补的能力）。
+     *
+     * 参数1 = 选择器（**指向放文字的元素**，例如 .case-list-card-title / .escort-case-desc），
+     * 参数2 = 期望**最多**几行。
+     *
+     * 口径：**命中几个就查几个**（例如 .case-list-card-title 会把一屏卡片全量一遍），
+     * 只要有一个超了就算失败，并把超的那几个连文字一起打出来 —— 只查第 1 个的话，
+     * "第 3 张卡片标题换行顶到三行"这种问题会被漏掉。
+     * 想只查某一个：把选择器写具体（`:has-text("…")`、`:nth-match(...)` 都能用 ——
+     * 它是 Playwright 的选择器引擎，不只是 CSS）。
+     */
+    run: async (page, selector, maxLines) => {
+      const raw = String(maxLines == null ? "" : maxLines).trim();
+      const want = Number(raw);
+      if (!raw || !Number.isInteger(want) || want < 1 || want > 50) {
+        throw new Error(
+          `「检查元素行数」的参数2 是"期望最多几行"，要填 1~50 的整数（例如 1、2），现在填的是 ${JSON.stringify(maxLines)}`
+        );
+      }
+      const first = await base.elementLines(page, selector, 1);
+      const fg = await base.foreground(page);
+      if (!first.found) throw await base.notFound(`${selector}（要量它渲染了几行）`, fg, selector);
+
+      const offenders = [];
+      const seen = [];
+      for (let i = 1; i <= first.count; i++) {
+        const r = await base.elementLines(page, selector, i);
+        if (!r.found) continue;
+        if (i <= 5) seen.push(`${r.lines} 行`);
+        if (r.lines > want) {
+          offenders.push(`${r.lines} 行（高=${r.height}、行高=${r.lineHeight}）文字=${JSON.stringify(r.text)}`);
+        }
+      }
+      if (offenders.length) {
+        throw new Error(
+          `断言失败: ${selector} 里有 ${offenders.length} 个元素超过了 ${want} 行：\n  - ` +
+            offenders.slice(0, 5).join("\n  - ") +
+            `\n  （命中 ${first.count} 个；前 5 个分别是 ${seen.join("、")}）\n` +
+            `  量法：把元素内容包进 Range，按"行的顶边"去重后数矩形个数（不依赖 line-height —— 很多元素是 normal）。`
+        );
+      }
+      console.log(
+        `断言通过: ${selector} 命中 ${first.count} 个，都没有超过 ${want} 行（前 5 个：${seen.join("、")}）`
+      );
+      return fg;
+    },
+  },
+
   /* ---------- 2026/10/12 追加：答题的写链路 ----------
    * owner 当天拍板「可以测会改数据的操作」（docs/待owner拍板.md Q2/Q3）。
    * 开关是**环境变量** UITEST_ALLOW_SUBMIT=1：跑的人决定"这次要不要写数据"，
