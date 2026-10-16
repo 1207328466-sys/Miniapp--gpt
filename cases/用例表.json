@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-16 15:56:59",
+  "generated_at": "2026-10-16 16:01:21",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
   "warnings": [],
@@ -2401,6 +2401,133 @@
           "param2": "",
           "note": "",
           "num": 9
+        }
+      ]
+    },
+    {
+      "id": "ZW_040",
+      "name": "护航套餐：推荐横幅、整卡可点进详情、常见问题可同时展开多项（需求 713555327 第 6 条）",
+      "precondition": "手机在小程序首页；不用登录（只读）。护航配了套餐与常见问题（测试环境里套餐 4 条、常见问题 3 条）",
+      "note": "需求 713555327 第 6 条原文：「套餐介绍：套餐以竖向卡片列表展示，推荐套餐卡片顶部以通栏横幅标识『推荐』，整个卡片都是可点击区域…套餐下方显示常见问题，手风琴样式，**可同时展开多项查看**」。\n真机实测（2026/10/16）：套餐卡 .escort-package-card（4 张，都带 recommend、顶部横幅文案是「热门推荐」——含需求的『推荐』二字，这是实际文案，写在断言里的是实测值）；点卡片进 .escort-package-detail（标题「套餐详情」）。\n常见问题（.escort-faq-item / .escort-faq-q-text / .escort-faq-a）：源码里答案是**条件渲染**（`{open ? <Text className=\"escort-faq-a\">…</Text> : null}`），所以折叠时 .escort-faq-a **根本不在 DOM 里** ——这条正好用「元素数量 0 / 1 / 2」精确验「可同时展开多项」，不会出现「看不见但数得到」的假绿。\n第 12、14 步点的问题文案来自后台配置（是是是是是是的 / DSUIOF JUSPFIP）—— 后台改了这几句，就把这两格一起改（报告里会明确说找不到哪句）。",
+      "steps": [
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "需求 713555327 第 6 条原文：「套餐介绍：套餐以竖向卡片列表展示，推荐套餐卡片顶部以通栏横幅标识『推荐』，整个卡片都是可点击区域…套餐下方显示常见问题，手风琴样式，**可同时展开多项查看**」。\n真机实测（2026/10/16）：套餐卡 .escort-package-card（4 张，都带 recommend、顶部横幅文案是「热门推荐」——含需求的『推荐』二字，这是实际文案，写在断言里的是实测值）；点卡片进 .escort-package-detail（标题「套餐详情」）。\n常见问题（.escort-faq-item / .escort-faq-q-text / .escort-faq-a）：源码里答案是**条件渲染**（`{open ? <Text className=\"escort-faq-a\">…</Text> : null}`），所以折叠时 .escort-faq-a **根本不在 DOM 里** ——这条正好用「元素数量 0 / 1 / 2」精确验「可同时展开多项」，不会出现「看不见但数得到」的假绿。\n第 12、14 步点的问题文案来自后台配置（是是是是是是的 / DSUIOF JUSPFIP）—— 后台改了这几句，就把这两格一起改（报告里会明确说找不到哪句）。",
+          "num": 1
+        },
+        {
+          "action": "打开案例库",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 2
+        },
+        {
+          "action": "点文字",
+          "param1": "压铸护航服务",
+          "param2": "",
+          "note": "",
+          "num": 3
+        },
+        {
+          "action": "点文字",
+          "param1": "套餐介绍",
+          "param2": "",
+          "note": "",
+          "num": 4
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "热门推荐",
+          "param2": "",
+          "note": "",
+          "num": 5
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "查看详情",
+          "param2": "",
+          "note": "",
+          "num": 6
+        },
+        {
+          "action": "点选择器",
+          "param1": ".escort-package-card",
+          "param2": "1",
+          "note": "",
+          "num": 7
+        },
+        {
+          "action": "检查元素存在",
+          "param1": ".escort-package-detail",
+          "param2": "",
+          "note": "",
+          "num": 8
+        },
+        {
+          "action": "返回上一页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 9
+        },
+        {
+          "action": "滑动",
+          "param1": "上",
+          "param2": "",
+          "note": "",
+          "num": 10
+        },
+        {
+          "action": "检查元素数量",
+          "param1": ".escort-faq-a",
+          "param2": "0",
+          "note": "",
+          "num": 11
+        },
+        {
+          "action": "点文字",
+          "param1": "是是是是是是的",
+          "param2": "",
+          "note": "",
+          "num": 12
+        },
+        {
+          "action": "检查元素数量",
+          "param1": ".escort-faq-a",
+          "param2": "1",
+          "note": "",
+          "num": 13
+        },
+        {
+          "action": "点文字",
+          "param1": "DSUIOF JUSPFIP",
+          "param2": "",
+          "note": "",
+          "num": 14
+        },
+        {
+          "action": "检查元素数量",
+          "param1": ".escort-faq-a",
+          "param2": "2",
+          "note": "",
+          "num": 15
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "JKLDSJF KJIO",
+          "param2": "",
+          "note": "",
+          "num": 16
+        },
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 17
         }
       ]
     }
