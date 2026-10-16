@@ -59,16 +59,37 @@ def plain_text(s):
     return str(s or "").replace("**", "").replace("`", "")
 
 # 表格列（2026/10/14 owner 定的格式）：
-#   按**用例**的列：用例编号 | 用例标题 | 前置条件 | 备注（在表里纵向并成一格）
+#   按**用例**的列：用例编号 | 用例标题 | 前置条件 | 备注 | 类型分类（在表里纵向并成一格）
 #   按**步骤**的列：步骤序号 | 动作 | 参数1 | 参数2
 # 为什么把「备注」也并成按用例的：它跟编号/标题/前置条件一样，说的是"这条用例整体"的事；
 # 步骤自己的注意点写进动作的说明里（或这一条的备注里，前缀写清第几步）。
-HEADERS = ["用例编号", "用例标题", "前置条件", "步骤序号", "动作", "参数1", "参数2", "备注"]
+# 2026/10/16：**末尾**加了「类型分类」（不是插在中间）—— 插中间会让已经填好的表、
+# 老的自检用例、所有按位置读列的代码一起错位；加在最后一列，前 8 列一个字节都不用动。
+HEADERS = ["用例编号", "用例标题", "前置条件", "步骤序号", "动作", "参数1", "参数2", "备注", "类型分类"]
 
-# 按用例（纵向合并）的列号，1 起数：A/B/C = 编号/标题/前置条件，H = 备注
-CASE_COLS = (1, 2, 3, 8)
+# 按用例（纵向合并）的列号，1 起数：A/B/C = 编号/标题/前置条件，H = 备注，I = 类型分类
+CASE_COLS = (1, 2, 3, 8, 9)
 # 按步骤的列号：D..G = 步骤序号/动作/参数1/参数2
 STEP_COLS = (4, 5, 6, 7)
+
+# ---------- 类型分类（表格最后一列，下拉框里只有这四个）----------
+# 为什么要它：用例多了以后，"这条到底在验什么"决定了怎么挑着跑 ——
+#   · 小程序改版 / 想快速确认"手机还能不能用" -> 先跑「操作型」当冒烟
+#   · 发版回归 / 验业务规则有没有被改坏 -> 跑「展示文案型 + 业务规则与数据型」
+# 它**只影响怎么挑着跑和统计，不影响执行**（没填也能跑，导出时给一句建议）。
+# 口径与例子写在 docs/使用手册-零基础.md，跟这里一一对应；改这里要同步改那份文档。
+CASE_TYPES = ["操作型", "展示文案型", "业务规则与数据型", "框架自检型"]
+
+# 每个类型的底色 —— 让表格"一眼能看出哪条是哪类"。
+# 用的是 Excel 标准色板里的"中等偏浅"那几档（不是最淡的淡色）：
+# 2026/10/16 第一版用了淡色（DDEBF7 那一档），真机上看着太浅、屏幕一暗几乎看不出来，
+# 所以加深一档；黑字压在这些色上仍然清楚，打印也分得开。
+CASE_TYPE_COLORS = {
+    "操作型": "BDD7EE",          # 蓝：走得通、点得动
+    "展示文案型": "C6E0B4",      # 绿：需求规定的字与字段在不在
+    "业务规则与数据型": "F8CBAD",  # 橙：条件 / 权限 / 跟库对账 / 写链路
+    "框架自检型": "D9D9D9",      # 灰：把动作挨个跑一遍的自检
+}
 
 # ---------- 动作清单（改这里 = 改表格里允许写的动作；JS 侧要同步实现同名函数）----------
 # p1 / p2 是参数列的「表头提示」：填了 = 这个动作要用该参数，空着 = 不用。
@@ -667,10 +688,11 @@ ACTION_EXAMPLES = {
 # ---------- 模板里预置的 3 条用例：都是**只读**的，跑起来不改任何数据 ----------
 # 前两条真机验证过、稳定；第三条要看当时首页轮播里有没有「答题」卡，看不到会记成跳过。
 #
-# 一行 8 个字段，顺序 = HEADERS：
-#   用例编号 | 用例标题 | 前置条件 | 步骤序号 | 动作 | 参数1 | 参数2 | 备注
-# 前三列和最后一列是**按用例**的（表里并成一格，只有第一步那行有值）；
-# 中间四列是**按步骤**的（每行都要填「步骤序号 + 动作」）。
+# 一行 9 个字段，顺序 = HEADERS：
+#   用例编号 | 用例标题 | 前置条件 | 步骤序号 | 动作 | 参数1 | 参数2 | 备注 | 类型分类
+# 编号/标题/前置条件/备注/类型分类是**按用例**的（表里并成一格，只有第一步那行有值）；
+# 中间四列是**按步骤**的（每行都要填「步骤序号 + 动作」）—— 所以下面步骤行只写到第 8 列，
+# 第 9 列（类型分类）留空，读取时按空补齐。
 # 步骤自己的注意点（"这一步在干嘛"）写在**该用例的备注**里，用「第N步：…」开头。
 SAMPLE_ROWS = [
     [
@@ -682,6 +704,7 @@ SAMPLE_ROWS = [
         "",
         "",
         "需求 713594979；只读。第2步只切 tab + 数活动卡，不改任何数据",
+        "业务规则与数据型",
     ],
     ["ZW_001", "", "", 2, "检查活动入口", "", "", ""],
     [
@@ -693,6 +716,7 @@ SAMPLE_ROWS = [
         "",
         "",
         "只读。第2步：关键词只能字母/数字/下划线/点/连字符（adb 发中文不生效）",
+        "操作型",
     ],
     ["ZW_002", "", "", 2, "打开搜索并输入", "test", "", ""],
     ["ZW_002", "", "", 3, "检查元素存在", "wx-input.search-input", "", ""],
@@ -706,6 +730,7 @@ SAMPLE_ROWS = [
         "",
         "",
         "只读：不选选项、不提交。第4步的吸顶文案来自需求 713594985",
+        "展示文案型",
     ],
     ["ZW_003", "", "", 2, "打开答题活动", "", "", ""],
     ["ZW_003", "", "", 3, "检查元素存在", ".activity-quiz-page", "", ""],
@@ -716,9 +741,9 @@ SAMPLE_ROWS = [
 HELP_LINES = [
     "怎么用这张表（零基础版）",
     "",
-    "【表长什么样】8 列，分两种：",
-    "  按**用例**的 4 列（表里并成一格，只有第一步那行有值）：",
-    "     用例编号 | 用例标题 | 前置条件 | 备注",
+    "【表长什么样】9 列，分两种：",
+    "  按**用例**的 5 列（表里并成一格，只有第一步那行有值）：",
+    "     用例编号 | 用例标题 | 前置条件 | 备注 | 类型分类",
     "  按**步骤**的 4 列（每一行都要填）：",
     "     步骤序号 | 动作 | 参数1 | 参数2",
     "  编号格式：ZW_001、ZW_002…（前缀 + 三位数字，唯一就行；填错的编号会让这条用例对不上号）",
@@ -732,6 +757,15 @@ HELP_LINES = [
     "   它不是动作、不会被自动执行 —— 是给人看的，也是「这条挂了先查什么」的线索。",
     "2c.「备注」是**整条用例**的备注（也并成一格）。某一步自己的说明写在同一格里，",
     "   用「第2步：…」开头即可。",
+    "2d.「类型分类」是**可选**的（也并成一格，下拉框里只有四个值）—— 说的是「这条用例主要在验什么」：",
+    "     操作型          走得通、点得动、切得过来（页面到没到、点了有没有反应、滚动/选中态对不对）",
+    "     展示文案型      需求规定的字、字段、顺序、条数出现在页面上没有",
+    "     业务规则与数据型 条件、权限、状态机、配置联动、跟数据库对账（会写数据的写链路也算这类）",
+    "     框架自检型      把表格能填的动作挨个跑一遍，验「这张表 + 这些动作」本身还使不使得",
+    "     （表里照这个值上了底色，一眼能看出哪条是哪类：淡蓝 = 操作型、淡绿 = 展示文案型、",
+    "       淡橙 = 业务规则与数据型、淡灰 = 框架自检型。改了类型，底色自动跟着变）",
+    "   它**只影响怎么挑着跑和统计，不影响执行**：改版/换设备后先跑「操作型」当冒烟；",
+    "   发版回归跑「展示文案型 + 业务规则与数据型」。不填也能跑，导出时会给一句建议。",
     "3. 「动作」只能填「动作清单」工作表里列出的名字 —— 填别的会在导出时报错，不会静默跳过。",
     "3b. 有几类参数要填**数据里的名字**（课程名 / 案例名 / 活动名），一字不差才行；",
     "    候选值在「名称候选」工作表里，直接复制粘贴即可（刷新它：python tools/export_cases.py --dropdown）。",
@@ -743,8 +777,9 @@ HELP_LINES = [
     "7. 每条用例开头都先用「回到首页」把起点摆正；会把手机停在二级页（搜索页/详情页/答题页）的用例，",
     "   最后再补一步「回到首页」把手机交还。原因：表里的用例共用同一部手机，",
     "   上一条停在二级页上，下一条可能报「找不到底部 tab」—— 开头摆正 + 结尾交还就不受影响。",
-    "8. 「动作」列是**下拉框**（点单元格右边的小箭头选），可选项来自「动作清单」工作表；",
-    "   「步骤序号」列只接受 1、2、3… 这样的正整数。填错的动作名根本选不出来，省一轮报错。",
+    "8. 「动作」列和「类型分类」列都是**下拉框**（点单元格右边的小箭头选）：动作的可选项来自",
+    "   「动作清单」工作表，类型的可选项就是上面那四个；「步骤序号」列只接受 1、2、3… 这样的正整数。",
+    "   填错的动作名根本选不出来，省一轮报错。",
     "8b. 自己新加的行不会自动并格。改完想让它并回去、顺便刷新下拉框，跑一次：",
     "    python tools/export_cases.py --dropdown    （只动排版，不动你填的内容；Excel 开着这份表时先关掉）",
     "9. 不知道「检查文字显示」该填哪段字？先加一行「打印页面文字」跑一次 ——",
@@ -817,12 +852,15 @@ def looks_like_id_selector(value):
 
 
 def add_dropdowns(ws, last_row=1000):
-    """给「用例」工作表加两个下拉/校验（**不改任何已填内容**）：
+    """给「用例」工作表加三个下拉/校验（**不改任何已填内容**）：
 
       1. 动作列（E）：下拉选择，选项来自「动作清单」工作表的 A 列 ——
          好处是"能选的动作"只有一处定义：以后加动作只改那张表，下拉跟着变；
          而且填错的动作名**在输入时就选不出来**，省掉一轮导出报错。
       2. 步骤序号列（D）：只能填 ≥1 的整数。
+      3. 类型分类列（I）：只能选 CASE_TYPES 里那四个 —— 类型是**分类口径**，
+         不需要单独开一张工作表，直接把选项写在公式里（改 CASE_TYPES 后重跑
+         `--dropdown` 即可，Excel 里那个下拉框跟着变）。
 
     范围一路铺到第 last_row 行（默认 1000），所以以后往下加行也有下拉。
 
@@ -868,6 +906,66 @@ def add_dropdowns(ws, last_row=1000):
     ws.add_data_validation(dv_seq)
     dv_seq.add("$%s$2:$%s$%d" % (get_column_letter(seq_col), get_column_letter(seq_col), last_row))
 
+    # 3) 类型分类列（最后一列）：四个类型里选一个
+    type_col = CASE_COLS[-1]
+    dv_type = DataValidation(
+        type="list",
+        formula1='"%s"' % ",".join(CASE_TYPES),  # 内联列表（Excel 的 inline list，上限 255 字符）
+        allow_blank=True,
+        showErrorMessage=True,
+    )
+    dv_type.promptTitle = "类型分类"
+    dv_type.prompt = "这条用例主要在验什么：%s（可不填，但建议填 —— 挑着跑时按它筛）" % " / ".join(CASE_TYPES)
+    dv_type.errorTitle = "没有这个类型"
+    dv_type.error = "只能从这四个里选：%s。口径见「填写说明」工作表。" % " / ".join(CASE_TYPES)
+    ws.add_data_validation(dv_type)
+    dv_type.add("$%s$2:$%s$%d" % (get_column_letter(type_col), get_column_letter(type_col), last_row))
+
+    # 4) 类型列的底色（条件格式，跟着下拉框的值走）
+    add_type_colors(ws, last_row)
+
+
+def add_type_colors(ws, last_row=1000):
+    """按「类型分类」的值给那一格上底色 —— **两层一起上**：
+
+      1. **条件格式**（按值算色）：从下拉框换了类型，颜色立刻跟着变；在 Excel 里它
+         优先级高于手涂的底色，所以"颜色和值对不上"这件事不会发生。
+      2. **静态底色**（同一个颜色，写在格子上）：保底 —— 有些查看器（部分 WPS / 网页预览 /
+         手机上的 Office）不渲染条件格式，只写条件格式的话，打开是**一片白**（2026/10/16 真遇到）。
+         静态底色由本函数在每次刷新时按当前值重算，所以它最多"旧到下一次刷新表"。
+
+    重复执行不会叠加：动手前先把**这一列**上旧的条件格式规则删掉（别的列有规则不动它）；
+    静态底色是"重算一遍"，天生幂等。
+    """
+    from openpyxl.formatting.rule import CellIsRule
+    from openpyxl.styles import PatternFill
+    from openpyxl.utils import get_column_letter
+
+    col = CASE_COLS[-1]
+    letter = get_column_letter(col)
+    rng = "%s2:%s%d" % (letter, letter, last_row)
+
+    cf = ws.conditional_formatting
+    for entry in list(cf):
+        if any(r.min_col == col and r.max_col == col for r in entry.sqref.ranges):
+            del cf[str(entry.sqref)]
+
+    for name in CASE_TYPES:
+        color = CASE_TYPE_COLORS.get(name)
+        if not color:
+            continue  # 漏配了颜色：宁可这一格没底色，也不要和类型对不上的颜色（自检会盯这条）
+        fill = PatternFill(start_color="FF%s" % color, end_color="FF%s" % color, fill_type="solid")
+        cf.add(rng, CellIsRule(operator="equal", formula=['"%s"' % name], fill=fill))
+
+    # 静态底色：按当前值重算（值不在四种里 / 空着 -> 清掉，不留上次的颜色）
+    for row in range(2, max(2, min(last_row, ws.max_row)) + 1):
+        cell = ws.cell(row, col)
+        color = CASE_TYPE_COLORS.get(cell_text(cell.value))
+        if color:
+            cell.fill = PatternFill(start_color="FF%s" % color, end_color="FF%s" % color, fill_type="solid")
+        else:
+            cell.fill = PatternFill(fill_type=None)
+
 
 def refresh_signature(wb):
     """把「刷新表格」会写到的东西，压成一个可比对的字符串。
@@ -878,7 +976,9 @@ def refresh_signature(wb):
     现在先记下"该写的东西"长什么样，写完再比一次：一样就不动文件。
     """
     parts = []
-    for name in (SHEET_ACTIONS, SHEET_CHOICES):
+    # 「填写说明」也算进来：它的正文改过（例如 2026/10/16 表从 8 列变 9 列）时，
+    # 刷新表格这一趟必须真的落盘，否则表里留着的是旧说明。
+    for name in (SHEET_ACTIONS, SHEET_CHOICES, SHEET_HELP):
         if name in wb.sheetnames:
             ws = wb[name]
             parts.append("== %s ==" % name)
@@ -889,6 +989,22 @@ def refresh_signature(wb):
     parts.extend(sorted(str(r) for r in ws.merged_cells.ranges))
     parts.append("== %s validations ==" % SHEET_DATA)
     parts.extend(sorted("%s %s %s" % (d.sqref, d.type, d.formula1) for d in ws.data_validations.dataValidation))
+    # 条件格式（类型分类的底色）也算：只改了颜色而没改别的时，这一趟同样要落盘
+    parts.append("== %s conditional formatting ==" % SHEET_DATA)
+    for entry in ws.conditional_formatting:
+        for rule in entry.rules:
+            fill = getattr(getattr(rule, "dxf", None), "fill", None)
+            parts.append(
+                "%s %s %s %s"
+                % (entry.sqref, rule.type, getattr(rule, "operator", ""), getattr(fill, "start_color", None))
+            )
+    # 「类型分类」这一列的**值和底色**都要算进去：格子上的静态底色是按值算出来的，
+    # 值改了而签名没变的话，这一趟不会落盘 —— 底色就停在旧颜色上了（2026/10/16 真的这样漏过一次：
+    # 新加的一条用例填了类型，但底色没跟上，因为"值已经写进去了，刷新就没变化"）。
+    parts.append("== %s 类型分类（值 + 底色）==" % SHEET_DATA)
+    for row in range(2, ws.max_row + 1):
+        cell = ws.cell(row, CASE_COLS[-1])
+        parts.append("%s|%s" % (cell_text(cell.value), getattr(cell.fill.start_color, "rgb", "")))
     return "\n".join(parts)
 
 
@@ -1093,12 +1209,12 @@ def build_template(path):
         ws.append(row)
     for cell in ws[1]:
         cell.font = Font(bold=True)
-    # 列宽按 8 列来：编号 / 标题 / 前置条件 / 步骤序号 / 动作 / 参数1 / 参数2 / 备注
-    for col, width in zip("ABCDEFGH", (14, 40, 34, 9, 22, 20, 16, 40)):
+    # 列宽按 9 列来：编号 / 标题 / 前置条件 / 步骤序号 / 动作 / 参数1 / 参数2 / 备注 / 类型分类
+    for col, width in zip("ABCDEFGHI", (14, 40, 34, 9, 22, 20, 16, 40, 14)):
         ws.column_dimensions[col].width = width
     ws.freeze_panes = "A2"  # 滚动时表头冻结，填表时不会看错列
     merge_case_cells(ws)  # 同一条用例的编号/名称纵向并成一格（一案一块，一眼看得出几条几步）
-    add_dropdowns(ws)  # 动作列下拉 + 步骤序号校验（不改数据，只是让手滑填不进去）
+    add_dropdowns(ws)  # 动作列下拉 + 步骤序号校验 + 类型分类下拉（不改数据，只是让手滑填不进去）
 
     wa = wb.create_sheet(SHEET_ACTIONS)
     fill_actions_sheet(wa)
@@ -1108,19 +1224,47 @@ def build_template(path):
     wc = wb.create_sheet(SHEET_CHOICES)
     fill_choices_sheet(wc, None, "还没取过候选值：连上测试库后跑 python tools/export_cases.py --dropdown")
 
-    wh = wb.create_sheet(SHEET_HELP)
-    for line in HELP_LINES:
-        wh.append([plain_text(line)])  # 工作表里不显示 markdown 记号（跟「动作清单」一个处理）
-    wh.column_dimensions["A"].width = 100
+    refresh_help_sheet(wb)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
 
 
-def read_rows(path):
-    """读「用例」工作表；返回 [(Excel 行号, 8 个字段), ...]，跳过整行空的
+def refresh_help_sheet(wb):
+    """把「填写说明」工作表刷成最新的 HELP_LINES（内容没变就原样不动）。
 
-    8 个字段 = HEADERS 的顺序：用例编号 | 用例标题 | 前置条件 | 步骤序号 | 动作 | 参数1 | 参数2 | 备注
+    为什么要它：表结构一变（2026/10/16 从 8 列加到 9 列），「填写说明」里那句
+    "表长什么样"就过期了 —— 而它是**零基础的人唯一会看的那一页**。
+    以前它只在 `--init` 生成模板时写一次，之后没人再刷；现在跟着 `--dropdown` 一起刷。
+    """
+    wanted = [plain_text(line) for line in HELP_LINES]  # 工作表里不显示 markdown 记号
+    if SHEET_HELP in wb.sheetnames:
+        wh = wb[SHEET_HELP]
+        current = [(wh.cell(row=i, column=1).value or "") for i in range(1, len(wanted) + 1)]
+        if current == wanted and wh.max_row <= len(wanted):
+            return
+        del wb[SHEET_HELP]  # 重建成"最后一张表"，跟模板里的顺序一致
+    wh = wb.create_sheet(SHEET_HELP)
+    for line in wanted:
+        wh.append([line])
+    wh.column_dimensions["A"].width = 100
+    # 类型那几行也上色（跟「用例」表里一个颜色）：说明页本身就能当图例看
+    from openpyxl.styles import PatternFill
+
+    for row in wh.iter_rows(min_row=1, max_row=wh.max_row):
+        text = plain_text(str(row[0].value or "")).strip()
+        name = next((t for t in CASE_TYPES if text.startswith(t)), None)
+        color = CASE_TYPE_COLORS.get(name) if name else None
+        if color:
+            row[0].fill = PatternFill(start_color="FF%s" % color, end_color="FF%s" % color, fill_type="solid")
+
+
+def read_rows(path):
+    """读「用例」工作表；返回 [(Excel 行号, 9 个字段), ...]，跳过整行空的
+
+    9 个字段 = HEADERS 的顺序：
+      用例编号 | 用例标题 | 前置条件 | 步骤序号 | 动作 | 参数1 | 参数2 | 备注 | 类型分类
+    少写几列的行按空补齐（所以老表里"只写到备注"的行照样读得出来，类型分类为空）。
     """
     from openpyxl import load_workbook
 
@@ -1186,7 +1330,7 @@ def validate(rows):
         """取（必要时建）这条用例自己的错误清单"""
         return case.setdefault("errors", [])
 
-    for lineno, (cid, cname, precondition, cseq, action, p1, p2, note) in rows:
+    for lineno, (cid, cname, precondition, cseq, action, p1, p2, note, ctype) in rows:
         if not cid:
             if not last_id:
                 table_errors.append(
@@ -1206,15 +1350,20 @@ def validate(rows):
                 "name": cname or cid,
                 "precondition": precondition,
                 "note": note,
+                "type": ctype,
                 "steps": [],
             }
             # 记下"这几列里，哪些是**明确写过值**的"（写了才允许后面逐行比对；
             # 没写过就可以被下面某一行补上 —— 空着和"写了别的值"是两回事）
-            case["_filled"] = {k for k, v in (("name", cname), ("precondition", precondition), ("note", note)) if v}
+            case["_filled"] = {
+                k
+                for k, v in (("name", cname), ("precondition", precondition), ("note", note), ("type", ctype))
+                if v
+            }
             index[cid] = case
             cases.append(case)
         else:
-            # 这四列（编号 / 标题 / 前置条件 / 备注）在表里是**按用例并成一格**的：
+            # 这几列（编号 / 标题 / 前置条件 / 备注 / 类型分类）在表里是**按用例并成一格**的：
             # 读出来只有第一行有值。所以空 = 沿用上面那条；写了个不一样的值 = 报错
             # （留在那里不管的话，那个值会被静默丢掉 —— 本项目最不能接受的就是静默）。
             for field, label, value, hint in (
@@ -1237,6 +1386,12 @@ def validate(rows):
                     "整条用例只有一个备注（在表里它是并起来的一格）；"
                     "想单独说明某一步，就写在同一格里，用「第3步：…」开头",
                 ),
+                (
+                    "type",
+                    "类型分类",
+                    ctype,
+                    "一条用例只有一个类型分类（在表里它是并起来的一格）",
+                ),
             ):
                 if not value or value == case[field]:
                     continue
@@ -1251,6 +1406,14 @@ def validate(rows):
                     "第 %d 行：这条用例（%s）的「%s」已经是「%s」了，这里又写成「%s」—— %s"
                     % (lineno, cid, label, case[field], value, hint)
                 )
+
+        # 「类型分类」只能填 CASE_TYPES 里那四个（Excel 里有下拉框，但表可能被手工改成别的值 /
+        # 从别处粘进来；这里挡在导出这一步，错了只红这一条用例）
+        if ctype and ctype not in CASE_TYPES:
+            case_errors_of(case).append(
+                "第 %d 行：「类型分类」写了「%s」，不在可选范围里。只能填：%s"
+                % (lineno, ctype, "、".join(CASE_TYPES))
+            )
 
         if not action:
             case_errors_of(case).append(
@@ -1442,7 +1605,8 @@ def lint_cases(cases):
       1. 一条用例里一个「检查」都没有 -> 这条用例测不出任何东西
          （README §五 的反例 test_login_and_navigation.js 就是这个毛病）；
       2. 第一步不是「回到首页」 -> 起点不干净，上一条用例的残留会带进来（坑 15 / 17）；
-      3. 最后一步会停在二级页 -> 建议补一步「回到首页」把手机交还（坑 15）。
+      3. 最后一步会停在二级页 -> 建议补一步「回到首页」把手机交还（坑 15）；
+      4. 没填「类型分类」（2026/10/16 新增的列）-> 不影响跑，但按类型挑着跑时它就没法被筛出来。
 
     注意：**只提示、不拦截**。拦下来会挡住"我就是要这样写"的合理场景，
     提示的价值在于让人知道有这么回事。
@@ -1468,6 +1632,11 @@ def lint_cases(cases):
             warnings.append(
                 "用例「%s」最后一步是「%s」，跑完手机很可能停在二级页 —— 建议末尾补一步"
                 "「回到首页」把手机交还给下一条" % (c["id"], actions[-1])
+            )
+        if not c.get("type"):
+            warnings.append(
+                "用例「%s」没填「类型分类」—— 不影响执行，但按类型挑着跑（改版后先跑操作型、"
+                "发版回归跑业务规则型）时它筛不出来。四个可选值见「填写说明」工作表" % c["id"]
             )
     return warnings
 
@@ -1548,6 +1717,7 @@ def main(argv=None):
         # 记下"刷新前"的样子：如果刷完发现什么都没变，就不重写文件（免得 git 多出无意义的二进制 diff）
         before = refresh_signature(wb)
         fill_actions_sheet(wb[SHEET_ACTIONS])  # 清单跟着最新动作走
+        refresh_help_sheet(wb)  # 「填写说明」也刷一遍：表结构变了（加列/改口径）时不能让说明留着旧的
         # 「名称候选」：要填名字的那几个参数，候选值从测试库抄一份进来（连不上库就写清原因）
         if SHEET_CHOICES not in wb.sheetnames:
             wb.create_sheet(SHEET_CHOICES)
@@ -1556,6 +1726,9 @@ def main(argv=None):
         ws = wb[SHEET_DATA]
         # 先清空旧的校验规则，重复执行不会叠加（叠加会让 Excel 弹两次提示）
         ws.data_validations.dataValidation = []
+        # 表头冻结也一并归位：它是填表体验的一部分（滚到底也能看见列名），
+        # 而迁移/手工改表很容易把它弄成"冻结了 139 行"这种怪状态（2026/10/16 真在表里见到过 A140）。
+        ws.freeze_panes = "A2"
         add_dropdowns(ws)
         merged = merge_case_cells(ws)  # 同一条用例的编号/名称并回一格（新加的行会跟着重新并）
         changed = refresh_signature(wb) != before
@@ -1571,6 +1744,7 @@ def main(argv=None):
             print("  · 这次其实**没有任何变化**，所以没有重写文件（不至于让 git 多出一个空 diff）")
         print("  · 「动作清单」工作表已更新为最新的 %d 个动作" % len(ACTIONS))
         print("  · 动作列（E）下拉框已重建，选项来自「动作清单」")
+        print("  · 「类型分类」列（I）下拉框已重建，可选项：%s" % " / ".join(CASE_TYPES))
         if n_choices:
             print("  · 「%s」工作表已更新：%d 条候选名字（课程 / 答题活动 / 案例，从测试库取的）"
                   % (SHEET_CHOICES, n_choices))
@@ -1578,7 +1752,7 @@ def main(argv=None):
             print("  · 「%s」工作表：这次没取到候选名字（原因写在工作表里）—— 只影响参考，不影响跑用例"
                   % SHEET_CHOICES)
         print("  · 步骤序号列（D）只接受 1、2、3… 这样的正整数")
-        print("  · 同一条用例的「用例编号 / 用例标题 / 前置条件 / 备注」已并成一格（%d 块）" % merged)
+        print("  · 同一条用例的「用例编号 / 用例标题 / 前置条件 / 备注 / 类型分类」已并成一格（%d 块）" % merged)
         print("  · 你已经填好的内容一行都没动（只是把重复的编号并起来了）")
         print("\n顺带重新导出一遍（刷完表格不导出的话，json 会比 xlsx 旧，"
               "真机跑起来会提示「本次跑的是 json 里的内容」——那是个假警报）")

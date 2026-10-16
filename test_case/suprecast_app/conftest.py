@@ -224,13 +224,16 @@ def _attach_to_allure(entries, case_name):
     allure.dynamic.story(header.get("story") or case_name)
     allure.dynamic.title(header.get("title") or case_name)
 
-    # 表格用例的「前置条件 / 备注」也贴进报告（2026/10/14 加的表格列）：
+    # 表格用例的「前置条件 / 备注 / 类型分类」也贴进报告（2026/10/14 加的列，类型分类 10/16 加）：
     # 报告里挂了的时候，第一件想确认的就是"跑这条之前手机该是什么状态" ——
     # 只写在 Excel 里的话，看报告的人（可能是别人）根本没机会看到。
     precondition = str(header.get("precondition") or "").strip()
     note = str(header.get("note") or "").strip()
-    if precondition or note:
+    case_type = str(header.get("type") or "").strip()
+    if precondition or note or case_type:
         lines = []
+        if case_type:
+            lines.append("类型分类：%s" % case_type)
         if precondition:
             lines.append("前置条件：%s" % precondition)
         if note:

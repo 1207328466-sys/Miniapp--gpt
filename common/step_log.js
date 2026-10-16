@@ -73,9 +73,10 @@ function createStepLogger({ filePath = null, caseFile = null, meta = null } = {}
         feature: (meta && meta.feature) || extra.feature || null,
         story: (meta && meta.story) || extra.story || null,
         title: (meta && meta.title) || extra.title || caseFile || null,
-        // 表格用例才有：报告描述里的「前置条件 / 备注」
+        // 表格用例才有：报告描述里的「前置条件 / 备注 / 类型分类」
         precondition: (meta && meta.precondition) || extra.precondition || null,
         note: (meta && meta.note) || extra.note || null,
+        type: (meta && meta.type) || extra.type || null,
         startedAt: new Date().toISOString(),
       });
     },

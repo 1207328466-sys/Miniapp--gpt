@@ -958,10 +958,11 @@ async function runOneCase(caseDef) {
   const funcList = caseDef.steps.map(buildStepFunc);
   console.log("\n" + "=".repeat(66));
   console.log(`用例 ${caseDef.id}：${caseDef.name}（${funcList.length} 步）`);
-  // 表格里那两列「按用例」的说明也打出来：跑挂了的时候，第一眼要看的往往不是报错，
+  // 表格里那几列「按用例」的说明也打出来：跑挂了的时候，第一眼要看的往往不是报错，
   // 而是"跑这条之前手机该是什么状态"（前置条件）。报告里也会贴一份（见 conftest.py）。
   if (caseDef.precondition) console.log(`前置条件：${caseDef.precondition}`);
   if (caseDef.note) console.log(`备注：${caseDef.note}`);
+  if (caseDef.type) console.log(`类型分类：${caseDef.type}`);
   console.log("=".repeat(66));
 
   await appTest(funcList, {
@@ -973,6 +974,7 @@ async function runOneCase(caseDef) {
       title: `${caseDef.id} ${caseDef.name}`,
       precondition: caseDef.precondition || "",
       note: caseDef.note || "",
+      type: caseDef.type || "",
     },
   });
 }
