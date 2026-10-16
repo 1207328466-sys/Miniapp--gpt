@@ -910,6 +910,11 @@ async function tapTextWithin(page, scope, text, index = 1) {
  * 源码依据（`src/components/reply-input/index.tsx`）：`<View className="overlay-mask" onClick={onBlur} />`
  * —— 蒙层就是"点一下关"。所以这里点它一下。
  *
+ * 【认哪些蒙层】2026/10/16 起认一小撮"点一下就关"的蒙层（都是源码里写着 `onClick={onBlur}` 那类）：
+ *   `.overlay-mask`（评论/回复面板）、`.reserve-overlay-mask`（护航「立即预约」弹窗）。
+ * 只认白名单，不做"见蒙层就点" —— 别的遮挡可能是有意义的弹窗（比如兑换确认框），
+ * 那种该让用例自己去点，不该被"自愈"悄悄关掉。
+ *
  * 【点什么位置】不能点蒙层的几何中心：面板浮在蒙层上方，中心有可能落在**面板**上
  *（那一下会点进评论输入框）。所以先用 `document.elementFromPoint` 找一个"确实命中蒙层"的点
  *（从上往下试几个候选），找不到命中点就**什么都不做**（宁可不动，也不要乱点）。
@@ -918,9 +923,22 @@ async function tapTextWithin(page, scope, text, index = 1) {
  */
 async function dismissOverlayIfAny(page) {
   const fg = await foreground(page);
-  if ((await countOf(fg, ".overlay-mask")) === 0) return false;
-  const spot = await fg.evaluate(() => {
-    const m = document.querySelector(".overlay-mask");
+  const MASKS = [".overlay-mask", ".reserve-overlay-mask"];
+  const found = [];
+  for (const sel of MASKS) {
+    if ((await countOf(fg, sel)) > 0) found.push(sel);
+  }
+  if (!found.length) return false;
+  const spot = await fg.evaluate((sels) => {
+    let m = null;
+    let used = "";
+    for (const s of sels) {
+      m = document.querySelector(s);
+      if (m) {
+        used = s;
+        break;
+      }
+    }
     if (!m) return null;
     const r = m.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -933,11 +951,11 @@ async function dismissOverlayIfAny(page) {
     for (const [x, y] of cands) {
       const el = document.elementFromPoint(x, y);
       if (el && (el === m || m.contains(el) || el.contains(m))) {
-        return { x: Math.round(x * dpr), y: Math.round(y * dpr) };
+        return { x: Math.round(x * dpr), y: Math.round(y * dpr), sel: used };
       }
     }
     return null;
-  });
+  }, MASKS);
   if (!spot) {
     console.log("  [提示] 屏幕上有蒙层，但找不到一个「确实点在蒙层上」的位置 —— 不动它（免得点进面板里）");
     return false;
@@ -946,7 +964,7 @@ async function dismissOverlayIfAny(page) {
   await device.shell(`input tap ${spot.x} ${spot.y}`);
   noteInputSent();
   await sleep(1000);
-  console.log(`  [自愈] 开局屏幕上有没收的蒙层（评论/回复面板）—— 已点掉（tap ${spot.x},${spot.y}）`);
+  console.log(`  [自愈] 开局屏幕上有没收的蒙层（${spot.sel}）—— 已点掉（tap ${spot.x},${spot.y}）`);
   return true;
 }
 
