@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-16 15:12:07",
+  "generated_at": "2026-10-16 15:56:59",
   "generated_by": "tools/export_cases.py",
   "source": "cases/用例表.xlsx",
   "warnings": [],
@@ -2238,6 +2238,169 @@
           "param2": "",
           "note": "",
           "num": 6
+        }
+      ]
+    },
+    {
+      "id": "ZW_038",
+      "name": "护航服务：三个视图入口、默认视图、切换高亮联动、切完回到页面顶部（需求 713555327 第 1 条）",
+      "precondition": "手机在小程序首页；不用登录（只读）",
+      "note": "需求 713555327（Sprint20，已关闭）第 1 条原文：「页面采用单页多视图结构，顶部设有三个标签页：服务介绍、案例介绍、套餐介绍。默认进入服务介绍视图。切换标签时，页面内容整体替换，同时顶部标签高亮随当前视图联动，并自动回到页面顶部。」\n真机实测（2026/10/16）：三个 tab 的 class 是 escort-view-tab，选中那个多一个 active（颜色 rgb(212,20,20)、字重 500）；默认确实是「服务介绍」；切到「套餐介绍」后选中态跟着走。\n第 6-7 步先滚下去、证明第一块模块标题被滚出视口；第 9 步切完视图它又回到视口里 —— 这就是需求说的「自动回到页面顶部」（源码 EscortSection.tsx 的 switchView 里确实会把 scrollTop 归零）。",
+      "steps": [
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "需求 713555327（Sprint20，已关闭）第 1 条原文：「页面采用单页多视图结构，顶部设有三个标签页：服务介绍、案例介绍、套餐介绍。默认进入服务介绍视图。切换标签时，页面内容整体替换，同时顶部标签高亮随当前视图联动，并自动回到页面顶部。」\n真机实测（2026/10/16）：三个 tab 的 class 是 escort-view-tab，选中那个多一个 active（颜色 rgb(212,20,20)、字重 500）；默认确实是「服务介绍」；切到「套餐介绍」后选中态跟着走。\n第 6-7 步先滚下去、证明第一块模块标题被滚出视口；第 9 步切完视图它又回到视口里 —— 这就是需求说的「自动回到页面顶部」（源码 EscortSection.tsx 的 switchView 里确实会把 scrollTop 归零）。",
+          "num": 1
+        },
+        {
+          "action": "打开案例库",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 2
+        },
+        {
+          "action": "点文字",
+          "param1": "压铸护航服务",
+          "param2": "",
+          "note": "",
+          "num": 3
+        },
+        {
+          "action": "检查元素数量",
+          "param1": ".escort-view-tab",
+          "param2": "3",
+          "note": "",
+          "num": 4
+        },
+        {
+          "action": "检查元素数量",
+          "param1": ".escort-view-tab.active:has-text(\"服务介绍\")",
+          "param2": "1",
+          "note": "",
+          "num": 5
+        },
+        {
+          "action": "滑动",
+          "param1": "上",
+          "param2": "",
+          "note": "",
+          "num": 6
+        },
+        {
+          "action": "检查元素不在视口里",
+          "param1": ".escort-module-title",
+          "param2": "",
+          "note": "",
+          "num": 7
+        },
+        {
+          "action": "点文字",
+          "param1": "套餐介绍",
+          "param2": "",
+          "note": "",
+          "num": 8
+        },
+        {
+          "action": "检查元素在视口里",
+          "param1": ".escort-module-title",
+          "param2": "",
+          "note": "",
+          "num": 9
+        },
+        {
+          "action": "检查元素数量",
+          "param1": ".escort-view-tab.active:has-text(\"套餐介绍\")",
+          "param2": "1",
+          "note": "",
+          "num": 10
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "套餐方案",
+          "param2": "",
+          "note": "",
+          "num": 11
+        },
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 12
+        }
+      ]
+    },
+    {
+      "id": "ZW_039",
+      "name": "护航案例卡片整卡可点，详情页底部有「我也要做」（需求 713555327 第 4、5 条）",
+      "precondition": "手机在小程序首页；不用登录（只读）。护航开了「行业案例」且至少 1 条启用",
+      "note": "需求 713555327 第 4 条：「案例以竖向列表排布，每一个案例是一张可点击卡片，整个卡片都是可点击区域…点击后跳转案例详情页」；第 5 条：「详情页底部固定悬浮按钮『我也要做』」。\n真机实测（2026/10/16）：列表项 .escort-case-card（3 张，整卡 333×247）；详情页根容器 .escort-case-detail，封面 .ecd-cover-title、描述 .ecd-description、分段内容 .ecd-segments，底部固定条 .ecd-reserve-bar 里写着「我也要做」。\n第 5 步点的是卡片本身（不是卡里的某个小元素）—— 需求要的就是「整卡可点」。",
+      "steps": [
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "需求 713555327 第 4 条：「案例以竖向列表排布，每一个案例是一张可点击卡片，整个卡片都是可点击区域…点击后跳转案例详情页」；第 5 条：「详情页底部固定悬浮按钮『我也要做』」。\n真机实测（2026/10/16）：列表项 .escort-case-card（3 张，整卡 333×247）；详情页根容器 .escort-case-detail，封面 .ecd-cover-title、描述 .ecd-description、分段内容 .ecd-segments，底部固定条 .ecd-reserve-bar 里写着「我也要做」。\n第 5 步点的是卡片本身（不是卡里的某个小元素）—— 需求要的就是「整卡可点」。",
+          "num": 1
+        },
+        {
+          "action": "打开案例库",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 2
+        },
+        {
+          "action": "点文字",
+          "param1": "压铸护航服务",
+          "param2": "",
+          "note": "",
+          "num": 3
+        },
+        {
+          "action": "点文字",
+          "param1": "案例介绍",
+          "param2": "",
+          "note": "",
+          "num": 4
+        },
+        {
+          "action": "点选择器",
+          "param1": ".escort-case-card",
+          "param2": "1",
+          "note": "",
+          "num": 5
+        },
+        {
+          "action": "检查元素存在",
+          "param1": ".escort-case-detail",
+          "param2": "",
+          "note": "",
+          "num": 6
+        },
+        {
+          "action": "检查文字显示",
+          "param1": "我也要做",
+          "param2": "",
+          "note": "",
+          "num": 7
+        },
+        {
+          "action": "返回上一页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 8
+        },
+        {
+          "action": "回到首页",
+          "param1": "",
+          "param2": "",
+          "note": "",
+          "num": 9
         }
       ]
     }
