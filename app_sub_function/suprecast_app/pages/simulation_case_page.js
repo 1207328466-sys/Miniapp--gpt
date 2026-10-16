@@ -107,8 +107,20 @@ async function findCasePage(page) {
 /** 确保停在案例库列表页（自导航 + 幂等） */
 async function ensureOn(page, { timeout = 15000 } = {}) {
   if (await isOn(page)) {
+    /*
+     * 【幂等 ≠ 状态正确 —— 2026/10/16 踩到】
+     *
+     * 案例库顶部有两个 tab：「仿真案例库」/「压铸护航服务」。**列表只在第一个 tab 里**；
+     * 停在第二个 tab 上时 `.case-list-card` 一张都没有（那片是配置驱动的，测试环境里更是空的）。
+     * 我做完"护航那片有没有内容"的探针之后把手机留在了第二个 tab 上 —— 紧接着的一次全量里，
+     * 凡是以「打开案例库」开头、后面要读列表的用例接连报红（"案例库列表是空的，没法测复制"），
+     * 而**页面其实没坏**，只是 tab 不对。
+     *
+     * 所以这里补一句归位：在案例库页上，如果顶部选中的不是「仿真案例库」，就切回去。
+     * 只在**选中态读得到、且确实不对**时才动（读不到就不动，免得瞎点）。
+     */
     console.log("已在案例库列表页，跳过导航（幂等）");
-    return base.foreground(page);
+    return await ensureListTab(page);
   }
   page = await base.ensureOnTabPage(page);
   // 点 tab + 验证 + **带验证的重试**统一在 switchToBottomTab 里（偶发的一次点击不生效就再点一次）
@@ -117,7 +129,48 @@ async function ensureOn(page, { timeout = 15000 } = {}) {
     timeout,
   });
   console.log("已到达案例库列表页");
-  return page;
+  // ⚠️ 导航到了还不够：顶部 tab 可能是「压铸护航服务」（那片没有列表、banner 也没有）。
+  // 2026/10/16 实测踩到过一次（我自己把手机留在那个 tab 上，紧接着的全量连红 3 条）——
+  // 所以**两条路径都要归位**（只放在"幂等早退"那条路上是不够的）。
+  return await ensureListTab(page);
+}
+
+/**
+ * 把案例库顶部 tab 归位到「仿真案例库」（有列表的那个）。已经在则不动。只读 + 必要时点一下 tab。
+ * @returns {Promise<import('playwright').Page>}
+ */
+async function ensureListTab(page) {
+  const cur = await activeTopTab(page);
+  if (cur && cur !== TOP_TABS[0]) {
+    console.log(`  案例库停在「${cur}」tab 上（那里没有案例列表、也没有介绍 banner）—— 切回「${TOP_TABS[0]}」`);
+    // 圈进顶部 tab 栏再点：这几个字在页面上别处也会有（标题/长图）
+    await base.tapTextWithin(await base.foreground(page), SEL.topTabs, TOP_TABS[0]);
+    await base.sleep(1500);
+  }
+  return base.foreground(page);
+}
+
+/**
+ * 当前选中的是案例库顶部哪个 tab（读 `.cases-top-tab` 上的 `active`；读不到返回空串）。
+ * 只读、不点。为什么要有它：**列表只在「仿真案例库」那个 tab 里**，
+ * 停在另一个 tab 上时整个列表都会"看起来是空的"（见 ensureOn 里那段说明）。
+ * @returns {Promise<string>} tab 文案；读不到返回 ""
+ */
+async function activeTopTab(page) {
+  const fg = await base.foreground(page);
+  try {
+    return await fg.evaluate(
+      (sel) => {
+        const norm = (s) => String(s || "").replace(/\s+/g, " ").trim();
+        const els = Array.from(document.querySelectorAll(sel.topTab));
+        const hit = els.find((el) => /(^|\s)active(\s|$)/.test(String(el.getAttribute("class") || "")));
+        return hit ? norm(hit.innerText) : "";
+      },
+      { topTab: SEL.topTab }
+    );
+  } catch (e) {
+    return "";
+  }
 }
 
 /**
@@ -600,6 +653,7 @@ module.exports = {
   SEL,
   TAB_TEXT,
   TOP_TABS,
+  activeTopTab,
   SORT_TAGS,
   COPY_TOAST,
   COPY_CONFIRM_MARK,
