@@ -16,7 +16,14 @@
   2. **凭据不入库**：账号密码放在 `oacli/.env`（已被 .gitignore 忽略），`accounts.json` 里只写
      `${...}` 引用。本工具只调 CLI，不碰凭据、也不打印它们。
 
+【第三个坑（2026/10/16 补）：`--kb` 会把知识库**重建**成"这次拉到的那些"】
+  `--kb` 的语义是「重建」，而它用的是**本次拉取的结果** —— 所以 `--days 3 --kb` 会把 247 条的知识库
+  换成 21 条（**静默少掉 226 条**，而且输出看着还挺成功）。
+  现在加了闸门：`--kb` 遇上 `--days` / `--status` 这种**局部拉取**直接拒绝（退出码 2），
+  要真想这么干得显式加 `--force-partial-kb`。安全用法 = **不带 `--days`/`--status` 的全量拉取 + `--kb`**。
+
 用法:
+    python tools/pull_requirements.py --kb            # 全量拉 + **重建知识库**（别配 --days/--status，见下面第三个坑）
     python tools/pull_requirements.py                 # 拉全量 Story 并对账，结果落 report/需求拉取/
     python tools/pull_requirements.py --days 7        # 只拉最近 7 天更新的
     python tools/pull_requirements.py --status 新建    # 只看某个状态
@@ -72,6 +79,28 @@ def pull(tracker="story", days=None, status=None, project_id=PROJECT_CYST, timeo
         tail = "\n".join(((r.stdout or "") + (r.stderr or "")).strip().splitlines()[-4:])
         raise RuntimeError("oacli 拉取失败（退出码 %s）：\n%s" % (r.returncode, tail))
     return json.loads(out)
+
+
+def decide_kb_rebuild(partial, force=False):
+    """能不能用这次拉到的结果**重建知识库** —— **纯函数**（离线自检用）。
+
+    【为什么要这道闸】2026/10/16：`--kb` 的语义是"重建"，用的是**本次拉取的结果**。
+    而 `--days 3` 这种局部拉取只拉回 21 条 —— 两者一配，247 条的知识库会被静默换成 21 条
+    （输出还写着"知识库已重建"，看起来挺成功）。这种"越用越少"的错最难发现，
+    所以宁可拒绝，也不要听话地照做。
+
+    @param {boolean} partial 这次是不是局部拉取（带了 --days 或 --status）
+    @returns {(boolean, string)} (能不能重建, 不能的话给出人话原因)
+    """
+    if partial and not force:
+        return (
+            False,
+            "这次是**局部拉取**（带了 --days / --status），而 --kb 是**用本次结果重建知识库** —— "
+            "两个一起用会把全量知识库换成局部的那几条（实测：--days 3 只回 21 条，而知识库有 247 条）。\n"
+            "  想要全量：把 --days / --status 去掉再跑（可以加 --kb）。\n"
+            "  确实想用局部结果覆盖知识库：显式加 --force-partial-kb（不推荐）。",
+        )
+    return (True, "")
 
 
 def parse_kb(path=KB_LIST):
@@ -288,12 +317,20 @@ def main(argv=None):
                         help="连详情一起拉（描述正文，带缓存；重建知识库要用它）")
     parser.add_argument("--kb", action="store_true",
                         help="拉完重建知识库那几份文档（工作项清单 / 迭代与模块汇总 / 需求描述汇编 / 缺陷描述汇编）")
+    parser.add_argument("--force-partial-kb", action="store_true",
+                        help="允许用**局部拉取**（--days/--status）的结果覆盖知识库 —— 默认拒绝，见文件头第三个坑")
     parser.add_argument("--batch", type=int, default=10, help="拉详情时每批几个 id（默认 10）")
     parser.add_argument("--days", type=int, help="只拉最近 N 天更新的（不填 = 全量）")
     parser.add_argument("--status", help="按状态过滤（CLI 侧是本地过滤，会自动翻页）")
     parser.add_argument("--project-id", default=PROJECT_CYST, help="项目 UUID（默认超云生态平台）")
     parser.add_argument("--from-json", help="不联网：直接分析一份已有的拉取结果 JSON")
     args = parser.parse_args(argv)
+
+    # 【闸门】`--kb` 不许配局部拉取 —— 不然会拿 21 条把 247 条的知识库换掉（见文件头第三个坑）
+    allowed, why = decide_kb_rebuild(bool(args.days or args.status), force=args.force_partial_kb)
+    if not allowed:
+        print("[拒绝] 不能这么重建知识库：\n  " + why)
+        return 2
 
     if args.from_json:
         data = json.load(io.open(args.from_json, encoding="utf-8"))

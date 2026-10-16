@@ -142,6 +142,19 @@ t2 = items2["713594985"]
 check("映射（反例）：没有详情时退回列表字段，不报错",
       t2["标题"] == "列表里的标题" and t2["状态"] == "新建" and t2["描述"] == "", str(t2))
 
+# ---- 重建知识库的闸门（2026/10/16 补）----
+# 为什么盯这条：`--kb` 是**用本次拉取的结果重建知识库**，而 `--days 3` 只回 21 条 ——
+# 两个一配，247 条的知识库会被静默换成 21 条（输出还写着"知识库已重建"，看着挺成功）。
+# 这种"越用越少"的错最难发现，所以正反两边都钉住。
+ok_full, why_full = p.decide_kb_rebuild(False)
+check("闸门：全量拉取 + --kb 放行", ok_full is True and why_full == "", str((ok_full, why_full)))
+ok_partial, why_partial = p.decide_kb_rebuild(True)
+check("闸门：局部拉取 + --kb 拒绝", ok_partial is False, str(ok_partial))
+check("闸门：拒绝时给出人话原因（提到 --days/--force-partial-kb）",
+      ("--days" in why_partial) and ("--force-partial-kb" in why_partial), why_partial[:80])
+ok_force, _ = p.decide_kb_rebuild(True, force=True)
+check("闸门：显式 --force-partial-kb 才放行", ok_force is True, str(ok_force))
+
 print()
 if failed:
     print("有 %d 项不符合预期：" % len(failed))
