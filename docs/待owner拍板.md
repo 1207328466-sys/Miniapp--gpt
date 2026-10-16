@@ -33,6 +33,13 @@
   （现在做了也没法验证：我们只测过测试环境）。
 - **你拍板后**：给 appid → 我做 `UITEST_ENV=test|prod` 的切换 + 真机验一次安全阀拦截。
 
+> **2026/10/16 补：切换脚本已经做完，安全阀那一半也真机验过了**（只差 appid 这个输入）。
+>   · `python tools/use_env.py` → 一眼看到两个环境、当前是哪个、prod 缺什么；
+>   · `python run.py --env prod` → **当场拒绝开跑**（退出码 2）并告诉你「把生产 appid 填进
+>     `config/env.yaml` 的 `prod.appid`；生产小程序的 appid 需要 owner 提供」；
+>   · 离线闸门 `scripts/selftest-env-profile.py` 盯着两条规矩：生产没 appid 不许跑、只读环境必须清掉写开关。
+>   你把 appid 给我，填上之后再跑一次就是完整的"按环境切换"。
+
 ## Q2 数据准备与复位手段
 
 - **事实**：库直连这条路已经打通并且**只读**能看全貌 —— `tools/quiz_data_report.py`：
