@@ -7,6 +7,7 @@
  * "没端口" 和 "有端口但小程序在后台"（见 docs/踩坑记录.md 坑 59）。
  *
  * 运行：node test_case/diagnostic/probe_webviews.js
+ *       node test_case/diagnostic/probe_webviews.js --watch   # 重开一次小程序，边开边看（8 秒）
  * 退出码：0 = 至少 1 个；1 = 0 个（通道没开）
  */
 
@@ -20,6 +21,29 @@ const { _android: android } = require("playwright");
     process.exit(1);
   }
   const list = [];
+
+  // --watch：模拟"退出小程序 -> 最近使用里重新打开"，边开边轮询 8 秒。
+  // 为什么要有它：有的 WeChat 版本是**开着小程序那一刻**才建 devtools 端口，之后再收掉；
+  // 只在"已经停在首页"时探一次，会得出错误结论（"端口没开"）。
+  if (process.argv.includes("--watch")) {
+    console.log("watch 模式：退出小程序 -> 最近使用里重开 -> 每 400ms 探一次，共 8 秒");
+    await device.shell("input keyevent 4");
+    await new Promise((r) => setTimeout(r, 1500));
+    await device.shell("input swipe 600 320 600 1100 400");
+    await new Promise((r) => setTimeout(r, 1500));
+    await device.shell("input tap 179 708");
+    let best = 0;
+    for (let i = 0; i < 20; i++) {
+      const n = (await device.webViews()).length;
+      best = Math.max(best, n);
+      console.log(`  +${(i * 400).toString().padStart(4)}ms webviews=${n}`);
+      if (n > 0) break;
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    console.log(best > 0 ? `\n✅ 看见端口了（最多 ${best} 个）` : "\n❌ 8 秒内一次都没看见端口");
+    process.exit(best > 0 ? 0 : 1);
+  }
+
   for (const wv of await device.webViews()) {
     let url = "";
     try {
