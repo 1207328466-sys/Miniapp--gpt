@@ -258,6 +258,60 @@ def parse_adb_devices(text):
     return ready, body
 
 
+def devtools_socket_names(text):
+    """从 `cat /proc/net/unix` 的输出里挑出 **webview 调试 socket** 的名字（纯函数，便于离线自检）。
+
+    只认名字里带 `devtools_remote` 的 —— 微信小程序的 CDP 端口就是这个形状
+    （Playwright 也是靠它找到 webview 的）。
+
+    ⚠️ 系统有可能把**别的进程**的 socket 名打码成 `@@@@...`。所以"这里 0 个"
+    只用来**提醒**，不用来拦人（硬拦会误伤那些"能跑、但名字看不见"的机器）。
+    """
+    out = []
+    for line in str(text or "").splitlines():
+        m = re.search(r"@([^\s@]*devtools_remote[^\s]*)", line, re.I)
+        if m:
+            out.append(m.group(1))
+    return out
+
+
+def preflight_webview_debug(argv):
+    """开跑前提醒一句：**微信侧的小程序调试端口在不在**。
+
+    真实场景（2026/10/19）：设备在、小程序也在前台（前两道预检都过），但
+    `/proc/net/unix` 里一个 `*_devtools_remote*` 都没有 —— 微信的调试开关掉了。
+    框架会在 30 秒后报「找不到前台小程序webview」；以前那句话还会把人引去查
+    "小程序在不在前台"（那两条明明都成立）。这里提前把真正的原因说清楚。
+
+    **只提醒、不拦**：名字可能被系统打码（见 `devtools_socket_names`），
+    拦下来会误伤；而一句提醒足以省掉一轮"重启小程序 / 拔插数据线"的白折腾。
+    """
+    if any(a in ("--collect-only", "--co", "-h", "--help", "--version") for a in argv):
+        return True
+    adb = shutil.which("adb")
+    if adb is None:
+        return True
+    try:
+        out = subprocess.run(
+            [adb, "shell", "cat /proc/net/unix"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+    except Exception:
+        return True
+    if not out.stdout.strip():
+        return True  # 读不到（权限/机型差异）-> 不猜
+    names = devtools_socket_names(out.stdout)
+    if names:
+        return True
+    print("\n[!] 提示：手机上一个 webview 调试端口都没看到（可能只是名字被系统打码，先别急着停）。")
+    print("    如果下面报「找不到前台小程序webview」，原因多半是**微信侧的小程序调试开关掉了** ——")
+    print("    小程序里的 vConsole 角标是**小程序自己**开的，跟这个 CDP 调试端口不是一回事。")
+    print("    恢复（任选一条）：① 小程序右上角「…」→ 有「打开调试 / 开发调试」就点它；")
+    print("    ② 让前端用「微信开发者工具 → 真机调试」连一次；③ 重开小程序 / 重启微信。")
+    print('    判据：adb shell "cat /proc/net/unix | grep -i devtools_remote" 至少要有一行')
+    return True
+
+
 def preflight_foreground(argv):
     """开跑前看一眼**前台是不是小程序** —— 不是就当场停下并说清怎么弄。
 
@@ -418,6 +472,9 @@ def main(argv):
     # 小程序没在前面也当场停下（不然每条用例都会报「找不到前台小程序webview」）
     if not preflight_foreground(argv):
         return 2
+
+    # 微信侧的调试端口在不在：只提醒、不拦（名字可能被系统打码，见函数内说明）
+    preflight_webview_debug(argv)
 
     # 表格用例：开跑前先导出一次（表格有错会在这里停下来，见函数内说明）
     if not export_case_table(argv):

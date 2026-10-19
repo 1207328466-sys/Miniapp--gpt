@@ -142,6 +142,36 @@ expect_positionals("-vs 是开关（不带值），后面的编号仍是位置�
 expect_positionals("点名 .js 文件", ["suprecast_app/test_example.js"], ["suprecast_app/test_example.js"])
 expect_positionals("什么都不给 = 跑全部", [], [])
 
+
+def expect_sockets(name, text, want):
+    """核对 `cat /proc/net/unix` 里能不能认出 webview 调试 socket（纯函数）。"""
+    global passed
+    got = runpy.devtools_socket_names(text)
+    if got != want:
+        failed.append("%s：挑出 %s，期望 %s" % (name, got, want))
+        return
+    passed += 1
+    print("OK   %s -> %s" % (name, got))
+
+
+# 正例：真实的名字形如 @webview_devtools_remote_12963 / @xweb_devtools_remote_123
+expect_sockets(
+    "认得出 webview_devtools_remote_<pid>",
+    "0000000000000000: 00000002 00000000 00010000 0001 01 12345 @webview_devtools_remote_12963\n",
+    ["webview_devtools_remote_12963"],
+)
+expect_sockets(
+    "两个端口都认；不区分大小写",
+    "@xweb_devtools_remote_1\n@WEBVIEW_DEVTOOLS_REMOTE_2\n",
+    ["xweb_devtools_remote_1", "WEBVIEW_DEVTOOLS_REMOTE_2"],
+)
+
+# 反例：只有打码的名字（@ 后面全是 @）/ 空输出 -> 都不算"看到了端口"
+expect_sockets("全是打码名字（@ 后面一堆 @）不算", "@@@@@@@@@@@@@@@@@@@@@@@@\n@hans_socket_server\n", [])
+expect_sockets("空输出不算", "", [])
+expect_sockets("别的 socket 不算", "@jdwp-control\n@resmon\n", [])
+
+
 print()
 if failed:
     print("有 %d 项不符合预期：" % len(failed))
