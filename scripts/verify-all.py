@@ -42,6 +42,8 @@
   21. `test_case/diagnostic/selftest_no_webview_error.js`  找不到 webview 时的**报错方向**
       （2026/10/19 真机踩到：设备在、小程序也在前台，真正原因是**微信侧调试端口没了**，
       而旧报错让人以为"小程序没在前台"。现在 0 个 webview 就直说"调试端口"，并给出三条恢复办法）
+  22. `scripts/selftest-escort-reserve.py`  护航预约"哪些算这次新增"的纯逻辑
+      （库里有一堆同名「自动化测试」旧记录；判据退化成"按名字找最新"就会拿旧记录当新提交 = 假绿）
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -174,6 +176,10 @@ def main():
     run(
         "selftest-no-webview-error（找不到 webview 的报错方向）",
         ["node", os.path.join("test_case", "diagnostic", "selftest_no_webview_error.js")],
+    )
+    run(
+        "selftest-escort-reserve（预约成功态的「新增」判据）",
+        [sys.executable, os.path.join("scripts", "selftest-escort-reserve.py")],
     )
 
     print("\n" + "=" * 60)
