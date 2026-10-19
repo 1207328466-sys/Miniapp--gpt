@@ -172,6 +172,31 @@ expect_sockets("空输出不算", "", [])
 expect_sockets("别的 socket 不算", "@jdwp-control\n@resmon\n", [])
 
 
+def expect_from(name, ids, start, want):
+    """核对 `--from ZW_020` 翻出来的 -k 表达式。"""
+    global passed
+    got = runpy.build_from_expression(ids, start)
+    if got != want:
+        failed.append("%s：得到 %r，期望 %r" % (name, got, want))
+        return
+    passed += 1
+    print("OK   %s -> %r" % (name, got))
+
+
+IDS = ["ZW_001", "ZW_002", "ZW_009", "ZW_010", "ZW_020"]
+expect_from(
+    "从中间某条起：往后全要，且末尾带上 not ZW_（.js 用例不能漏）",
+    IDS,
+    "ZW_010",
+    "ZW_010 or ZW_020 or not ZW_",
+)
+expect_from("从最小那条起 = 全都要", IDS, "ZW_001", "ZW_001 or ZW_002 or ZW_009 or ZW_010 or ZW_020 or not ZW_")
+expect_from("编号按数字比（ZW_009 在 ZW_010 前面）", IDS, "ZW_009", "ZW_009 or ZW_010 or ZW_020 or not ZW_")
+expect_from("填了不存在的编号 -> 空（调用方要报错，不许空跑）", IDS, "ZW_999", "")
+expect_from("编号写错格式 -> 空", IDS, "第20条", "")
+expect_from("空表 -> 空", [], "ZW_001", "")
+
+
 print()
 if failed:
     print("有 %d 项不符合预期：" % len(failed))

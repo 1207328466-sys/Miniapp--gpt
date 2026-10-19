@@ -11,6 +11,7 @@
     python run.py -k 专栏          # 其余参数原样透传给 pytest
     python run.py suprecast_app/test_example.js
     python run.py -k ZW_001   # 「填表就能写用例」：只跑 cases/用例表.xlsx 里的这一条
+    python run.py --from ZW_020   # 断点续跑：从这条起往后跑表格用例 + 全部 .js 用例
     python run.py --env prod      # 这次改用「生产」环境跑（默认取 config/env.yaml 的 current）
 """
 
@@ -258,6 +259,71 @@ def parse_adb_devices(text):
     return ready, body
 
 
+def build_from_expression(case_ids, start_id):
+    """**纯函数**：把「从某条用例开始跑」翻译成 pytest 的 `-k` 表达式。
+
+    为什么需要它：全量要跑 40 多分钟，中途断一次（设备掉线、手机被拔、我要下班）就得从头再来。
+    有了它，断了以后 `python run.py --from ZW_020` 就能接着往下跑。
+
+    两条硬规则：
+      1. 编号按**数字**比（`ZW_009` < `ZW_010`），不能按字符串 —— 否则 `ZW_010` 会排到 `ZW_009` 前面；
+      2. 末尾**一定追加 `or not ZW_`**：`.js` 用例的 item 名字里没有 `ZW_`，这样不会被漏掉
+         （它们跑得快，而且写链路那几条只在这个集合里）。
+
+    @returns 表达式；`start_id` 不合法 / 一条都不剩时返回 ""（调用方应报错，而不是"什么都没选"地空跑）。
+    """
+    def num(cid):
+        m = re.search(r"ZW_(\d+)", str(cid or ""), re.I)
+        return int(m.group(1)) if m else -1
+
+    start = num(start_id)
+    if start < 0:
+        return ""
+    picked = sorted({str(c).strip().upper() for c in case_ids if num(c) >= start}, key=num)
+    if not picked:
+        return ""
+    return " or ".join(picked) + " or not ZW_"
+
+
+def load_case_ids(path=None):
+    """从导出好的 `cases/用例表.json` 里取全部 ZW_ 编号（取不到就返回空列表，由调用方报错）。"""
+    p = Path(path) if path else ROOT / "cases" / "用例表.json"
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    cases = data.get("cases") if isinstance(data, dict) else data
+    return [str(c.get("id") or "") for c in (cases or []) if isinstance(c, dict)]
+
+
+def apply_from_filter(argv):
+    """处理 `--from ZW_020`。
+
+    必须放在"导出用例表"之后（它要读刚导出的 json 拿编号）。
+    @returns (新的 argv, 是否继续)
+    """
+    if "--from" not in argv:
+        return argv, True
+    i = argv.index("--from")
+    if i + 1 >= len(argv):
+        print("\n[!] --from 后面要写用例编号，例如：python run.py --from ZW_020")
+        return argv[:i], False
+    start = argv[i + 1]
+    rest = argv[:i] + argv[i + 2 :]
+    if "-k" in rest:
+        print("\n[!] --from 和 -k 只能用一个 —— --from 内部就是按编号生成 -k 表达式。")
+        return rest, False
+    ids = load_case_ids()
+    expr = build_from_expression(ids, start)
+    if not expr:
+        print(
+            f"\n[!] 用例表里没有「{start}」或它之后的表格用例（先看 cases/用例表.json 里的编号）。"
+        )
+        return rest, False
+    print(f"\n[--from] 从 {str(start).upper()} 起跑：表格用例按编号往后 + 全部 .js 用例。")
+    return rest + ["-k", expr], True
+
+
 def devtools_socket_names(text):
     """从 `cat /proc/net/unix` 的输出里挑出 **webview 调试 socket** 的名字（纯函数，便于离线自检）。
 
@@ -478,6 +544,11 @@ def main(argv):
 
     # 表格用例：开跑前先导出一次（表格有错会在这里停下来，见函数内说明）
     if not export_case_table(argv):
+        return 2
+
+    # --from ZW_020：断点续跑（内部按刚导出的编号生成 -k 表达式，见函数内说明）
+    argv, from_ok = apply_from_filter(argv)
+    if not from_ok:
         return 2
 
     # 「python run.py ZW_029」这种写法：ZW_029 会被当成文件路径 -> 0 条用例（退出码 4）。
