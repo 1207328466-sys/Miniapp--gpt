@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from escort_appointment_tool import new_ids  # noqa: E402
+from escort_appointment_tool import check_delete_target, new_ids  # noqa: E402
 
 CASES = [
     # (名字, before, records, 期望)
@@ -26,6 +26,17 @@ CASES = [
     ("坏记录（id 缺失/不是数字）跳过，不要炸", [1], [{"id": None}, {"id": "abc"}, {"id": 7}], [7]),
     ("重复 id 只算一次新增（去重）", [1], [{"id": 7}, {"id": 7}], [7]),
     ("没有记录 -> 没有新增", [1], [], []),
+]
+
+# ---------- 删除前的三道闸（纯函数；"该拦的必须拦"比"该放的能放"更要紧）----------
+DELETE_CASES = [
+    # (名字, row, name, contact, apply, 期望能不能删, 期望说明里必须出现的词)
+    ("库里没这条 -> 拒绝", None, "张三", "13900000000", True, False, "没有这条"),
+    ("姓名对不上 -> 拒绝", (7, "李四", "13900000000", 0), "张三", "13900000000", True, False, "对不上"),
+    ("手机号对不上 -> 拒绝", (7, "张三", "13900000001", 0), "张三", "13900000000", True, False, "对不上"),
+    ("已经删过 -> 拒绝", (7, "张三", "13900000000", 1), "张三", "13900000000", True, False, "已经是删除状态"),
+    ("不带 --yes -> 只预览、不写", (7, "张三", "13900000000", 0), "张三", "13900000000", False, False, "预览"),
+    ("三者都对 + --yes -> 放行", (7, "张三", "13900000000", 0), "张三", "13900000000", True, True, "可以删除"),
 ]
 
 
@@ -43,10 +54,22 @@ def main():
             failed += 1
         else:
             print("OK   %s" % name)
+    for name, row, nm, ct, apply, want_ok, want_word in DELETE_CASES:
+        try:
+            ok, msg = check_delete_target(row, nm, ct, apply=apply)
+        except Exception as e:  # noqa: BLE001
+            print("FAIL %s -> 抛异常：%s" % (name, e))
+            failed += 1
+            continue
+        if ok != want_ok or want_word not in msg:
+            print("FAIL %s -> 得到 (%s, %s)，期望 (%s, 含「%s」)" % (name, ok, msg, want_ok, want_word))
+            failed += 1
+        else:
+            print("OK   %s" % name)
     if failed:
         print("\n%d 项不通过" % failed)
         return 1
-    print("\n全部通过（%d 项）" % len(CASES))
+    print("\n全部通过（%d 项）" % (len(CASES) + len(DELETE_CASES)))
     return 0
 
 

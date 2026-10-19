@@ -9,8 +9,8 @@
 【为什么走管理端接口、而不是连库】
   预约是"客户线索"，库在测试环境；但管理端接口本来就是后台看这条线索的**同一条路**，
   而且不需要内网直连数据库。当前（2026/10/19）RDS 白名单不通时，这个工具照样能用。
-  ⚠️ **管理端没有删除预约的接口**（`src/.../escort` 里只有 getList / updateHandleStatus），
-  所以"跑完复位"这一步只能走库（或后台人工处理）；本工具**不做删除**，只读。
+  ⚠️ **管理端没有删除预约的接口**（bundle 里只有 getList / updateHandleStatus，`/delete`、`/remove`
+  实测都是 404），所以"跑完复位"只能走库 —— 这就是本工具唯一一处写操作（`--delete`，**默认只预览**）。
 
 【token 从哪来】与 `tools/post_top_tool.py` 一致：
   环境变量 `UITEST_MANAGER_TOKEN` > `%TEMP%/manager-token.txt` > `--login` 现场登一次。
@@ -18,13 +18,16 @@
 用法:
     python tools/escort_appointment_tool.py --list                  # 最近 10 条（只读）
     python tools/escort_appointment_tool.py --name 自动化测试 --contact 13311111111
+    python tools/escort_appointment_tool.py --snapshot               # 只打 id 快照（给 --before-ids 用）
     python tools/escort_appointment_tool.py --expect-new --name X --contact 13900000000
         （给"提交前先存一份 id 快照、提交后再跑一次"的调用方用：只把**快照之后新增**的算数）
+    python tools/escort_appointment_tool.py --delete --id 140 --name X --contact 13900000000
+        （**默认只预览**；再加 --yes 才真删。必须带 id + 姓名 + 手机号三者对得上 —— 免得删错别人的线索）
 
 机器读的那一行：
     [RESERVE] total=116 matched=1 new=0 ids=[] latest=138
 
-退出码: 0 成功；1 `--expect-new` 但没找到新增；2 token 缺失/过期
+退出码: 0 成功；1 `--expect-new` 但没找到新增 / 删除核对不上；2 token 缺失/过期
 """
 
 import argparse
@@ -36,10 +39,12 @@ from pathlib import Path
 import requests
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
 API = "https://zhuwen-alpha.supreium.com/api"
 LIST_PATH = "/manager/escort/appointment/getList"
 DEFAULT_TOKEN_FILE = Path(os.environ.get("TEMP", ".")) / "manager-token.txt"
 DEFAULT_PAGE_SIZE = 200  # 一次拉够：预约不会多到需要分页翻（2026/10/19 实测 116 条）
+DEFAULT_DB_CONFIG = ROOT / "config" / "db.local.yaml"
 
 
 def unwrap(raw):
@@ -104,6 +109,67 @@ def fetch(records_page_size, token, timeout=25):
     return body.get("data") or {}
 
 
+def check_delete_target(row, name, contact, apply=False):
+    """**纯函数**：删除前的三道闸。返回 (能否继续, 说明)。
+
+    `row` = `(id, name, contact, is_deleted)`，或者 None（库里没这条）。
+    抽成纯函数是为了离线自检能钉住"该拦的必须拦"（见 scripts/selftest-escort-reserve.py）。
+    """
+    if not row:
+        return False, "库里没有这条预约（先 --list 确认 id）"
+    rid, rname, rcontact, rdel = row
+    if str(rname or "") != str(name) or str(rcontact or "") != str(contact):
+        return False, (
+            "姓名/手机号对不上，拒绝删除：库里是「%s / %s」，你给的是「%s / %s」"
+            % (rname, rcontact, name, contact)
+        )
+    if int(rdel or 0) != 0:
+        return False, "id=%s 已经是删除状态（is_deleted=1）" % rid
+    if not apply:
+        return False, "预览：将执行 update escort_appointment set is_deleted=1 where id=%s（加 --yes 才真删）" % rid
+    return True, "可以删除 id=%s" % rid
+
+
+def soft_delete_one(appointment_id, name, contact, db_config=DEFAULT_DB_CONFIG, apply=False):
+    """把一条预约**软删**（`is_deleted=1`），返回 (是否真删了, 说明)。
+
+    硬删是 `DELETE`，这里坚持软删：管理端所有查询都带 `is_deleted=0`，软删对界面等价，
+    但误删时还能捞回来（客户线索不该真消失）。
+
+    【三道闸】
+      1. 必须点名 `--id`，且**姓名 + 手机号都要对得上**（防"手滑删了别人那条"）；
+      2. `--yes` 才真删，否则只预览（打印将要执行什么）；
+      3. 删完**回读**：`rowcount` 必须正好 1 —— 0 行说明"没这条/已经被删过"，当场说清楚。
+    """
+    from quiz_data_cleanup import load_conn
+
+    conn = load_conn(str(db_config))
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "select id, name, contact, is_deleted from escort_appointment where id = %s",
+            (int(appointment_id),),
+        )
+        row = cur.fetchone()
+        ok, msg = check_delete_target(row, name, contact, apply=apply)
+        if not ok:
+            return False, msg
+        cur.execute(
+            "update escort_appointment set is_deleted = 1 where id = %s and is_deleted = 0",
+            (int(appointment_id),),
+        )
+        conn.commit()
+        if cur.rowcount != 1:
+            return False, "update 影响 %d 行（期望 1 行）—— 没删成，请复查" % cur.rowcount
+        cur.execute("select is_deleted from escort_appointment where id = %s", (int(appointment_id),))
+        after = cur.fetchone()
+        if not after or int(after[0] or 0) != 1:
+            return False, "删完回读 is_deleted 仍不是 1 —— 没删成，请复查"
+        return True, "已软删 id=%s（is_deleted 0 -> 1，可回捞）" % appointment_id
+    finally:
+        conn.close()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="护航预约记录体检（只读）")
     parser.add_argument("--list", action="store_true", help="列出最近 N 条（只读）")
@@ -112,6 +178,11 @@ def main(argv=None):
     parser.add_argument("--contact", default="", help="按手机号过滤")
     parser.add_argument("--expect-new", action="store_true", help="断言存在快照之后新增的记录")
     parser.add_argument("--before-ids", default="", help="提交前抓到的 id 快照，逗号分隔（或 JSON 数组）")
+    parser.add_argument("--snapshot", action="store_true", help="只打印当前 id 快照（给 --before-ids 用）")
+    parser.add_argument("--delete", action="store_true", help="软删一条（默认只预览，要加 --yes）")
+    parser.add_argument("--id", type=int, default=0, help="--delete 的目标 id")
+    parser.add_argument("--yes", action="store_true", help="--delete 时真的写库")
+    parser.add_argument("--db-config", default=str(DEFAULT_DB_CONFIG), help="删除时用的数据库配置")
     parser.add_argument("--token-file", default=str(DEFAULT_TOKEN_FILE))
     parser.add_argument("--creds", default=str(ROOT.parent / "miniapp-flow" / ".env"))
     parser.add_argument("--login", action="store_true", help="token 缺失时现场登一次中台")
@@ -135,6 +206,35 @@ def main(argv=None):
 
     records = data.get("records") or []
     total = data.get("total")
+
+    if args.snapshot:
+        ids = [int(r["id"]) for r in records if str(r.get("id", "")).isdigit()]
+        print("[RESERVE-SNAPSHOT] ids=%s" % json.dumps(ids))
+        return 0
+
+    if args.delete:
+        if not args.id:
+            print("[拒绝] --delete 必须点名 --id（先 --list 看 id）")
+            return 1
+        if not (args.name and args.contact):
+            print("[拒绝] --delete 还要带 --name 和 --contact（跟库里那条对得上才删）")
+            return 1
+        ok, msg = soft_delete_one(
+            args.id, args.name, args.contact, db_config=args.db_config, apply=bool(args.yes)
+        )
+        print(("[RESERVE] deleted=1 id=%s" if ok else "[RESERVE] deleted=0 id=%s") % args.id)
+        print("  " + msg)
+        if not ok:
+            return 1
+        # 删完再看一眼管理端列表：真没了才算数（接口过滤 is_deleted=0）
+        try:
+            after = fetch(args.page_size, token)
+            alive = {int(r["id"]) for r in (after.get("records") or []) if str(r.get("id", "")).isdigit()}
+            print("  管理端列表里%s id=%s" % ("**仍然能看到**" if args.id in alive else "已经看不到", args.id))
+            return 0 if args.id not in alive else 1
+        except Exception as e:
+            print("  （回读列表失败，不影响删除结果：%s）" % str(e).split("\n")[0])
+            return 0
 
     matched = records
     if args.name or args.contact:
