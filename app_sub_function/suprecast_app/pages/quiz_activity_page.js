@@ -377,10 +377,27 @@ async function openQuizCard(page, { timeout = 15000 } = {}) {
   const seenSlides = new Set();
   const swipesMax = 8; // 兜底：滑太多次还没翻遍就停（正常活动数 < 8）
   let swipes = 0;
+  /*
+   * 【2026/10/16 真机红了一次之后加的】角标说「答题·官方」，点下去却落在
+   * 「Z-B3-图文三段式」的活动详情页。源码里这张卡是个 **autoplay Swiper**：
+   *   `interval: 4000, duration: 500`（`src/pages/qa/components/activity-flow-item/index.tsx`），
+   * 角标**不参与轮播**、但文案跟着 `current` 帧走（`onChange` 里 setState）——
+   * 也就是说，从"读到角标"到"点下去"之间只要正好转过去一拍，就会点到隔壁那条活动上。
+   * 这时报「角标与落地页对不上」是**冤枉产品**。所以分两步：
+   *   ① 点之前**再确认一次圆点页码**（连读两次、中间隔 250ms，两次一样才点）；
+   *   ② 真点歪了，回首页重来（最多 2 次）；2 次都歪才报红，并把"已重试几次"写在报错里。
+   */
+  const TAP_MISS_MAX = 2;
+  let tapMisses = 0;
+  let unstableJumps = 0; // 连续几次"点之前发现页码在跳"（跳太多次就别死等，直接点，让重试兜底）
 
   for (;;) {
     // ① 等角标（异步渲染、会闪一下就没）；顺带读"现在是第几页"
-    const tag = await waitForQuizTag(page, { timeoutMs: swipes === 0 ? 5000 : 2500, seenTags });
+    const tag = await waitForQuizTag(page, {
+      // 第一次放宽到 5 秒（角标异步渲染、会闪一下就没）；失败重来 / 翻过页之后只给 2.5 秒
+      timeoutMs: swipes === 0 && tapMisses === 0 ? 5000 : 2500,
+      seenTags,
+    });
     const st = await readCardState(page);
     if (!st) {
       const fg = await base.foreground(page);
@@ -396,6 +413,22 @@ async function openQuizCard(page, { timeout = 15000 } = {}) {
         (tag ? " —— 角标说是答题活动，点它" : " —— 角标没读到，先点一次用落地页定论")
     );
 
+    // ①' 点之前确认"页码没动"：swiper 每 4 秒自转一拍，转场 500ms。
+    // 两次读数隔 250ms 都一样，才认为这一页停稳了（转场中读数会跳变）。
+    if (tag && unstableJumps <= 3) {
+      await base.sleep(250);
+      const st2 = await readCardState(page);
+      if (st2 && st.index >= 0 && st2.index >= 0 && st2.index !== st.index) {
+        unstableJumps += 1;
+        console.log(
+          `  [提示] 读角标时在第 ${st.index + 1} 页、点之前已转到第 ${st2.index + 1} 页（卡片在自转），` +
+            `这一拍不点，重新读角标（第 ${unstableJumps} 次；超过 3 次就直接点，交给重试兜底）`
+        );
+        continue;
+      }
+      unstableJumps = 0;
+    }
+
     // ② 点一次（无论角标读没读到），用**落地页**定论
     const fg = await base.foreground(page);
     await base.tapLocator(fg, fg.locator(SEL.card).first(), tag ? `活动卡「${tag}」` : "首页活动卡");
@@ -410,9 +443,20 @@ async function openQuizCard(page, { timeout = 15000 } = {}) {
     const now = await base.foreground(page);
     const where = JSON.stringify((await base.pageText(now)).slice(0, 60));
     if (tag) {
+      tapMisses += 1;
+      if (tapMisses <= TAP_MISS_MAX) {
+        console.log(
+          `  [提示] 角标说答题、点开却是别的活动（第 ${tapMisses}/${TAP_MISS_MAX} 次）——` +
+            "先按「卡片自转、点到隔壁那页」处理：回首页重新确认再点"
+        );
+        page = await require("./qa_page").ensureOnHomeFeed(page);
+        continue;
+      }
       throw new Error(
-        `角标写着「${tag}」（答题活动），但点下去没进答题页（当前页面前 60 字：${where}）。\n` +
+        `角标写着「${tag}」（答题活动），但连续 ${tapMisses} 次（每次都是读角标后立刻点）都没进答题页。\n` +
+          `  最后一次落地页前 60 字：${where}\n` +
           `  角标按当前页的 activityType 渲染（前端源码 ACTIVITY_TAG），指着它却打不开，说明行为跟角标对不上。\n` +
+          `  （已排除"卡片自转点到隔壁那页"：每次点之前都连读两次圆点确认页码没动，且失败后回首页重来过。）\n` +
           `  下一步：截图 + 这条输出发给开发；若活动刚下线/到点，也会是这个样子。`
       );
     }
