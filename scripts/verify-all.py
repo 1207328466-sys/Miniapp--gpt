@@ -39,6 +39,9 @@
   20. `test_case/diagnostic/selftest_foreground_dead.js`  小程序 WebView 没了时**要立刻报错**
       （2026/10/16 真机踩到：设备掉线后框架拿着死页面重试，**一个步骤耗掉 19 分钟**才报错；现在直接抛，
       message 里说清"这是环境问题，重开小程序再跑"。反向那条同时钉住"别的解析失败仍然沿用当前 page"）
+  21. `test_case/diagnostic/selftest_no_webview_error.js`  找不到 webview 时的**报错方向**
+      （2026/10/19 真机踩到：设备在、小程序也在前台，真正原因是**微信侧调试端口没了**，
+      而旧报错让人以为"小程序没在前台"。现在 0 个 webview 就直说"调试端口"，并给出三条恢复办法）
 
 为什么值得有：这些检查分开跑很容易"忘了其中一个"；串成一条命令，纪律才落得住。
 
@@ -167,6 +170,10 @@ def main():
     run(
         "selftest-foreground-dead（WebView 没了要立刻报错）",
         ["node", os.path.join("test_case", "diagnostic", "selftest_foreground_dead.js")],
+    )
+    run(
+        "selftest-no-webview-error（找不到 webview 的报错方向）",
+        ["node", os.path.join("test_case", "diagnostic", "selftest_no_webview_error.js")],
     )
 
     print("\n" + "=" * 60)

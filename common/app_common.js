@@ -1131,6 +1131,42 @@ async function pickForegroundPage(page, timeout = 800) {
 }
 
 /**
+ * 拼「找不到小程序 webview」的报错（**纯函数**，不碰设备 —— 离线自检钉着它）。
+ *
+ * 【为什么单独抽出来】2026/10/19 真机踩到：`adb devices` 有设备、小程序也在前台，
+ * 但框架等 30 秒后只报一句「找不到前台小程序webview（检查：微信已打开目标小程序，且小程序处于前台）」
+ * —— **这句话会把人引到错的方向**：前两条明明都成立，真正的原因是**微信侧的调试端口没了**
+ * （手机闲置两天 + 微信重启之后就掉了；小程序里那个 vConsole 角标是**小程序自己**开的，
+ * 跟 CDP 调试端口是两回事）。报错文案本身就是判据的一部分，所以要写清"我看到了什么、下一步做什么"。
+ *
+ * @param {{appId?: string, pkg?: string, webviews?: Array<{pid?: string|number, url?: string}>}} [info]
+ * @returns {Error}
+ */
+function buildNoWebviewError({ appId = "", pkg = "", webviews = [] } = {}) {
+  const seen = (Array.isArray(webviews) ? webviews : []).filter(Boolean);
+  const head = appId ? `（appid=${appId}，pkg=${pkg}）` : `（pkg=${pkg}）`;
+  if (!seen.length) {
+    return new Error(
+      `手机上一个「可调试的 webview」都没有${head}。\n` +
+        `  注意：adb devices 有设备、小程序也在前台，**不等于**微信把调试端口开着 ——\n` +
+        `  小程序里那个 vConsole 角标是小程序自己开的，跟这个 CDP 调试端口是两回事。\n` +
+        `  （2026/10/19 实测：手机闲置两天、微信重启后端口全没了，框架的表现就是等 30 秒再报这一句。）\n` +
+        `怎么恢复（任选一条）：\n` +
+        `  ① 小程序里点右上角「…」→ 菜单里有「打开调试 / 开发调试」就点它（小程序会重启一次）；\n` +
+        `  ② 让前端用「微信开发者工具 → 真机调试」连一次这台手机；\n` +
+        `  ③ 还不行就重开小程序；再不行重启微信。\n` +
+        `  恢复的判据：adb shell "cat /proc/net/unix | grep -i devtools_remote" 至少要有一行`
+    );
+  }
+  const list = seen.map((w) => `pid=${w.pid == null ? "?" : w.pid} url=${w.url || "?"}`).join("；");
+  return new Error(
+    `找到了 ${seen.length} 个 webview，但没有一个是小程序页面（servicewechat.com）${head}。\n` +
+      `  看到的是：${list}\n` +
+      `  多半是小程序退到后台 / 还停在 preload 空壳页 —— 先把小程序切到前台再跑。`
+  );
+}
+
+/**
  * 等待微信小程序 WebView 并获取其 Page，同时等待 DOM 加载与视口就绪。
  *
  * 【重要】返回值保证是"当前显示在屏幕上的前台页"，而不是随便一个 webview 对应的页。
@@ -1223,7 +1259,23 @@ async function getWxWebviewPage(device = null, options = {}) {
     }
   }
   if (!page) {
-    throw new Error("找不到前台小程序webview（检查：微信已打开目标小程序，且小程序处于前台）");
+    // 把"到底看到了什么"带进报错：0 个 webview = 微信侧调试端口没开（不是小程序没在前台）；
+    // 有 webview 但都不是小程序页 = 小程序在后台 / 还停在 preload 空壳页。
+    const seen = [];
+    try {
+      for (const wv of await device.webViews()) {
+        let url = "";
+        try {
+          url = (await wv.page()).url();
+        } catch (e) {
+          url = "";
+        }
+        seen.push({ pid: wv.pid(), url });
+      }
+    } catch (e) {
+      /* 枚举不到就只带个数 0，不影响报错本身 */
+    }
+    throw buildNoWebviewError({ appId: expectedAppId || "", pkg, webviews: seen });
   }
 
   // 等待DOM加载
@@ -1348,6 +1400,7 @@ module.exports = {
   resolveWebviewOptions,
   resolveExpectedAppId,
   createCaseContext,
+  buildNoWebviewError,
   DEFAULT_WX_PKG,
   DEFAULT_WEBVIEW_TIMEOUT,
 };
