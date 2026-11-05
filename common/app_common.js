@@ -90,7 +90,16 @@ const rafAliveSince = new WeakMap();
  * 宁可回到旧行为，也不能因为过滤变成"没有页面可用"。
  */
 function isUsableForegroundCandidate({ url = "", count = -1 } = {}) {
-  if (/\/preload\//.test(String(url))) return false;
+  const u = String(url);
+  if (/\/preload\//.test(u)) return false;
+  /*
+   * 【2026/11/05 真机踩到】打开「开发调试」之后，微信会额外开一个 **vConsole 页**
+   * （`https://servicewechat.com/<appid>/0/vConsole.html`）—— 它的 appid 跟小程序一样，
+   * 所以安全阀拦不住；但它**只有 85 个元素、正文全空**，却会在出帧，于是被当成"前台页"，
+   * 之后每一步都对着一个空页面做，`pageText()` 全是空串（表现为"找不到任何元素"）。
+   * 它不是业务页面，直接排除。注意**不要**把 `/preload/` 那条一起改掉。
+   */
+  if (/vconsole\.html/i.test(u)) return false;
   if (count >= 0 && count < 30) return false;
   return true;
 }
@@ -122,7 +131,15 @@ function pagesOfExpectedApp(page) {
         return false;
       }
     })
-    .filter((p) => !expected || appIdOf(p.url()) === expected);
+    .filter((p) => !expected || appIdOf(p.url()) === expected)
+    // vConsole 调试页：appid 相同但正文全空，不能当候选（见 isUsableForegroundCandidate 的说明）
+    .filter((p) => {
+      try {
+        return !/vconsole\.html/i.test(String(p.url()));
+      } catch (e) {
+        return false;
+      }
+    });
 }
 
 /**
