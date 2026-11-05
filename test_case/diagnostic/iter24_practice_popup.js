@@ -1,0 +1,29 @@
+﻿const fs = require("fs");
+const path = require("path");
+const { appTest } = require("../../common/app_common");
+const pages = require("../../app_sub_function/suprecast_app/pages");
+const base = pages.base;
+const OUT = path.join(__dirname, "..", "..", "report", "iter24", "evidence");
+async function dump(page, name) {
+  const fg = await base.foreground(page);
+  const txt = await base.pageText(fg);
+  fs.writeFileSync(path.join(OUT, name + ".txt"), txt, "utf8");
+  await fg.screenshot({ path: path.join(OUT, name + ".png") }).catch(()=>{});
+  console.log(`\n== ${name} ==\n${txt.slice(0, 600)}`);
+  return fg;
+}
+(async () => {
+  await appTest([[async (page) => {
+    let fg = await base.foreground(page);
+    const go = fg.locator("wx-view, wx-text").filter({ hasText: /^去提交实操$/ }).first();
+    if (await go.count()) { await base.tapLocator(fg, go, "去提交实操"); await base.sleep(3500); }
+    page = await dump(page, "66_practice_submit_popup");
+    fg = await base.foreground(page);
+    const btns = await fg.evaluate(() => Array.from(document.querySelectorAll("wx-view, wx-text")).map((e) => String(e.innerText || "").replace(/\s+/g," ").trim()).filter((t) => t && t.length < 12).slice(-20));
+    console.log("TAIL_BUTTONS:", JSON.stringify(btns));
+    const cancel = fg.locator("wx-view, wx-text").filter({ hasText: /^取消$/ }).first();
+    if (await cancel.count()) { await base.tapLocator(fg, cancel, "取消"); await base.sleep(2000); }
+    page = await dump(page, "67_practice_popup_canceled");
+    return page;
+  }, null]], { meta: { title: "实操提交弹层" } });
+})().catch((e) => { console.error("ERR", e.message.split("\n")[0]); process.exit(1); });
